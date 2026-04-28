@@ -278,6 +278,7 @@ function Detail({ item }) {
           <Artifact href={item.artifacts.workdir_url} label="CVE workdir" />
           <Artifact href={item.artifacts.cve_json_url} label="cve.json" />
           <Artifact href={item.artifacts.trace_url} label="trace.jsonl" disabled={!item.artifacts.trace_exists} />
+          <Artifact href={item.artifacts.pipeline_status_url} label="pipeline_status.json" disabled={!item.artifacts.pipeline_status_exists} />
           <Artifact href={item.artifacts.report_json_url} label="report.json" disabled={!item.artifacts.report_exists} />
           <Artifact href={item.artifacts.report_md_url} label="report.md" disabled={!item.artifacts.report_md_exists} />
         </div>

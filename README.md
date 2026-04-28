@@ -52,6 +52,7 @@ cves/
   CVE-2025-55182/
     cve.json
     trace.jsonl
+    pipeline_status.json
     report.json
     report.md
 ```

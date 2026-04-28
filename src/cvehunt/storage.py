@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from cvehunt.models import CveRecord, TraceEvent, WorkflowReport
-from cvehunt.reporting import render_markdown
+from cvehunt.reporting import render_markdown, render_pipeline_status
 
 
 class WorkdirStore:
@@ -57,6 +57,10 @@ class WorkdirStore:
         report_path = directory / "report.json"
         report_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
         (directory / "report.md").write_text(render_markdown(report), encoding="utf-8")
+        (directory / "pipeline_status.json").write_text(
+            json.dumps(render_pipeline_status(report, events), indent=2),
+            encoding="utf-8",
+        )
         return report_path
 
     def list_reports(self) -> list[dict[str, object]]:
@@ -68,16 +72,23 @@ class WorkdirStore:
                 continue
             cve_path = directory / "cve.json"
             report_path = directory / "report.json"
+            pipeline_status_path = directory / "pipeline_status.json"
             if not cve_path.exists():
                 continue
             cve = json.loads(cve_path.read_text(encoding="utf-8"))
             report = None
             if report_path.exists():
                 report = json.loads(report_path.read_text(encoding="utf-8"))
+            pipeline_status = None
+            if pipeline_status_path.exists():
+                pipeline_status = json.loads(
+                    pipeline_status_path.read_text(encoding="utf-8")
+                )
             rows.append(
                 {
                     "cve": cve,
                     "report": report,
+                    "pipeline_status": pipeline_status,
                     "workdir": str(directory),
                     "trace": str(directory / "trace.jsonl"),
                 }

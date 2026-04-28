@@ -70,13 +70,16 @@ def build() -> dict[str, object]:
         report_path = directory / "report.json"
         trace_path = directory / "trace.jsonl"
         report_md_path = directory / "report.md"
+        pipeline_status_path = directory / "pipeline_status.json"
         report = read_json(report_path)
+        pipeline_status = read_json(pipeline_status_path)
         trace = read_trace(trace_path)
         cves.append(
             {
                 "cve": cve,
                 "report": report,
                 "trace": trace,
+                "pipeline_status": pipeline_status,
                 "progress": summarize_progress(report, trace),
                 "artifacts": {
                     "workdir": directory.relative_to(ROOT).as_posix(),
@@ -85,9 +88,11 @@ def build() -> dict[str, object]:
                     "trace_url": repo_url(trace_path),
                     "report_json_url": repo_url(report_path),
                     "report_md_url": repo_url(report_md_path),
+                    "pipeline_status_url": repo_url(pipeline_status_path),
                     "trace_exists": trace_path.exists(),
                     "report_exists": report_path.exists(),
                     "report_md_exists": report_md_path.exists(),
+                    "pipeline_status_exists": pipeline_status_path.exists(),
                 },
             }
         )

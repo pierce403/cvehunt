@@ -47,9 +47,13 @@ def test_persisted_run_writes_workdir_artifacts(tmp_path) -> None:
     assert (cve_dir / "trace.jsonl").exists()
     assert (cve_dir / "report.json").exists()
     assert (cve_dir / "report.md").exists()
+    assert (cve_dir / "pipeline_status.json").exists()
     trace = (cve_dir / "trace.jsonl").read_text(encoding="utf-8")
     assert "Collector" in trace
     assert "Judge" in trace
+    pipeline_status = (cve_dir / "pipeline_status.json").read_text(encoding="utf-8")
+    assert "Harness Builder" in pipeline_status
+    assert '"requested_full_pipeline_completed": false' in pipeline_status
 
 
 def test_dashboard_includes_tracked_cves(tmp_path) -> None:
