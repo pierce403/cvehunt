@@ -41,6 +41,12 @@ def render_markdown(report: WorkflowReport) -> str:
     lines.extend(
         [
             "",
+            "## Artifact Outcomes",
+            "",
+            "- Full exploit generated: no",
+            "- Source patch generated: no",
+            "- Scope: defensive fixture evidence and remediation guidance only",
+            "",
             "## Judgement",
             "",
             f"Status: {judgement['status']}",
@@ -55,4 +61,3 @@ def render_markdown(report: WorkflowReport) -> str:
         ]
     )
     return "\n".join(lines)
-

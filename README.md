@@ -18,10 +18,9 @@ uv run cvehunt run CVE-2025-55182
 uv run cvehunt run CVE-2025-55182 --json
 uv run cvehunt run CVE-2025-55182 --persist
 uv run cvehunt sync-recent --days 7 --limit 25
-uv run cvehunt dashboard
-uv run cvehunt dashboard --out docs/index.html --repo-url https://github.com/pierce403/cvehunt
 uv run cvehunt serve
 uv run python -m pytest
+npm run build
 ```
 
 ## Safety Boundary
@@ -69,11 +68,13 @@ uv run cvehunt serve --port 8765
 
 Each CVE directory is intended to become the durable working directory for that CVE. The initial implementation writes structured metadata, a full phase trace, and report artifacts.
 
-The public site is generated into `docs/` for GitHub Pages:
+The public site is a React/Vite app generated into `docs/` for GitHub Pages:
 
 ```bash
-uv run cvehunt dashboard --out docs/index.html --repo-url https://github.com/pierce403/cvehunt
+npm run build
 ```
+
+The build reads `.cvehunt/cves/` and emits `web/public/data/cves.json` before bundling the site. GitHub Actions runs the same build and deploys Pages on commits to `main`.
 
 ## Example
 

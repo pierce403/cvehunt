@@ -1,0 +1,347 @@
+{
+  "generated_at": "build-time",
+  "repo_url": "https://github.com/pierce403/cvehunt",
+  "counts": {
+    "tracked": 6,
+    "analyzed": 1,
+    "not_analyzed": 5,
+    "high": 5
+  },
+  "cves": [
+    {
+      "cve": {
+        "cve_id": "CVE-2025-15626",
+        "name": "Unknown",
+        "summary": "Authenticated user can bypass authorization in Ribblr - Crochet & Knitting iOS application",
+        "cvss": null,
+        "disclosed": "2026-04-27",
+        "ecosystem": "unknown",
+        "vulnerable_versions": [],
+        "patched_versions": [],
+        "kev": false,
+        "known_exploitation_window": null,
+        "safe_fixture": {}
+      },
+      "report": null,
+      "trace": [],
+      "progress": {
+        "autonomous_status": "not_analyzed",
+        "summary": "No autonomous workflow has been run for this CVE yet.",
+        "completed_phases": [],
+        "exploit_generated": false,
+        "patch_generated": false,
+        "exploit_note": "Not attempted. CVEHunt is a defensive pipeline and does not generate exploit code or payloads.",
+        "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
+      },
+      "artifacts": {
+        "workdir": ".cvehunt/cves/CVE-2025-15626",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2025-15626",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/report.md",
+        "trace_exists": false,
+        "report_exists": false,
+        "report_md_exists": false
+      }
+    },
+    {
+      "cve": {
+        "cve_id": "CVE-2025-55182",
+        "name": "React2Shell",
+        "summary": "A pre-authentication remote code execution vulnerability in React Server Components caused by unsafe deserialization of HTTP request payloads to Server Function endpoints.",
+        "cvss": 10.0,
+        "disclosed": "2025-12-04",
+        "ecosystem": "npm",
+        "vulnerable_versions": [
+          "react-server-dom-webpack 19.0.0"
+        ],
+        "patched_versions": [
+          "react-server-dom-webpack 19.0.1"
+        ],
+        "kev": true,
+        "known_exploitation_window": "30 hours",
+        "safe_fixture": {
+          "vulnerable_signal": "synthetic unsafe deserialization path reachable",
+          "patched_signal": "synthetic own-property guard blocks traversal"
+        }
+      },
+      "report": {
+        "cve": {
+          "cve_id": "CVE-2025-55182",
+          "name": "React2Shell",
+          "summary": "A pre-authentication remote code execution vulnerability in React Server Components caused by unsafe deserialization of HTTP request payloads to Server Function endpoints.",
+          "cvss": 10.0,
+          "disclosed": "2025-12-04",
+          "ecosystem": "npm",
+          "vulnerable_versions": [
+            "react-server-dom-webpack 19.0.0"
+          ],
+          "patched_versions": [
+            "react-server-dom-webpack 19.0.1"
+          ],
+          "kev": true,
+          "known_exploitation_window": "30 hours",
+          "safe_fixture": {
+            "vulnerable_signal": "synthetic unsafe deserialization path reachable",
+            "patched_signal": "synthetic own-property guard blocks traversal"
+          }
+        },
+        "finding": {
+          "impacted_surface": "request parsing and object materialization",
+          "vulnerability_class": "deserialization",
+          "defensive_hypothesis": "Validate whether patched parsing rejects synthetic traversal patterns that the vulnerable version accepts.",
+          "relevant_patch_signal": "stricter property checks or parser validation"
+        },
+        "plan": {
+          "runtime": "local fixture harness for npm",
+          "isolation": "offline synthetic validation only",
+          "checks": [
+            {
+              "name": "patched-vs-vulnerable differential check",
+              "purpose": "Confirm that the patched version removes the risky behavior.",
+              "safe_method": "Run synthetic unit-level probes in isolated local fixtures; do not execute against external hosts.",
+              "expected_vulnerable_signal": "synthetic unsafe deserialization path reachable",
+              "expected_patched_signal": "synthetic own-property guard blocks traversal"
+            }
+          ],
+          "forbidden_outputs": [
+            "exploit scripts",
+            "payloads",
+            "bypass steps",
+            "target-specific instructions"
+          ]
+        },
+        "evidence": [
+          {
+            "check_name": "patched-vs-vulnerable differential check",
+            "vulnerable_signal": "synthetic unsafe deserialization path reachable",
+            "patched_signal": "synthetic own-property guard blocks traversal",
+            "passed": true
+          }
+        ],
+        "judgement": {
+          "status": "defensive_signal_observed",
+          "confidence": 0.82,
+          "rationale": "The workflow observed a safe differential signal for deserialization in fixture data.",
+          "remediation_notes": [
+            "Prioritize patching affected npm components.",
+            "Confirm deployed versions match patched releases.",
+            "Add regression tests that exercise the patched behavior."
+          ],
+          "safety_notes": [
+            "No weaponizable artifact was generated.",
+            "No external target was contacted.",
+            "Evidence is synthetic and intended for defensive triage."
+          ]
+        }
+      },
+      "trace": [
+        {
+          "phase": "Collector",
+          "message": "Collected metadata for CVE-2025-55182",
+          "artifact": "cve.json",
+          "timestamp": "2026-04-28T13:42:01+00:00"
+        },
+        {
+          "phase": "Researcher",
+          "message": "Classified as deserialization; surface: request parsing and object materialization",
+          "artifact": null,
+          "timestamp": "2026-04-28T13:42:01+00:00"
+        },
+        {
+          "phase": "Environment Planner",
+          "message": "Created 1 offline validation check(s)",
+          "artifact": null,
+          "timestamp": "2026-04-28T13:42:01+00:00"
+        },
+        {
+          "phase": "Validator",
+          "message": "Collected 1 passing evidence item(s) out of 1",
+          "artifact": null,
+          "timestamp": "2026-04-28T13:42:01+00:00"
+        },
+        {
+          "phase": "Judge",
+          "message": "Assigned defensive_signal_observed with 0.82 confidence",
+          "artifact": "report.json",
+          "timestamp": "2026-04-28T13:42:01+00:00"
+        }
+      ],
+      "progress": {
+        "autonomous_status": "defensive_signal_observed",
+        "summary": "The workflow completed defensive triage using safe local fixtures.",
+        "completed_phases": [
+          "Collector",
+          "Researcher",
+          "Environment Planner",
+          "Validator",
+          "Judge"
+        ],
+        "exploit_generated": false,
+        "patch_generated": false,
+        "exploit_note": "No full exploit was generated or published. The run stopped at safe differential evidence.",
+        "patch_note": "No source patch was generated. The report contains patch-version and remediation guidance only."
+      },
+      "artifacts": {
+        "workdir": ".cvehunt/cves/CVE-2025-55182",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2025-55182",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/report.md",
+        "trace_exists": true,
+        "report_exists": true,
+        "report_md_exists": true
+      }
+    },
+    {
+      "cve": {
+        "cve_id": "CVE-2026-7040",
+        "name": "Unknown",
+        "summary": "Text::Minify::XS versions from v0.3.0 before v0.7.8 for Perl have a heap overflow when processing some malformed UTF-8 characters.\n\nThe minify functions mishandled some malformed UTF-8 characters, leading to heap corruption.\n\nNote that the minify_utf8 function is an alias for minnify.",
+        "cvss": 7.5,
+        "disclosed": "2026-04-27",
+        "ecosystem": "unknown",
+        "vulnerable_versions": [],
+        "patched_versions": [],
+        "kev": false,
+        "known_exploitation_window": null,
+        "safe_fixture": {}
+      },
+      "report": null,
+      "trace": [],
+      "progress": {
+        "autonomous_status": "not_analyzed",
+        "summary": "No autonomous workflow has been run for this CVE yet.",
+        "completed_phases": [],
+        "exploit_generated": false,
+        "patch_generated": false,
+        "exploit_note": "Not attempted. CVEHunt is a defensive pipeline and does not generate exploit code or payloads.",
+        "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
+      },
+      "artifacts": {
+        "workdir": ".cvehunt/cves/CVE-2026-7040",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7040",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/report.md",
+        "trace_exists": false,
+        "report_exists": false,
+        "report_md_exists": false
+      }
+    },
+    {
+      "cve": {
+        "cve_id": "CVE-2026-7123",
+        "name": "Unknown",
+        "summary": "A vulnerability was found in Totolink A8000RU 7.1cu.643_b20200521. Affected is the function setIptvCfg of the file /cgi-bin/cstecgi.cgi of the component CGI Handler. Performing a manipulation of the argument setIptvCfg results in os command injection. The attack can be initiated remotely. The exploit has been made public and could be used.",
+        "cvss": 9.8,
+        "disclosed": "2026-04-27",
+        "ecosystem": "unknown",
+        "vulnerable_versions": [],
+        "patched_versions": [],
+        "kev": false,
+        "known_exploitation_window": null,
+        "safe_fixture": {}
+      },
+      "report": null,
+      "trace": [],
+      "progress": {
+        "autonomous_status": "not_analyzed",
+        "summary": "No autonomous workflow has been run for this CVE yet.",
+        "completed_phases": [],
+        "exploit_generated": false,
+        "patch_generated": false,
+        "exploit_note": "Not attempted. CVEHunt is a defensive pipeline and does not generate exploit code or payloads.",
+        "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
+      },
+      "artifacts": {
+        "workdir": ".cvehunt/cves/CVE-2026-7123",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7123",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/report.md",
+        "trace_exists": false,
+        "report_exists": false,
+        "report_md_exists": false
+      }
+    },
+    {
+      "cve": {
+        "cve_id": "CVE-2026-7124",
+        "name": "Unknown",
+        "summary": "A vulnerability was determined in Totolink A8000RU 7.1cu.643_b20200521. Affected by this vulnerability is the function setIpv6LanCfg of the file /cgi-bin/cstecgi.cgi of the component CGI Handler. Executing a manipulation of the argument addrPrefixLen can lead to os command injection. The attack can be launched remotely. The exploit has been publicly disclosed and may be utilized.",
+        "cvss": 9.8,
+        "disclosed": "2026-04-27",
+        "ecosystem": "unknown",
+        "vulnerable_versions": [],
+        "patched_versions": [],
+        "kev": false,
+        "known_exploitation_window": null,
+        "safe_fixture": {}
+      },
+      "report": null,
+      "trace": [],
+      "progress": {
+        "autonomous_status": "not_analyzed",
+        "summary": "No autonomous workflow has been run for this CVE yet.",
+        "completed_phases": [],
+        "exploit_generated": false,
+        "patch_generated": false,
+        "exploit_note": "Not attempted. CVEHunt is a defensive pipeline and does not generate exploit code or payloads.",
+        "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
+      },
+      "artifacts": {
+        "workdir": ".cvehunt/cves/CVE-2026-7124",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7124",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/report.md",
+        "trace_exists": false,
+        "report_exists": false,
+        "report_md_exists": false
+      }
+    },
+    {
+      "cve": {
+        "cve_id": "CVE-2026-7125",
+        "name": "Unknown",
+        "summary": "A vulnerability was identified in Totolink A8000RU 7.1cu.643_b20200521. Affected by this issue is the function setWiFiEasyCfg of the file /cgi-bin/cstecgi.cgi of the component CGI Handler. The manipulation of the argument merge leads to os command injection. The attack may be initiated remotely. The exploit is publicly available and might be used.",
+        "cvss": 9.8,
+        "disclosed": "2026-04-27",
+        "ecosystem": "unknown",
+        "vulnerable_versions": [],
+        "patched_versions": [],
+        "kev": false,
+        "known_exploitation_window": null,
+        "safe_fixture": {}
+      },
+      "report": null,
+      "trace": [],
+      "progress": {
+        "autonomous_status": "not_analyzed",
+        "summary": "No autonomous workflow has been run for this CVE yet.",
+        "completed_phases": [],
+        "exploit_generated": false,
+        "patch_generated": false,
+        "exploit_note": "Not attempted. CVEHunt is a defensive pipeline and does not generate exploit code or payloads.",
+        "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
+      },
+      "artifacts": {
+        "workdir": ".cvehunt/cves/CVE-2026-7125",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7125",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/report.md",
+        "trace_exists": false,
+        "report_exists": false,
+        "report_md_exists": false
+      }
+    }
+  ]
+}
