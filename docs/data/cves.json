@@ -34,12 +34,12 @@
         "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
       },
       "artifacts": {
-        "workdir": ".cvehunt/cves/CVE-2025-15626",
-        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2025-15626",
-        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/report.md",
+        "workdir": "cves/CVE-2025-15626",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-15626",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/report.md",
         "trace_exists": false,
         "report_exists": false,
         "report_md_exists": false
@@ -184,12 +184,12 @@
         "patch_note": "No source patch was generated. The report contains patch-version and remediation guidance only."
       },
       "artifacts": {
-        "workdir": ".cvehunt/cves/CVE-2025-55182",
-        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2025-55182",
-        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-55182/report.md",
+        "workdir": "cves/CVE-2025-55182",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/report.md",
         "trace_exists": true,
         "report_exists": true,
         "report_md_exists": true
@@ -221,12 +221,12 @@
         "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
       },
       "artifacts": {
-        "workdir": ".cvehunt/cves/CVE-2026-7040",
-        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7040",
-        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/report.md",
+        "workdir": "cves/CVE-2026-7040",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7040",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/report.md",
         "trace_exists": false,
         "report_exists": false,
         "report_md_exists": false
@@ -258,12 +258,12 @@
         "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
       },
       "artifacts": {
-        "workdir": ".cvehunt/cves/CVE-2026-7123",
-        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7123",
-        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/report.md",
+        "workdir": "cves/CVE-2026-7123",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7123",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/report.md",
         "trace_exists": false,
         "report_exists": false,
         "report_md_exists": false
@@ -295,12 +295,12 @@
         "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
       },
       "artifacts": {
-        "workdir": ".cvehunt/cves/CVE-2026-7124",
-        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7124",
-        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/report.md",
+        "workdir": "cves/CVE-2026-7124",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7124",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/report.md",
         "trace_exists": false,
         "report_exists": false,
         "report_md_exists": false
@@ -332,12 +332,12 @@
         "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis."
       },
       "artifacts": {
-        "workdir": ".cvehunt/cves/CVE-2026-7125",
-        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7125",
-        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/report.md",
+        "workdir": "cves/CVE-2026-7125",
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7125",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/report.md",
         "trace_exists": false,
         "report_exists": false,
         "report_md_exists": false

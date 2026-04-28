@@ -13,7 +13,7 @@ from cvehunt.workflow import CveHuntWorkflow
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cvehunt")
-    parser.add_argument("--data-dir", default=".cvehunt", help="Local data/workdir root")
+    parser.add_argument("--data-dir", default=".", help="Local data/workdir root")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     run = subcommands.add_parser("run", help="Run the defensive workflow for a CVE")

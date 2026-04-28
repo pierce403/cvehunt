@@ -10,7 +10,7 @@ from cvehunt.reporting import render_markdown
 
 
 class WorkdirStore:
-    def __init__(self, root: Path | str = ".cvehunt") -> None:
+    def __init__(self, root: Path | str = ".") -> None:
         self.root = Path(root)
         self.cves_dir = self.root / "cves"
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / ".cvehunt" / "cves"
+DATA_DIR = ROOT / "cves"
 OUT = ROOT / "web" / "public" / "data" / "cves.json"
 REPO_URL = "https://github.com/pierce403/cvehunt"
 

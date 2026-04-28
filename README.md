@@ -45,25 +45,21 @@ Instead, it uses local fixtures and synthetic validation checks to demonstrate h
 
 ## Dashboard And Workdirs
 
-CVEHunt stores local pipeline state under `.cvehunt/` by default:
+CVEHunt stores CVE workdirs under the repository-level `cves/` directory by default:
 
 ```text
-.cvehunt/
-  dashboard.html
-  cves/
-    CVE-2025-55182/
-      cve.json
-      trace.jsonl
-      report.json
-      report.md
+cves/
+  CVE-2025-55182/
+    cve.json
+    trace.jsonl
+    report.json
+    report.md
 ```
 
-Use `sync-recent` to pull recent CVE metadata from NVD. Run it without `--run` when new CVEs should appear as not analyzed, then generate or serve a dashboard:
+Use `sync-recent` to pull recent CVE metadata from NVD. Run it without `--run` when new CVEs should appear as not analyzed:
 
 ```bash
 uv run cvehunt sync-recent --days 7 --limit 25
-uv run cvehunt dashboard
-uv run cvehunt serve --port 8765
 ```
 
 Each CVE directory is intended to become the durable working directory for that CVE. The initial implementation writes structured metadata, a full phase trace, and report artifacts.
@@ -74,7 +70,7 @@ The public site is a React/Vite app generated into `docs/` for GitHub Pages:
 npm run build
 ```
 
-The build reads `.cvehunt/cves/` and emits `web/public/data/cves.json` before bundling the site. GitHub Actions runs the same build and deploys Pages on commits to `main`.
+The build reads `cves/` and emits `web/public/data/cves.json` before bundling the site. GitHub Actions runs the same build and deploys Pages on commits to `main`.
 
 ## Example
 

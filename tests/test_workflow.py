@@ -66,8 +66,8 @@ def test_dashboard_includes_tracked_cves(tmp_path) -> None:
     assert (
         _repo_artifact_url(
             "https://github.com/pierce403/cvehunt",
-            ".cvehunt/cves/CVE-2025-55182",
+            "cves/CVE-2025-55182",
             tree=True,
         )
-        == "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2025-55182"
+        == "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182"
     )
