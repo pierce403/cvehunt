@@ -171,6 +171,18 @@ tr:hover td {
   background: #121725;
 }
 
+.summaryRow {
+  cursor: pointer;
+}
+
+.summaryRow:focus-visible {
+  outline: none;
+}
+
+.summaryRow:focus-visible td {
+  background: #161c2c;
+}
+
 .summaryRow.expanded td {
   background: #121725;
 }
@@ -191,13 +203,6 @@ tr:hover td {
   align-items: flex-start;
   gap: 10px;
   width: 100%;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
 }
 
 .cveToggle > span:last-child {

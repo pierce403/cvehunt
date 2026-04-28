@@ -145,6 +145,16 @@ function Dashboard({ data }) {
     }
   }, [expandedCveId, filtered]);
 
+  function toggleCve(cveId) {
+    setExpandedCveId((current) => (current === cveId ? null : cveId));
+  }
+
+  function onSummaryRowKeyDown(event, cveId) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    toggleCve(cveId);
+  }
+
   return (
     <>
       <section className="stats">
@@ -182,20 +192,21 @@ function Dashboard({ data }) {
               const expanded = expandedCveId === item.cve.cve_id;
               return (
                 <React.Fragment key={item.cve.cve_id}>
-                  <tr className={expanded ? 'summaryRow expanded' : 'summaryRow'}>
+                  <tr
+                    className={expanded ? 'summaryRow expanded' : 'summaryRow'}
+                    onClick={() => toggleCve(item.cve.cve_id)}
+                    onKeyDown={(event) => onSummaryRowKeyDown(event, item.cve.cve_id)}
+                    tabIndex={0}
+                    aria-expanded={expanded}
+                  >
                     <td>
-                      <button
-                        className="cveToggle"
-                        onClick={() => setExpandedCveId(expanded ? null : item.cve.cve_id)}
-                        aria-expanded={expanded}
-                        aria-controls={`row-${item.cve.cve_id}`}
-                      >
+                      <div className="cveToggle">
                         {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                         <span>
                           <strong className="cveLink">{item.cve.cve_id}</strong>
                           <span>{item.cve.name}</span>
                         </span>
-                      </button>
+                      </div>
                     </td>
                     <td><span className={cvssClass(item.cve.cvss)}>{item.cve.cvss ?? '-'}</span></td>
                     <td>{item.cve.disclosed}</td>
@@ -203,7 +214,13 @@ function Dashboard({ data }) {
                     <td><span className={statusClass(item)}>{statusLabel(item)}</span></td>
                     <td>{completedPhaseCount(item)}/{PHASES.length} completed</td>
                     <td>
-                      <a className="artifactLink" href={item.artifacts.workdir_url}>workdir <ExternalLink size={13} /></a>
+                      <a
+                        className="artifactLink"
+                        href={item.artifacts.workdir_url}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        workdir <ExternalLink size={13} />
+                      </a>
                     </td>
                   </tr>
                   {expanded && (
