@@ -14,9 +14,9 @@ The goal is to model a defensive workflow:
 
 ```bash
 uv sync --dev
-uv run cvehunt run CVE-2025-55182
+uv run cvehunt run CVE-2025-55182 --model gpt-5.5-cyber
 uv run cvehunt run CVE-2025-55182 --json
-uv run cvehunt run CVE-2025-55182 --persist
+uv run cvehunt run CVE-2025-55182 --persist --model gpt-5.5-cyber
 uv run cvehunt sync-recent --days 7 --limit 25
 uv run cvehunt serve
 uv run python -m pytest
@@ -51,10 +51,13 @@ CVEHunt stores CVE workdirs under the repository-level `cves/` directory by defa
 cves/
   CVE-2025-55182/
     cve.json
-    trace.jsonl
-    pipeline_status.json
-    report.json
-    report.md
+    runs/
+      20260428T143950984545Z/
+        cve.json
+        trace.jsonl
+        pipeline_status.json
+        report.json
+        report.md
 ```
 
 Use `sync-recent` to pull recent CVE metadata from NVD. Run it without `--run` when new CVEs should appear as not analyzed:
@@ -64,6 +67,7 @@ uv run cvehunt sync-recent --days 7 --limit 25
 ```
 
 Each CVE directory is intended to become the durable working directory for that CVE. The initial implementation writes structured metadata, a full phase trace, and report artifacts.
+Persisted runs are written to timestamped `runs/<RUN-ID>/` directories. Root-level report artifacts should only be promoted into `cves/<CVE-ID>/` after a fully successful end-to-end run.
 
 The public site is a React/Vite app generated into `docs/` for GitHub Pages:
 
@@ -76,7 +80,7 @@ The build reads `cves/` and emits `web/public/data/cves.json` before bundling th
 ## Example
 
 ```bash
-uv run cvehunt run CVE-2025-55182
+uv run cvehunt run CVE-2025-55182 --model gpt-5.5-cyber
 ```
 
 The command prints a markdown report with the pipeline outcome and defensive recommendations.

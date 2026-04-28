@@ -32,6 +32,14 @@ def read_trace(path: Path) -> list[dict[str, object]]:
     return events
 
 
+def latest_run_dir(directory: Path) -> Path | None:
+    runs = directory / "runs"
+    if not runs.exists():
+        return None
+    directories = [path for path in runs.iterdir() if path.is_dir()]
+    return sorted(directories)[-1] if directories else None
+
+
 def summarize_progress(report: dict[str, object] | None, trace: list[dict[str, object]]) -> dict[str, object]:
     completed_phases = [str(event.get("phase", "")) for event in trace]
     if not report:
@@ -63,14 +71,22 @@ def build() -> dict[str, object]:
     for directory in sorted(DATA_DIR.iterdir() if DATA_DIR.exists() else []):
         if not directory.is_dir():
             continue
+        run_directory = latest_run_dir(directory)
+        artifact_dir = (
+            directory
+            if (directory / "report.json").exists() or run_directory is None
+            else run_directory
+        )
         cve_path = directory / "cve.json"
+        if not cve_path.exists() and run_directory is not None:
+            cve_path = run_directory / "cve.json"
         cve = read_json(cve_path)
         if not cve:
             continue
-        report_path = directory / "report.json"
-        trace_path = directory / "trace.jsonl"
-        report_md_path = directory / "report.md"
-        pipeline_status_path = directory / "pipeline_status.json"
+        report_path = artifact_dir / "report.json"
+        trace_path = artifact_dir / "trace.jsonl"
+        report_md_path = artifact_dir / "report.md"
+        pipeline_status_path = artifact_dir / "pipeline_status.json"
         report = read_json(report_path)
         pipeline_status = read_json(pipeline_status_path)
         trace = read_trace(trace_path)
@@ -83,6 +99,11 @@ def build() -> dict[str, object]:
                 "progress": summarize_progress(report, trace),
                 "artifacts": {
                     "workdir": directory.relative_to(ROOT).as_posix(),
+                    "latest_run": (
+                        run_directory.relative_to(ROOT).as_posix()
+                        if run_directory
+                        else None
+                    ),
                     "workdir_url": repo_url(directory, tree=True),
                     "cve_json_url": repo_url(cve_path),
                     "trace_url": repo_url(trace_path),

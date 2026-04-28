@@ -47,6 +47,7 @@ FULL_PIPELINE_PHASES = [
 def render_markdown(report: WorkflowReport) -> str:
     data = asdict(report)
     cve = data["cve"]
+    run = data["run"]
     finding = data["finding"]
     judgement = data["judgement"]
     evidence = data["evidence"]
@@ -58,6 +59,8 @@ def render_markdown(report: WorkflowReport) -> str:
         f"CVSS: {cve['cvss'] if cve['cvss'] is not None else 'unknown'}",
         f"KEV: {'yes' if cve['kev'] else 'no'}",
         f"Ecosystem: {cve['ecosystem']}",
+        f"Run ID: {run['run_id']}",
+        f"Model: {run['model']}",
         "",
         "## Finding",
         "",
@@ -123,6 +126,8 @@ def render_pipeline_status(
 
     return {
         "cve_id": report.cve.cve_id,
+        "run_id": report.run.run_id,
+        "model": report.run.model,
         "overall_status": report.judgement.status,
         "confidence": report.judgement.confidence,
         "furthest_completed_stage": events[-1].phase if events else None,

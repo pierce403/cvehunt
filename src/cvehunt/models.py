@@ -5,6 +5,10 @@ from datetime import UTC, datetime
 from typing import Literal
 
 
+def utc_run_id() -> str:
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+
+
 ExploitabilityStatus = Literal[
     "not_supported",
     "needs_human_review",
@@ -71,7 +75,14 @@ class Judgement:
 
 
 @dataclass(frozen=True)
+class RunMetadata:
+    run_id: str = field(default_factory=utc_run_id)
+    model: str = "unspecified"
+
+
+@dataclass(frozen=True)
 class WorkflowReport:
+    run: RunMetadata
     cve: CveRecord
     finding: ResearchFinding
     plan: ValidationPlan

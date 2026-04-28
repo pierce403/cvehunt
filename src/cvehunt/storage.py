@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
@@ -20,6 +21,12 @@ class WorkdirStore:
     def cve_dir(self, cve_id: str) -> Path:
         return self.cves_dir / cve_id.upper()
 
+    def runs_dir(self, cve_id: str) -> Path:
+        return self.cve_dir(cve_id) / "runs"
+
+    def run_dir(self, cve_id: str, run_id: str) -> Path:
+        return self.runs_dir(cve_id) / run_id
+
     def write_cve(self, record: CveRecord) -> Path:
         directory = self.cve_dir(record.cve_id)
         directory.mkdir(parents=True, exist_ok=True)
@@ -29,6 +36,10 @@ class WorkdirStore:
 
     def read_cve(self, cve_id: str) -> CveRecord | None:
         path = self.cve_dir(cve_id) / "cve.json"
+        if not path.exists():
+            latest = self.latest_run_dir(cve_id)
+            if latest is not None:
+                path = latest / "cve.json"
         if not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -52,16 +63,25 @@ class WorkdirStore:
     def write_report(self, report: WorkflowReport, events: list[TraceEvent]) -> Path:
         directory = self.cve_dir(report.cve.cve_id)
         directory.mkdir(parents=True, exist_ok=True)
-        self.write_cve(report.cve)
-        self.write_trace(report.cve.cve_id, events)
-        report_path = directory / "report.json"
-        report_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
-        (directory / "report.md").write_text(render_markdown(report), encoding="utf-8")
-        (directory / "pipeline_status.json").write_text(
-            json.dumps(render_pipeline_status(report, events), indent=2),
-            encoding="utf-8",
+        run_directory = self.run_dir(report.cve.cve_id, report.run.run_id)
+        run_directory.mkdir(parents=True, exist_ok=False)
+        pipeline_status = render_pipeline_status(report, events)
+        report_path = self._write_run_artifacts(
+            run_directory,
+            report,
+            events,
+            pipeline_status,
         )
+        if pipeline_status["requested_full_pipeline_completed"]:
+            self._promote_successful_run(run_directory, directory)
         return report_path
+
+    def latest_run_dir(self, cve_id: str) -> Path | None:
+        runs = self.runs_dir(cve_id)
+        if not runs.exists():
+            return None
+        directories = [path for path in runs.iterdir() if path.is_dir()]
+        return sorted(directories)[-1] if directories else None
 
     def list_reports(self) -> list[dict[str, object]]:
         if not self.cves_dir.exists():
@@ -71,8 +91,16 @@ class WorkdirStore:
             if not directory.is_dir():
                 continue
             cve_path = directory / "cve.json"
-            report_path = directory / "report.json"
-            pipeline_status_path = directory / "pipeline_status.json"
+            run_directory = self.latest_run_dir(directory.name)
+            artifact_dir = (
+                directory
+                if (directory / "report.json").exists() or run_directory is None
+                else run_directory
+            )
+            if not cve_path.exists() and run_directory is not None:
+                cve_path = run_directory / "cve.json"
+            report_path = artifact_dir / "report.json"
+            pipeline_status_path = artifact_dir / "pipeline_status.json"
             if not cve_path.exists():
                 continue
             cve = json.loads(cve_path.read_text(encoding="utf-8"))
@@ -90,7 +118,41 @@ class WorkdirStore:
                     "report": report,
                     "pipeline_status": pipeline_status,
                     "workdir": str(directory),
-                    "trace": str(directory / "trace.jsonl"),
+                    "latest_run": str(run_directory) if run_directory else None,
+                    "trace": str(artifact_dir / "trace.jsonl"),
                 }
             )
         return rows
+
+    def _write_run_artifacts(
+        self,
+        directory: Path,
+        report: WorkflowReport,
+        events: list[TraceEvent],
+        pipeline_status: dict[str, object],
+    ) -> Path:
+        (directory / "cve.json").write_text(
+            json.dumps(asdict(report.cve), indent=2),
+            encoding="utf-8",
+        )
+        with (directory / "trace.jsonl").open("w", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(event.to_dict()) + "\n")
+        report_path = directory / "report.json"
+        report_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        (directory / "report.md").write_text(render_markdown(report), encoding="utf-8")
+        (directory / "pipeline_status.json").write_text(
+            json.dumps(pipeline_status, indent=2),
+            encoding="utf-8",
+        )
+        return report_path
+
+    def _promote_successful_run(self, run_directory: Path, cve_directory: Path) -> None:
+        for name in (
+            "cve.json",
+            "trace.jsonl",
+            "report.json",
+            "report.md",
+            "pipeline_status.json",
+        ):
+            shutil.copy2(run_directory / name, cve_directory / name)

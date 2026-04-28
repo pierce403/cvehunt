@@ -196,6 +196,8 @@ function Detail({ item }) {
         <Info label="Disclosed" value={item.cve.disclosed} />
         <Info label="Ecosystem" value={item.cve.ecosystem} />
         <Info label="Known exploited" value={item.cve.kev ? 'yes' : 'no'} />
+        <Info label="Latest run" value={item.report?.run?.run_id || item.pipeline_status?.run_id || 'none'} />
+        <Info label="Model" value={item.report?.run?.model || item.pipeline_status?.model || 'none'} />
       </section>
 
       <section className="panel">

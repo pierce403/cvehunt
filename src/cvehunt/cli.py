@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from cvehunt.dashboard import serve_dashboard, write_dashboard
@@ -20,11 +21,21 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("cve_id", help="CVE identifier, for example CVE-2025-55182")
     run.add_argument("--json", action="store_true", help="Emit structured JSON")
     run.add_argument("--persist", action="store_true", help="Write report and trace to data dir")
+    run.add_argument(
+        "--model",
+        default=None,
+        help="Model label for this run, defaults to CVEHUNT_MODEL or unspecified",
+    )
 
     sync = subcommands.add_parser("sync-recent", help="Fetch recent CVEs from NVD")
     sync.add_argument("--days", type=int, default=7, help="Publication lookback window")
     sync.add_argument("--limit", type=int, default=50, help="Maximum CVEs to fetch")
     sync.add_argument("--run", action="store_true", help="Run the pipeline for fetched CVEs")
+    sync.add_argument(
+        "--model",
+        default=None,
+        help="Model label for persisted sync runs, defaults to CVEHUNT_MODEL or unspecified",
+    )
 
     dashboard = subcommands.add_parser("dashboard", help="Write a static dashboard HTML file")
     dashboard.add_argument(
@@ -44,13 +55,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _model_label(value: str | None) -> str:
+    return value or os.environ.get("CVEHUNT_MODEL") or "unspecified"
+
+
 def main() -> None:
     args = build_parser().parse_args()
     store = WorkdirStore(args.data_dir)
     store.ensure()
     if args.command == "run":
         cve = store.read_cve(args.cve_id)
-        report, events = CveHuntWorkflow().run_with_trace(args.cve_id, cve)
+        report, events = CveHuntWorkflow(model=_model_label(args.model)).run_with_trace(
+            args.cve_id,
+            cve,
+        )
         if args.persist:
             store.write_report(report, events)
         if args.json:
@@ -59,7 +77,7 @@ def main() -> None:
             print(render_markdown(report))
     elif args.command == "sync-recent":
         records = fetch_recent_cves(days=args.days, limit=args.limit)
-        workflow = CveHuntWorkflow()
+        workflow = CveHuntWorkflow(model=_model_label(args.model))
         for record in records:
             store.write_cve(record)
             if args.run:

@@ -8,8 +8,9 @@ from cvehunt.workflow import CveHuntWorkflow
 
 
 def test_known_cve_produces_defensive_signal() -> None:
-    report = CveHuntWorkflow().run("CVE-2025-55182")
+    report = CveHuntWorkflow(model="test-model").run("CVE-2025-55182")
 
+    assert report.run.model == "test-model"
     assert report.cve.name == "React2Shell"
     assert report.judgement.status == "defensive_signal_observed"
     assert report.evidence[0].passed is True
@@ -43,17 +44,21 @@ def test_persisted_run_writes_workdir_artifacts(tmp_path) -> None:
     store.write_report(report, events)
 
     cve_dir = tmp_path / "cves" / "CVE-2025-55182"
-    assert (cve_dir / "cve.json").exists()
-    assert (cve_dir / "trace.jsonl").exists()
-    assert (cve_dir / "report.json").exists()
-    assert (cve_dir / "report.md").exists()
-    assert (cve_dir / "pipeline_status.json").exists()
-    trace = (cve_dir / "trace.jsonl").read_text(encoding="utf-8")
+    run_dir = cve_dir / "runs" / report.run.run_id
+    assert (run_dir / "cve.json").exists()
+    assert (run_dir / "trace.jsonl").exists()
+    assert (run_dir / "report.json").exists()
+    assert (run_dir / "report.md").exists()
+    assert (run_dir / "pipeline_status.json").exists()
+    assert not (cve_dir / "report.json").exists()
+    trace = (run_dir / "trace.jsonl").read_text(encoding="utf-8")
     assert "Collector" in trace
     assert "Judge" in trace
-    pipeline_status = (cve_dir / "pipeline_status.json").read_text(encoding="utf-8")
+    pipeline_status = (run_dir / "pipeline_status.json").read_text(encoding="utf-8")
     assert "Harness Builder" in pipeline_status
     assert '"requested_full_pipeline_completed": false' in pipeline_status
+    report_md = (run_dir / "report.md").read_text(encoding="utf-8")
+    assert "Model: unspecified" in report_md
 
 
 def test_dashboard_includes_tracked_cves(tmp_path) -> None:

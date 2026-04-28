@@ -8,11 +8,12 @@ from cvehunt.agents import (
     ValidatorAgent,
 )
 from cvehunt.models import WorkflowReport
-from cvehunt.models import CveRecord, TraceEvent
+from cvehunt.models import CveRecord, RunMetadata, TraceEvent
 
 
 class CveHuntWorkflow:
-    def __init__(self) -> None:
+    def __init__(self, model: str = "unspecified") -> None:
+        self.model = model
         self.collector = CollectorAgent()
         self.researcher = ResearcherAgent()
         self.planner = EnvironmentPlannerAgent()
@@ -80,6 +81,7 @@ class CveHuntWorkflow:
             )
         )
         report = WorkflowReport(
+            run=RunMetadata(model=self.model),
             cve=cve,
             finding=finding,
             plan=plan,

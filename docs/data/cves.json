@@ -36,6 +36,7 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2025-15626",
+        "latest_run": null,
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-15626",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/cve.json",
         "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/trace.jsonl",
@@ -70,6 +71,10 @@
         }
       },
       "report": {
+        "run": {
+          "run_id": "20260428T143950984545Z",
+          "model": "gpt-5.5-cyber"
+        },
         "cve": {
           "cve_id": "CVE-2025-55182",
           "name": "React2Shell",
@@ -144,35 +149,37 @@
           "phase": "Collector",
           "message": "Collected metadata for CVE-2025-55182",
           "artifact": "cve.json",
-          "timestamp": "2026-04-28T14:13:01+00:00"
+          "timestamp": "2026-04-28T14:39:50+00:00"
         },
         {
           "phase": "Researcher",
           "message": "Classified as deserialization; surface: request parsing and object materialization",
           "artifact": null,
-          "timestamp": "2026-04-28T14:13:01+00:00"
+          "timestamp": "2026-04-28T14:39:50+00:00"
         },
         {
           "phase": "Environment Planner",
           "message": "Created 1 offline validation check(s)",
           "artifact": null,
-          "timestamp": "2026-04-28T14:13:01+00:00"
+          "timestamp": "2026-04-28T14:39:50+00:00"
         },
         {
           "phase": "Validator",
           "message": "Collected 1 passing evidence item(s) out of 1",
           "artifact": null,
-          "timestamp": "2026-04-28T14:13:01+00:00"
+          "timestamp": "2026-04-28T14:39:50+00:00"
         },
         {
           "phase": "Judge",
           "message": "Assigned defensive_signal_observed with 0.82 confidence",
           "artifact": "report.json",
-          "timestamp": "2026-04-28T14:13:01+00:00"
+          "timestamp": "2026-04-28T14:39:50+00:00"
         }
       ],
       "pipeline_status": {
         "cve_id": "CVE-2025-55182",
+        "run_id": "20260428T143950984545Z",
+        "model": "gpt-5.5-cyber",
         "overall_status": "defensive_signal_observed",
         "confidence": 0.82,
         "furthest_completed_stage": "Judge",
@@ -269,12 +276,13 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2025-55182",
+        "latest_run": "cves/CVE-2025-55182/runs/20260428T143950984545Z",
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/report.md",
-        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/pipeline_status.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/20260428T143950984545Z/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/20260428T143950984545Z/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/20260428T143950984545Z/report.md",
+        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/20260428T143950984545Z/pipeline_status.json",
         "trace_exists": true,
         "report_exists": true,
         "report_md_exists": true,
@@ -309,6 +317,7 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2026-7040",
+        "latest_run": null,
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7040",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/cve.json",
         "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/trace.jsonl",
@@ -349,6 +358,7 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2026-7123",
+        "latest_run": null,
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7123",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/cve.json",
         "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/trace.jsonl",
@@ -389,6 +399,7 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2026-7124",
+        "latest_run": null,
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7124",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/cve.json",
         "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/trace.jsonl",
@@ -429,6 +440,7 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2026-7125",
+        "latest_run": null,
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-7125",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/cve.json",
         "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/trace.jsonl",
