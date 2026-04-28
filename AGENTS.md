@@ -16,15 +16,20 @@ Keep entries concrete and concise. Future agents should be able to act on them w
 
 ## Project Overview
 
-CVEHunt is a defensive proof-of-concept inspired by agentic CVE exploitability workflows. It demonstrates orchestration, evidence capture, and judging through a safe pipeline:
+CVEHunt is intended to become a fully autonomous CVE exploitability and remediation validation system. The long-term goal is one end-to-end job that can collect CVE context, build an isolated vulnerable/patched harness, prove exploitability with a PoC in that harness, prove the remediation blocks the same behavior, and emit durable evidence for defenders.
 
-1. Collector: gathers CVE metadata from local fixtures.
-2. Researcher: derives high-level defensive hypotheses from descriptions.
-3. Environment Planner: proposes isolated validation checks.
-4. Validator: simulates evidence collection from safe fixtures.
-5. Judge: produces an explainable defensive exploitability assessment.
+This direction is important: proving that a fix works requires more than metadata or a severity score. The pipeline should be able to demonstrate the vulnerable behavior, demonstrate the patched behavior, preserve the traces and artifacts, and produce an explainable judgement that downstream teams can audit.
 
-This repo must not become an exploit generator. Do not add code that emits payloads, bypasses, real exploit scripts, or operational attack instructions.
+The intended pipeline shape is:
+
+1. Collector: gathers CVE metadata, source context, version information, and available patch signals.
+2. Researcher: derives vulnerability hypotheses, affected surfaces, and candidate validation primitives.
+3. Harness Builder: creates isolated vulnerable and patched test environments for the target CVE.
+4. PoC Developer: develops a proof-of-concept that is scoped to the isolated harness and used to validate exploitability.
+5. Validator: runs the PoC against vulnerable and patched harnesses, captures evidence, and verifies that remediation changes the outcome.
+6. Judge: reviews traces, artifacts, exploitability evidence, remediation evidence, and safety boundaries to produce an explainable assessment.
+
+All exploit-development work in this repo must be tied to authorized, isolated validation harnesses and remediation proof. Do not add code that targets real third-party systems, publishes weaponized payloads, provides bypass guidance for live targets, or turns CVEHunt into a general-purpose attack tool. PoC artifacts are acceptable only when they are necessary to prove exploitability and fix efficacy inside the controlled test/evaluation harness for a CVE.
 
 ## Build & Test Commands
 
