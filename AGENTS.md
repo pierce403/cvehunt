@@ -33,6 +33,10 @@ uv sync --dev
 uv run pytest
 uv run openmoak run CVE-2025-55182 --json
 uv run openmoak run CVE-2025-55182
+uv run openmoak run CVE-2025-55182 --persist
+uv run openmoak sync-recent --days 7 --limit 25 --run
+uv run openmoak dashboard
+uv run openmoak serve
 ```
 
 ## Coding Conventions
@@ -42,20 +46,23 @@ uv run openmoak run CVE-2025-55182
 - Prefer typed dataclasses for pipeline state and artifacts.
 - Keep agent outputs structured. Use plain strings only for human-facing summaries.
 - Preserve safety boundaries in tests when adding workflow behavior.
+- Local CVE workdirs are stored under `.openmoak/cves/<CVE-ID>/`.
+- Each persisted pipeline run should write `cve.json`, `trace.jsonl`, `report.json`, and `report.md`.
 
 ## Known Issues & Solutions
 
 - `python` may not be installed in this environment; use `python3` or `uv run python`.
 - Public site notes from the initial MOAK research are in `moak_site_notes/` and are intentionally not part of the package.
+- The local dashboard is static HTML generated from `.openmoak`; regenerate it after syncing or running CVEs.
 
 ## Agent Tips
 
 - Read `README.md` for the product framing before changing behavior.
 - If adding real integrations later, keep them behind explicit adapters and test with fixtures first.
 - If a request asks for exploit details, redirect the implementation toward defensive evidence, remediation guidance, or toy-only demonstrations.
+- For MOAK-like dashboard work, keep agent traces complete and structured so each CVE workdir can be inspected independently.
 
 ## Rapport & Reflection
 
 - The collaborator asked for a git repo and an agent file inspired by `recurse.bot`; preserve and maintain this file.
 - Prefer direct engineering updates and concrete file changes.
-

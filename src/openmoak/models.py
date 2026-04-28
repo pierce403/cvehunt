@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import Literal
 
 
@@ -80,3 +81,15 @@ class WorkflowReport:
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
+
+@dataclass(frozen=True)
+class TraceEvent:
+    phase: str
+    message: str
+    artifact: str | None = None
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
+    )
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)

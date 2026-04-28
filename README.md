@@ -16,6 +16,10 @@ The goal is to model a defensive workflow:
 uv sync --dev
 uv run openmoak run CVE-2025-55182
 uv run openmoak run CVE-2025-55182 --json
+uv run openmoak run CVE-2025-55182 --persist
+uv run openmoak sync-recent --days 7 --limit 25 --run
+uv run openmoak dashboard
+uv run openmoak serve
 uv run pytest
 ```
 
@@ -39,6 +43,31 @@ Instead, it uses local fixtures and synthetic validation checks to demonstrate h
 - `ValidatorAgent`: simulates vulnerable/patched evidence from fixtures.
 - `JudgeAgent`: assigns a status, confidence, and remediation notes.
 
+## Dashboard And Workdirs
+
+OpenMOAK stores local pipeline state under `.openmoak/` by default:
+
+```text
+.openmoak/
+  dashboard.html
+  cves/
+    CVE-2025-55182/
+      cve.json
+      trace.jsonl
+      report.json
+      report.md
+```
+
+Use `sync-recent` to pull recent CVE metadata from NVD, optionally run the pipeline, and then generate or serve a dashboard:
+
+```bash
+uv run openmoak sync-recent --days 7 --limit 25 --run
+uv run openmoak dashboard
+uv run openmoak serve --port 8765
+```
+
+Each CVE directory is intended to become the durable working directory for that CVE. The initial implementation writes structured metadata, a full phase trace, and report artifacts.
+
 ## Example
 
 ```bash
@@ -46,4 +75,3 @@ uv run openmoak run CVE-2025-55182
 ```
 
 The command prints a markdown report with the pipeline outcome and defensive recommendations.
-

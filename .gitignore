@@ -11,3 +11,4 @@ build/
 *.egg-info/
 .DS_Store
 moak_site_notes/
+.openmoak/
