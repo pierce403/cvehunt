@@ -1,0 +1,61 @@
+# AGENTS.md - Instructions for Coding Agents
+
+## Self-Improvement Directive
+
+When working on this project, update this file whenever you learn something important about the codebase. Capture both successes to repeat and failures to avoid. Include collaborator preferences that will help future handoffs. This includes:
+
+- Verified build, lint, test, and run commands
+- Project conventions and architecture decisions
+- Common errors and their solutions
+- Tips for navigating the codebase
+- Dependencies or tools that are essential
+- Positive or negative results from experiments
+- Collaboration preferences observed during work
+
+Keep entries concrete and concise. Future agents should be able to act on them without rediscovering the same facts.
+
+## Project Overview
+
+OpenMOAK is a defensive proof-of-concept inspired by agentic CVE exploitability workflows. It demonstrates orchestration, evidence capture, and judging through a safe pipeline:
+
+1. Collector: gathers CVE metadata from local fixtures.
+2. Researcher: derives high-level defensive hypotheses from descriptions.
+3. Environment Planner: proposes isolated validation checks.
+4. Validator: simulates evidence collection from safe fixtures.
+5. Judge: produces an explainable defensive exploitability assessment.
+
+This repo must not become an exploit generator. Do not add code that emits payloads, bypasses, real exploit scripts, or operational attack instructions.
+
+## Build & Test Commands
+
+```bash
+uv sync --dev
+uv run pytest
+uv run openmoak run CVE-2025-55182 --json
+uv run openmoak run CVE-2025-55182
+```
+
+## Coding Conventions
+
+- Python source lives under `src/openmoak/`.
+- Tests live under `tests/`.
+- Prefer typed dataclasses for pipeline state and artifacts.
+- Keep agent outputs structured. Use plain strings only for human-facing summaries.
+- Preserve safety boundaries in tests when adding workflow behavior.
+
+## Known Issues & Solutions
+
+- `python` may not be installed in this environment; use `python3` or `uv run python`.
+- Public site notes from the initial MOAK research are in `moak_site_notes/` and are intentionally not part of the package.
+
+## Agent Tips
+
+- Read `README.md` for the product framing before changing behavior.
+- If adding real integrations later, keep them behind explicit adapters and test with fixtures first.
+- If a request asks for exploit details, redirect the implementation toward defensive evidence, remediation guidance, or toy-only demonstrations.
+
+## Rapport & Reflection
+
+- The collaborator asked for a git repo and an agent file inspired by `recurse.bot`; preserve and maintain this file.
+- Prefer direct engineering updates and concrete file changes.
+
