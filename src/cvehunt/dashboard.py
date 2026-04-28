@@ -5,10 +5,18 @@ import json
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from openmoak.storage import WorkdirStore
+from cvehunt.storage import WorkdirStore
 
 
-def build_dashboard(store: WorkdirStore) -> str:
+def _repo_artifact_url(repo_url: str | None, path: str, *, tree: bool = False) -> str:
+    if not repo_url:
+        return path
+    kind = "tree" if tree else "blob"
+    normalized = path[2:] if path.startswith("./") else path
+    return f"{repo_url.rstrip('/')}/{kind}/main/{normalized}"
+
+
+def build_dashboard(store: WorkdirStore, repo_url: str | None = None) -> str:
     rows = store.list_reports()
     analyzed = [row for row in rows if row["report"]]
     high = [
@@ -16,13 +24,24 @@ def build_dashboard(store: WorkdirStore) -> str:
         for row in rows
         if (row["cve"].get("cvss") is not None and row["cve"]["cvss"] >= 7)
     ]
+    for row in rows:
+        row["repo_workdir_url"] = _repo_artifact_url(
+            repo_url,
+            str(row["workdir"]),
+            tree=True,
+        )
+        row["repo_trace_url"] = _repo_artifact_url(repo_url, str(row["trace"]))
+        row["repo_report_url"] = _repo_artifact_url(
+            repo_url,
+            f"{row['workdir']}/report.md",
+        )
     payload = json.dumps(rows)
     return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OpenMOAK Dashboard</title>
+  <title>CVEHunt Dashboard</title>
   <style>
     :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
     body {{ margin: 0; background: #08090f; color: #f4f5fb; }}
@@ -50,8 +69,8 @@ def build_dashboard(store: WorkdirStore) -> str:
 </head>
 <body>
   <header>
-    <h1>OpenMOAK CVE Dashboard</h1>
-    <p class="subtitle">Recent CVEs with local pipeline workdirs and full agent traces.</p>
+    <h1>CVEHunt CVE Dashboard</h1>
+    <p class="subtitle">Recent CVEs with repository-backed pipeline workdirs and full agent traces.</p>
   </header>
   <main>
     <section class="stats">
@@ -111,7 +130,9 @@ def build_dashboard(store: WorkdirStore) -> str:
         const statusClass = report ? 'status' : 'status pending';
         const statusText = report ? judgement.status : 'Not analyzed';
         const confidence = report ? Number(judgement.confidence).toFixed(2) : '—';
-        const md = row.workdir + '/report.md';
+        const artifactLinks = report
+          ? `<a href="${{esc(row.repo_trace_url)}}">trace</a> · <a href="${{esc(row.repo_report_url)}}">report</a>`
+          : `<a href="${{esc(row.repo_workdir_url)}}">workdir</a>`;
         tr.innerHTML = `
           <td><strong>${{esc(cve.cve_id)}}</strong><br><span class="muted">${{esc(cve.name)}}</span></td>
           <td>${{esc(cve.cvss ?? '—')}}</td>
@@ -120,7 +141,7 @@ def build_dashboard(store: WorkdirStore) -> str:
           <td><span class="${{statusClass}}">${{esc(statusText)}}</span></td>
           <td>${{esc(confidence)}}</td>
           <td class="summary">${{esc(cve.summary)}}</td>
-          <td><a href="${{esc(row.trace)}}">trace</a>${{report ? ` · <a href="${{esc(md)}}">report</a>` : ''}}</td>
+          <td>${{artifactLinks}}</td>
         `;
         rowsEl.appendChild(tr);
       }});
@@ -133,10 +154,14 @@ def build_dashboard(store: WorkdirStore) -> str:
 </html>"""
 
 
-def write_dashboard(store: WorkdirStore, out: Path | str) -> Path:
+def write_dashboard(
+    store: WorkdirStore,
+    out: Path | str,
+    repo_url: str | None = None,
+) -> Path:
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_dashboard(store), encoding="utf-8")
+    path.write_text(build_dashboard(store, repo_url=repo_url), encoding="utf-8")
     return path
 
 
@@ -145,6 +170,5 @@ def serve_dashboard(store: WorkdirStore, host: str, port: int) -> None:
     write_dashboard(store, out)
     handler = SimpleHTTPRequestHandler
     server = ThreadingHTTPServer((host, port), handler)
-    print(f"Serving OpenMOAK dashboard at http://{host}:{port}/{html.escape(str(out))}")
+    print(f"Serving CVEHunt dashboard at http://{host}:{port}/{html.escape(str(out))}")
     server.serve_forever()
-

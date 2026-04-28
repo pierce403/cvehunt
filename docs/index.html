@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CVEHunt Dashboard</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #08090f; color: #f4f5fb; }
+    header { padding: 28px 32px 18px; border-bottom: 1px solid #202232; background: #0d0f18; position: sticky; top: 0; z-index: 2; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    .subtitle { margin: 8px 0 0; color: #a9adbd; font-size: 14px; }
+    main { padding: 24px 32px 40px; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .stat { border: 1px solid #24283a; background: #111420; border-radius: 8px; padding: 14px; }
+    .stat strong { display: block; font-size: 24px; }
+    .stat span { color: #a9adbd; font-size: 12px; text-transform: uppercase; }
+    .controls { display: flex; gap: 10px; align-items: center; margin: 18px 0; flex-wrap: wrap; }
+    input, select { background: #10131e; color: #f4f5fb; border: 1px solid #2a2f44; border-radius: 6px; padding: 9px 10px; }
+    table { width: 100%; border-collapse: collapse; background: #0d1019; border: 1px solid #24283a; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid #202436; text-align: left; vertical-align: top; font-size: 13px; }
+    th { color: #aeb4c8; font-size: 11px; text-transform: uppercase; background: #121624; position: sticky; top: 82px; }
+    tr:hover td { background: #121725; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #1f2d22; color: #9fe3ae; white-space: nowrap; }
+    .pending { background: #2b2731; color: #d4b5ff; }
+    .muted { color: #9298ab; }
+    a { color: #9da7ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .summary { max-width: 620px; color: #c5c9d6; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>CVEHunt CVE Dashboard</h1>
+    <p class="subtitle">Recent CVEs with repository-backed pipeline workdirs and full agent traces.</p>
+  </header>
+  <main>
+    <section class="stats">
+      <div class="stat"><strong>5</strong><span>CVEs tracked</span></div>
+      <div class="stat"><strong>0</strong><span>Analyzed</span></div>
+      <div class="stat"><strong>5</strong><span>Not analyzed</span></div>
+      <div class="stat"><strong>4</strong><span>CVSS >= 7</span></div>
+    </section>
+    <section class="controls">
+      <input id="search" placeholder="CVE-" aria-label="Search CVEs">
+      <select id="status" aria-label="Status filter">
+        <option value="">All statuses</option>
+        <option value="analyzed">Analyzed</option>
+        <option value="not_analyzed">Not analyzed</option>
+      </select>
+    </section>
+    <table>
+      <thead>
+        <tr>
+          <th>CVE</th>
+          <th>CVSS</th>
+          <th>Disclosed</th>
+          <th>Ecosystem</th>
+          <th>Status</th>
+          <th>Confidence</th>
+          <th>Summary</th>
+          <th>Artifacts</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+  <script>
+    const DATA = [{"cve": {"cve_id": "CVE-2025-15626", "name": "Unknown", "summary": "Authenticated user can bypass authorization in Ribblr - Crochet & Knitting iOS application", "cvss": null, "disclosed": "2026-04-27", "ecosystem": "unknown", "vulnerable_versions": [], "patched_versions": [], "kev": false, "known_exploitation_window": null, "safe_fixture": {}}, "report": null, "workdir": ".cvehunt/cves/CVE-2025-15626", "trace": ".cvehunt/cves/CVE-2025-15626/trace.jsonl", "repo_workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2025-15626", "repo_trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/trace.jsonl", "repo_report_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2025-15626/report.md"}, {"cve": {"cve_id": "CVE-2026-7040", "name": "Unknown", "summary": "Text::Minify::XS versions from v0.3.0 before v0.7.8 for Perl have a heap overflow when processing some malformed UTF-8 characters.\n\nThe minify functions mishandled some malformed UTF-8 characters, leading to heap corruption.\n\nNote that the minify_utf8 function is an alias for minnify.", "cvss": 7.5, "disclosed": "2026-04-27", "ecosystem": "unknown", "vulnerable_versions": [], "patched_versions": [], "kev": false, "known_exploitation_window": null, "safe_fixture": {}}, "report": null, "workdir": ".cvehunt/cves/CVE-2026-7040", "trace": ".cvehunt/cves/CVE-2026-7040/trace.jsonl", "repo_workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7040", "repo_trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/trace.jsonl", "repo_report_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7040/report.md"}, {"cve": {"cve_id": "CVE-2026-7123", "name": "Unknown", "summary": "A vulnerability was found in Totolink A8000RU 7.1cu.643_b20200521. Affected is the function setIptvCfg of the file /cgi-bin/cstecgi.cgi of the component CGI Handler. Performing a manipulation of the argument setIptvCfg results in os command injection. The attack can be initiated remotely. The exploit has been made public and could be used.", "cvss": 9.8, "disclosed": "2026-04-27", "ecosystem": "unknown", "vulnerable_versions": [], "patched_versions": [], "kev": false, "known_exploitation_window": null, "safe_fixture": {}}, "report": null, "workdir": ".cvehunt/cves/CVE-2026-7123", "trace": ".cvehunt/cves/CVE-2026-7123/trace.jsonl", "repo_workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7123", "repo_trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/trace.jsonl", "repo_report_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7123/report.md"}, {"cve": {"cve_id": "CVE-2026-7124", "name": "Unknown", "summary": "A vulnerability was determined in Totolink A8000RU 7.1cu.643_b20200521. Affected by this vulnerability is the function setIpv6LanCfg of the file /cgi-bin/cstecgi.cgi of the component CGI Handler. Executing a manipulation of the argument addrPrefixLen can lead to os command injection. The attack can be launched remotely. The exploit has been publicly disclosed and may be utilized.", "cvss": 9.8, "disclosed": "2026-04-27", "ecosystem": "unknown", "vulnerable_versions": [], "patched_versions": [], "kev": false, "known_exploitation_window": null, "safe_fixture": {}}, "report": null, "workdir": ".cvehunt/cves/CVE-2026-7124", "trace": ".cvehunt/cves/CVE-2026-7124/trace.jsonl", "repo_workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7124", "repo_trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/trace.jsonl", "repo_report_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7124/report.md"}, {"cve": {"cve_id": "CVE-2026-7125", "name": "Unknown", "summary": "A vulnerability was identified in Totolink A8000RU 7.1cu.643_b20200521. Affected by this issue is the function setWiFiEasyCfg of the file /cgi-bin/cstecgi.cgi of the component CGI Handler. The manipulation of the argument merge leads to os command injection. The attack may be initiated remotely. The exploit is publicly available and might be used.", "cvss": 9.8, "disclosed": "2026-04-27", "ecosystem": "unknown", "vulnerable_versions": [], "patched_versions": [], "kev": false, "known_exploitation_window": null, "safe_fixture": {}}, "report": null, "workdir": ".cvehunt/cves/CVE-2026-7125", "trace": ".cvehunt/cves/CVE-2026-7125/trace.jsonl", "repo_workdir_url": "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2026-7125", "repo_trace_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/trace.jsonl", "repo_report_url": "https://github.com/pierce403/cvehunt/blob/main/.cvehunt/cves/CVE-2026-7125/report.md"}];
+    const rowsEl = document.getElementById('rows');
+    const searchEl = document.getElementById('search');
+    const statusEl = document.getElementById('status');
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+    function render() {
+      const q = searchEl.value.toLowerCase();
+      const status = statusEl.value;
+      rowsEl.innerHTML = '';
+      DATA.filter(row => {
+        const cve = row.cve;
+        const report = row.report;
+        if (q && !JSON.stringify(cve).toLowerCase().includes(q)) return false;
+        if (status === 'analyzed' && !report) return false;
+        if (status === 'not_analyzed' && report) return false;
+        return true;
+      }).forEach(row => {
+        const cve = row.cve;
+        const report = row.report;
+        const judgement = report?.judgement;
+        const tr = document.createElement('tr');
+        const statusClass = report ? 'status' : 'status pending';
+        const statusText = report ? judgement.status : 'Not analyzed';
+        const confidence = report ? Number(judgement.confidence).toFixed(2) : '—';
+        const artifactLinks = report
+          ? `<a href="${esc(row.repo_trace_url)}">trace</a> · <a href="${esc(row.repo_report_url)}">report</a>`
+          : `<a href="${esc(row.repo_workdir_url)}">workdir</a>`;
+        tr.innerHTML = `
+          <td><strong>${esc(cve.cve_id)}</strong><br><span class="muted">${esc(cve.name)}</span></td>
+          <td>${esc(cve.cvss ?? '—')}</td>
+          <td>${esc(cve.disclosed)}</td>
+          <td>${esc(cve.ecosystem)}</td>
+          <td><span class="${statusClass}">${esc(statusText)}</span></td>
+          <td>${esc(confidence)}</td>
+          <td class="summary">${esc(cve.summary)}</td>
+          <td>${artifactLinks}</td>
+        `;
+        rowsEl.appendChild(tr);
+      });
+    }
+    searchEl.addEventListener('input', render);
+    statusEl.addEventListener('change', render);
+    render();
+  </script>
+</body>
+</html>

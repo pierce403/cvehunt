@@ -1,4 +1,4 @@
-"""OpenMOAK defensive CVE workflow PoC."""
+"""CVEHunt defensive CVE workflow PoC."""
 
 __all__ = ["__version__"]
 

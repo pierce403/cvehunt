@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openmoak.models import CveRecord
+from cvehunt.models import CveRecord
 
 
 FIXTURES: dict[str, CveRecord] = {

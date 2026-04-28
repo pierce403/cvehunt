@@ -1,6 +1,6 @@
-# OpenMOAK
+# CVEHunt
 
-OpenMOAK is a safe proof-of-concept for an agentic CVE exploitability workflow. It borrows the orchestration shape of systems like MOAK without generating exploit code, payloads, or operational attack steps.
+CVEHunt is a safe proof-of-concept for an agentic CVE exploitability workflow. It borrows the orchestration shape of systems like MOAK without generating exploit code, payloads, or operational attack steps.
 
 The goal is to model a defensive workflow:
 
@@ -14,12 +14,13 @@ The goal is to model a defensive workflow:
 
 ```bash
 uv sync --dev
-uv run openmoak run CVE-2025-55182
-uv run openmoak run CVE-2025-55182 --json
-uv run openmoak run CVE-2025-55182 --persist
-uv run openmoak sync-recent --days 7 --limit 25 --run
-uv run openmoak dashboard
-uv run openmoak serve
+uv run cvehunt run CVE-2025-55182
+uv run cvehunt run CVE-2025-55182 --json
+uv run cvehunt run CVE-2025-55182 --persist
+uv run cvehunt sync-recent --days 7 --limit 25
+uv run cvehunt dashboard
+uv run cvehunt dashboard --out docs/index.html --repo-url https://github.com/pierce403/cvehunt
+uv run cvehunt serve
 uv run pytest
 ```
 
@@ -45,10 +46,10 @@ Instead, it uses local fixtures and synthetic validation checks to demonstrate h
 
 ## Dashboard And Workdirs
 
-OpenMOAK stores local pipeline state under `.openmoak/` by default:
+CVEHunt stores local pipeline state under `.cvehunt/` by default:
 
 ```text
-.openmoak/
+.cvehunt/
   dashboard.html
   cves/
     CVE-2025-55182/
@@ -58,20 +59,26 @@ OpenMOAK stores local pipeline state under `.openmoak/` by default:
       report.md
 ```
 
-Use `sync-recent` to pull recent CVE metadata from NVD, optionally run the pipeline, and then generate or serve a dashboard:
+Use `sync-recent` to pull recent CVE metadata from NVD. Run it without `--run` when new CVEs should appear as not analyzed, then generate or serve a dashboard:
 
 ```bash
-uv run openmoak sync-recent --days 7 --limit 25 --run
-uv run openmoak dashboard
-uv run openmoak serve --port 8765
+uv run cvehunt sync-recent --days 7 --limit 25
+uv run cvehunt dashboard
+uv run cvehunt serve --port 8765
 ```
 
 Each CVE directory is intended to become the durable working directory for that CVE. The initial implementation writes structured metadata, a full phase trace, and report artifacts.
 
+The public site is generated into `docs/` for GitHub Pages:
+
+```bash
+uv run cvehunt dashboard --out docs/index.html --repo-url https://github.com/pierce403/cvehunt
+```
+
 ## Example
 
 ```bash
-uv run openmoak run CVE-2025-55182
+uv run cvehunt run CVE-2025-55182
 ```
 
 The command prints a markdown report with the pipeline outcome and defensive recommendations.

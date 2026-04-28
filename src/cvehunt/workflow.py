@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from openmoak.agents import (
+from cvehunt.agents import (
     CollectorAgent,
     EnvironmentPlannerAgent,
     JudgeAgent,
     ResearcherAgent,
     ValidatorAgent,
 )
-from openmoak.models import WorkflowReport
-from openmoak.models import CveRecord, TraceEvent
+from cvehunt.models import WorkflowReport
+from cvehunt.models import CveRecord, TraceEvent
 
 
-class OpenMoakWorkflow:
+class CveHuntWorkflow:
     def __init__(self) -> None:
         self.collector = CollectorAgent()
         self.researcher = ResearcherAgent()

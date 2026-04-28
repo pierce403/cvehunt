@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from openmoak.models import CveRecord
+from cvehunt.models import CveRecord
 
 
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -22,7 +22,7 @@ def fetch_recent_cves(days: int = 7, limit: int = 50) -> list[CveRecord]:
     }
     request = Request(
         f"{NVD_API}?{urlencode(params)}",
-        headers={"User-Agent": "openmoak-local-eval/0.1"},
+        headers={"User-Agent": "cvehunt-local-eval/0.1"},
     )
     with urlopen(request, timeout=30) as response:
         payload = json.loads(response.read().decode("utf-8"))

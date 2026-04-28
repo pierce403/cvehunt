@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from openmoak.models import WorkflowReport
+from cvehunt.models import WorkflowReport
 
 
 def render_markdown(report: WorkflowReport) -> str:
@@ -13,7 +13,7 @@ def render_markdown(report: WorkflowReport) -> str:
     evidence = data["evidence"]
 
     lines = [
-        f"# OpenMOAK Report: {cve['cve_id']}",
+        f"# CVEHunt Report: {cve['cve_id']}",
         "",
         f"Name: {cve['name']}",
         f"CVSS: {cve['cvss'] if cve['cvss'] is not None else 'unknown'}",

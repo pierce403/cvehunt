@@ -1,5 +1,5 @@
 [project]
-name = "openmoak"
+name = "cvehunt"
 version = "0.1.0"
 description = "Safe defensive PoC for agentic CVE exploitability workflows"
 readme = "README.md"
@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-openmoak = "openmoak.cli:main"
+cvehunt = "cvehunt.cli:main"
 
 [dependency-groups]
 dev = [

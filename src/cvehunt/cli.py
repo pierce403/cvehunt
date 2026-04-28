@@ -4,16 +4,16 @@ import argparse
 import json
 from pathlib import Path
 
-from openmoak.dashboard import serve_dashboard, write_dashboard
-from openmoak.nvd import fetch_recent_cves
-from openmoak.reporting import render_markdown
-from openmoak.storage import WorkdirStore
-from openmoak.workflow import OpenMoakWorkflow
+from cvehunt.dashboard import serve_dashboard, write_dashboard
+from cvehunt.nvd import fetch_recent_cves
+from cvehunt.reporting import render_markdown
+from cvehunt.storage import WorkdirStore
+from cvehunt.workflow import CveHuntWorkflow
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="openmoak")
-    parser.add_argument("--data-dir", default=".openmoak", help="Local data/workdir root")
+    parser = argparse.ArgumentParser(prog="cvehunt")
+    parser.add_argument("--data-dir", default=".cvehunt", help="Local data/workdir root")
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     run = subcommands.add_parser("run", help="Run the defensive workflow for a CVE")
@@ -32,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output HTML path, defaults to DATA_DIR/dashboard.html",
     )
+    dashboard.add_argument(
+        "--repo-url",
+        default=None,
+        help="GitHub repository URL used for artifact links",
+    )
 
     serve = subcommands.add_parser("serve", help="Serve the local dashboard")
     serve.add_argument("--host", default="127.0.0.1")
@@ -45,7 +50,7 @@ def main() -> None:
     store.ensure()
     if args.command == "run":
         cve = store.read_cve(args.cve_id)
-        report, events = OpenMoakWorkflow().run_with_trace(args.cve_id, cve)
+        report, events = CveHuntWorkflow().run_with_trace(args.cve_id, cve)
         if args.persist:
             store.write_report(report, events)
         if args.json:
@@ -54,7 +59,7 @@ def main() -> None:
             print(render_markdown(report))
     elif args.command == "sync-recent":
         records = fetch_recent_cves(days=args.days, limit=args.limit)
-        workflow = OpenMoakWorkflow()
+        workflow = CveHuntWorkflow()
         for record in records:
             store.write_cve(record)
             if args.run:
@@ -63,7 +68,7 @@ def main() -> None:
         print(f"Synced {len(records)} CVEs into {store.cves_dir}")
     elif args.command == "dashboard":
         out = Path(args.out) if args.out else store.root / "dashboard.html"
-        path = write_dashboard(store, out)
+        path = write_dashboard(store, out, repo_url=args.repo_url)
         print(path)
     elif args.command == "serve":
         serve_dashboard(store, args.host, args.port)

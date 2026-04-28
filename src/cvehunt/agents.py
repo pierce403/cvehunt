@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from openmoak.fixtures import get_fixture
-from openmoak.models import (
+from cvehunt.fixtures import get_fixture
+from cvehunt.models import (
     CveRecord,
     Evidence,
     Judgement,

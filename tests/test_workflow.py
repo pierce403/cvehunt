@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from openmoak.agents import SafetyPolicy
-from openmoak.dashboard import build_dashboard
-from openmoak.fixtures import get_fixture
-from openmoak.storage import WorkdirStore
-from openmoak.workflow import OpenMoakWorkflow
+from cvehunt.agents import SafetyPolicy
+from cvehunt.dashboard import _repo_artifact_url, build_dashboard
+from cvehunt.fixtures import get_fixture
+from cvehunt.storage import WorkdirStore
+from cvehunt.workflow import CveHuntWorkflow
 
 
 def test_known_cve_produces_defensive_signal() -> None:
-    report = OpenMoakWorkflow().run("CVE-2025-55182")
+    report = CveHuntWorkflow().run("CVE-2025-55182")
 
     assert report.cve.name == "React2Shell"
     assert report.judgement.status == "defensive_signal_observed"
@@ -17,7 +17,7 @@ def test_known_cve_produces_defensive_signal() -> None:
 
 
 def test_unknown_cve_is_not_supported() -> None:
-    report = OpenMoakWorkflow().run("CVE-2099-0001")
+    report = CveHuntWorkflow().run("CVE-2099-0001")
 
     assert report.cve.name == "Unknown"
     assert report.judgement.status == "not_supported"
@@ -37,7 +37,7 @@ def test_safety_policy_blocks_unsafe_text() -> None:
 
 def test_persisted_run_writes_workdir_artifacts(tmp_path) -> None:
     store = WorkdirStore(tmp_path)
-    workflow = OpenMoakWorkflow()
+    workflow = CveHuntWorkflow()
     report, events = workflow.run_with_trace("CVE-2025-55182")
 
     store.write_report(report, events)
@@ -58,7 +58,16 @@ def test_dashboard_includes_tracked_cves(tmp_path) -> None:
     assert record is not None
     store.write_cve(record)
 
-    html = build_dashboard(store)
+    html = build_dashboard(store, repo_url="https://github.com/pierce403/cvehunt")
 
-    assert "OpenMOAK CVE Dashboard" in html
+    assert "CVEHunt CVE Dashboard" in html
     assert "CVE-2025-55182" in html
+    assert "https://github.com/pierce403/cvehunt/tree/main/" in html
+    assert (
+        _repo_artifact_url(
+            "https://github.com/pierce403/cvehunt",
+            ".cvehunt/cves/CVE-2025-55182",
+            tree=True,
+        )
+        == "https://github.com/pierce403/cvehunt/tree/main/.cvehunt/cves/CVE-2025-55182"
+    )

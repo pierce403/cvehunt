@@ -5,12 +5,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
-from openmoak.models import CveRecord, TraceEvent, WorkflowReport
-from openmoak.reporting import render_markdown
+from cvehunt.models import CveRecord, TraceEvent, WorkflowReport
+from cvehunt.reporting import render_markdown
 
 
 class WorkdirStore:
-    def __init__(self, root: Path | str = ".openmoak") -> None:
+    def __init__(self, root: Path | str = ".cvehunt") -> None:
         self.root = Path(root)
         self.cves_dir = self.root / "cves"
 
