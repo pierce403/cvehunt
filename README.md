@@ -21,7 +21,7 @@ uv run cvehunt sync-recent --days 7 --limit 25
 uv run cvehunt dashboard
 uv run cvehunt dashboard --out docs/index.html --repo-url https://github.com/pierce403/cvehunt
 uv run cvehunt serve
-uv run pytest
+uv run python -m pytest
 ```
 
 ## Safety Boundary

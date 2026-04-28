@@ -30,7 +30,7 @@ This repo must not become an exploit generator. Do not add code that emits paylo
 
 ```bash
 uv sync --dev
-uv run pytest
+uv run python -m pytest
 uv run cvehunt run CVE-2025-55182 --json
 uv run cvehunt run CVE-2025-55182
 uv run cvehunt run CVE-2025-55182 --persist
@@ -54,6 +54,7 @@ uv run cvehunt serve
 ## Known Issues & Solutions
 
 - `python` may not be installed in this environment; use `python3` or `uv run python`.
+- `uv run pytest` failed here because the pytest console script could not be spawned; `uv run python -m pytest` passed.
 - Public site notes from the initial MOAK research are in `moak_site_notes/` and are intentionally not part of the package.
 - The local dashboard is static HTML generated from `.cvehunt`; regenerate it after syncing or running CVEs.
 - Repository artifact links in the dashboard require `--repo-url` so rows point to GitHub workdirs/traces instead of local relative paths.
