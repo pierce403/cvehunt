@@ -36,6 +36,11 @@ def build_dashboard(store: WorkdirStore, repo_url: str | None = None) -> str:
             f"{row['workdir']}/report.md",
         )
     payload = json.dumps(rows)
+    github_link = (
+        f'<a class="repo-link" href="{html.escape(repo_url)}">GitHub</a>'
+        if repo_url
+        else ""
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -46,8 +51,10 @@ def build_dashboard(store: WorkdirStore, repo_url: str | None = None) -> str:
     :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
     body {{ margin: 0; background: #08090f; color: #f4f5fb; }}
     header {{ padding: 28px 32px 18px; border-bottom: 1px solid #202232; background: #0d0f18; position: sticky; top: 0; z-index: 2; }}
+    .header-row {{ display: flex; align-items: center; justify-content: space-between; gap: 16px; }}
     h1 {{ margin: 0; font-size: 24px; letter-spacing: 0; }}
     .subtitle {{ margin: 8px 0 0; color: #a9adbd; font-size: 14px; }}
+    .repo-link {{ border: 1px solid #333a54; border-radius: 6px; padding: 8px 10px; color: #f4f5fb; background: #151a29; font-size: 13px; white-space: nowrap; }}
     main {{ padding: 24px 32px 40px; }}
     .stats {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }}
     .stat {{ border: 1px solid #24283a; background: #111420; border-radius: 8px; padding: 14px; }}
@@ -69,7 +76,10 @@ def build_dashboard(store: WorkdirStore, repo_url: str | None = None) -> str:
 </head>
 <body>
   <header>
-    <h1>CVEHunt CVE Dashboard</h1>
+    <div class="header-row">
+      <h1>CVEHunt CVE Dashboard</h1>
+      {github_link}
+    </div>
     <p class="subtitle">Recent CVEs with repository-backed pipeline workdirs and full agent traces.</p>
   </header>
   <main>
