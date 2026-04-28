@@ -171,10 +171,37 @@ tr:hover td {
   background: #121725;
 }
 
+.summaryRow.expanded td {
+  background: #121725;
+}
+
+.expandedRow td {
+  padding: 0;
+  background: #0e121c;
+}
+
 .cveLink {
   display: block;
   color: #f3f5fb;
   font-weight: 750;
+}
+
+.cveToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.cveToggle > span:last-child {
+  min-width: 0;
 }
 
 td span {
@@ -231,6 +258,70 @@ td span {
 .detail {
   display: grid;
   gap: 16px;
+}
+
+.inlineDetail {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.inlineHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.inlineSummary {
+  margin: 0;
+  color: #b8becd;
+  line-height: 1.5;
+}
+
+.inlineMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.metaPill {
+  display: inline-flex;
+  width: max-content;
+  border: 1px solid #2d3346;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #c4cad9;
+  background: #141926;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.inlineActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.inlineGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.compactPanel {
+  height: 100%;
+}
+
+.compactPanel h2 {
+  margin-top: 0;
+  font-size: 16px;
+}
+
+.compactTimeline {
+  margin-top: 12px;
 }
 
 .back {
@@ -379,7 +470,8 @@ td span {
 
 @media (max-width: 760px) {
   .topbar,
-  .detailHeader {
+  .detailHeader,
+  .inlineHeader {
     flex-direction: column;
     align-items: stretch;
   }
@@ -389,12 +481,14 @@ td span {
   }
 
   .stats,
-  .gridTwo {
+  .gridTwo,
+  .inlineGrid {
     grid-template-columns: 1fr;
   }
 
   nav,
-  .detailMeta {
+  .detailMeta,
+  .inlineActions {
     justify-content: flex-start;
   }
 }

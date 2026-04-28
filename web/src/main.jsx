@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   Github,
   Search,
@@ -126,6 +128,7 @@ function Shell({ children, repoUrl }) {
 function Dashboard({ data }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
+  const [expandedCveId, setExpandedCveId] = useState(null);
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return data.cves.filter((item) => {
@@ -135,6 +138,12 @@ function Dashboard({ data }) {
       return JSON.stringify(item.cve).toLowerCase().includes(needle);
     });
   }, [data.cves, query, filter]);
+
+  useEffect(() => {
+    if (expandedCveId && !filtered.some((item) => item.cve.cve_id === expandedCveId)) {
+      setExpandedCveId(null);
+    }
+  }, [expandedCveId, filtered]);
 
   return (
     <>
@@ -169,22 +178,44 @@ function Dashboard({ data }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((item) => (
-              <tr key={item.cve.cve_id}>
-                <td>
-                  <a className="cveLink" href={`#/cve/${item.cve.cve_id}`}>{item.cve.cve_id}</a>
-                  <span>{item.cve.name}</span>
-                </td>
-                <td><span className={cvssClass(item.cve.cvss)}>{item.cve.cvss ?? '-'}</span></td>
-                <td>{item.cve.disclosed}</td>
-                <td>{item.cve.ecosystem}</td>
-                <td><span className={statusClass(item)}>{statusLabel(item)}</span></td>
-                <td>{completedPhaseCount(item)}/{PHASES.length} completed</td>
-                <td>
-                  <a className="artifactLink" href={item.artifacts.workdir_url}>workdir <ExternalLink size={13} /></a>
-                </td>
-              </tr>
-            ))}
+            {filtered.map((item) => {
+              const expanded = expandedCveId === item.cve.cve_id;
+              return (
+                <React.Fragment key={item.cve.cve_id}>
+                  <tr className={expanded ? 'summaryRow expanded' : 'summaryRow'}>
+                    <td>
+                      <button
+                        className="cveToggle"
+                        onClick={() => setExpandedCveId(expanded ? null : item.cve.cve_id)}
+                        aria-expanded={expanded}
+                        aria-controls={`row-${item.cve.cve_id}`}
+                      >
+                        {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        <span>
+                          <strong className="cveLink">{item.cve.cve_id}</strong>
+                          <span>{item.cve.name}</span>
+                        </span>
+                      </button>
+                    </td>
+                    <td><span className={cvssClass(item.cve.cvss)}>{item.cve.cvss ?? '-'}</span></td>
+                    <td>{item.cve.disclosed}</td>
+                    <td>{item.cve.ecosystem}</td>
+                    <td><span className={statusClass(item)}>{statusLabel(item)}</span></td>
+                    <td>{completedPhaseCount(item)}/{PHASES.length} completed</td>
+                    <td>
+                      <a className="artifactLink" href={item.artifacts.workdir_url}>workdir <ExternalLink size={13} /></a>
+                    </td>
+                  </tr>
+                  {expanded && (
+                    <tr className="expandedRow" id={`row-${item.cve.cve_id}`}>
+                      <td colSpan={7}>
+                        <InlineRunDetails item={item} />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </section>
@@ -194,6 +225,95 @@ function Dashboard({ data }) {
 
 function Stat({ label, value }) {
   return <div className="stat"><strong>{value}</strong><span>{label}</span></div>;
+}
+
+function InlineRunDetails({ item }) {
+  const report = item.report;
+  const judgement = report?.judgement;
+  const finding = report?.finding;
+  const states = phaseStates(item);
+
+  return (
+    <div className="inlineDetail">
+      <div className="inlineHeader">
+        <div>
+          <p className="inlineSummary">{item.progress.summary}</p>
+          <div className="inlineMeta">
+            <span className={cvssClass(item.cve.cvss)}>CVSS {item.cve.cvss ?? 'unknown'}</span>
+            <span className={statusClass(item)}>{statusLabel(item)}</span>
+            <span className="metaPill">Run {item.report?.run?.run_id || item.pipeline_status?.run_id || 'none'}</span>
+            <span className="metaPill">Model {item.report?.run?.model || item.pipeline_status?.model || 'none'}</span>
+          </div>
+        </div>
+        <div className="inlineActions">
+          <a className="artifact" href={`#/cve/${item.cve.cve_id}`}>Full view</a>
+          <a className="artifact" href={item.artifacts.latest_run_url || item.artifacts.workdir_url}>
+            Latest run <ExternalLink size={13} />
+          </a>
+        </div>
+      </div>
+
+      <div className="inlineGrid">
+        <section className="panel compactPanel">
+          <div className="panelTitle">
+            <ShieldCheck size={18} />
+            Autonomous Process
+          </div>
+          <div className="timeline compactTimeline">
+            {states.map((stage) => (
+              <div className={`phase ${phaseClass(stage.status)}`} key={stage.phase}>
+                <strong>{stage.phase}</strong>
+                <span>{stage.message}</span>
+                {stage.artifact && <a href={artifactFor(item, stage.artifact)}>{stage.artifact}</a>}
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel compactPanel">
+          <h2>Run Summary</h2>
+          {report ? (
+            <dl className="definitionList">
+              <Info label="Class" value={finding?.vulnerability_class} />
+              <Info label="Surface" value={finding?.impacted_surface} />
+              <Info label="Patch signal" value={finding?.relevant_patch_signal} />
+              <Info label="Exploit generated" value={item.progress.exploit_generated ? 'yes' : 'no'} />
+              <Info label="Patch generated" value={item.progress.patch_generated ? 'yes' : 'no'} />
+              <Info label="Confidence" value={judgement ? Number(judgement.confidence).toFixed(2) : 'n/a'} />
+            </dl>
+          ) : (
+            <p className="mutedText">No autonomous run has been recorded for this CVE yet.</p>
+          )}
+        </section>
+
+        <section className="panel compactPanel">
+          <h2>Judgement</h2>
+          {judgement ? (
+            <>
+              <p><strong>Status:</strong> {judgement.status}</p>
+              <p>{judgement.rationale}</p>
+              <h3>Remediation notes</h3>
+              <ul>{judgement.remediation_notes.map((note) => <li key={note}>{note}</li>)}</ul>
+            </>
+          ) : (
+            <p className="mutedText">No judgement is available yet.</p>
+          )}
+        </section>
+
+        <section className="panel compactPanel">
+          <h2>Artifacts</h2>
+          <div className="artifactGrid">
+            <Artifact href={item.artifacts.report_md_url} label="report.md" disabled={!item.artifacts.report_md_exists} />
+            <Artifact href={item.artifacts.pipeline_status_url} label="pipeline_status.json" disabled={!item.artifacts.pipeline_status_exists} />
+            <Artifact href={item.artifacts.trace_url} label="trace.jsonl" disabled={!item.artifacts.trace_exists} />
+            <Artifact href={item.artifacts.source_diff_url} label="source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
+            <Artifact href={item.artifacts.harness_readme_url} label="harness/README.md" disabled={!item.artifacts.harness_readme_exists} />
+            <Artifact href={item.artifacts.exploiter_stub_url} label="exploiter/README.md" disabled={!item.artifacts.exploiter_stub_exists} />
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 }
 
 function Detail({ item }) {

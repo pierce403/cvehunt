@@ -74,6 +74,7 @@ npm run build
 - Public site notes from the initial MOAK research are in `moak_site_notes/` and are intentionally not part of the package.
 - Regenerate the public site with `npm run build` after syncing or running CVEs so `docs/data/cves.json` reflects the current root-level `cves/` workdirs.
 - The React site now reads phase-level status from `pipeline_status.json`; if a stage is stubbed or not implemented, fix the run data rather than trying to infer progress from `trace.jsonl` length alone.
+- The dashboard now uses an inline accordion on the main CVE table: clicking a CVE expands the latest run summary in place, while `#/cve/<CVE-ID>` remains the deep-link detail route.
 
 ## Agent Tips
 
