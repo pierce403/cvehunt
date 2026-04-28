@@ -72,7 +72,7 @@
       },
       "report": {
         "run": {
-          "run_id": "2026-04-28T14-39-50Z",
+          "run_id": "2026-04-28T15-29-48Z",
           "model": "gpt-5.5-cyber"
         },
         "cve": {
@@ -149,36 +149,36 @@
           "phase": "Collector",
           "message": "Collected metadata for CVE-2025-55182",
           "artifact": "cve.json",
-          "timestamp": "2026-04-28T14:39:50+00:00"
+          "timestamp": "2026-04-28T15:29:48+00:00"
         },
         {
           "phase": "Researcher",
           "message": "Classified as deserialization; surface: request parsing and object materialization",
           "artifact": null,
-          "timestamp": "2026-04-28T14:39:50+00:00"
+          "timestamp": "2026-04-28T15:29:48+00:00"
         },
         {
           "phase": "Environment Planner",
           "message": "Created 1 offline validation check(s)",
           "artifact": null,
-          "timestamp": "2026-04-28T14:39:50+00:00"
+          "timestamp": "2026-04-28T15:29:48+00:00"
         },
         {
           "phase": "Validator",
           "message": "Collected 1 passing evidence item(s) out of 1",
           "artifact": null,
-          "timestamp": "2026-04-28T14:39:50+00:00"
+          "timestamp": "2026-04-28T15:29:48+00:00"
         },
         {
           "phase": "Judge",
           "message": "Assigned defensive_signal_observed with 0.82 confidence",
           "artifact": "report.json",
-          "timestamp": "2026-04-28T14:39:50+00:00"
+          "timestamp": "2026-04-28T15:29:48+00:00"
         }
       ],
       "pipeline_status": {
         "cve_id": "CVE-2025-55182",
-        "run_id": "2026-04-28T14-39-50Z",
+        "run_id": "2026-04-28T15-29-48Z",
         "model": "gpt-5.5-cyber",
         "overall_status": "defensive_signal_observed",
         "confidence": 0.82,
@@ -276,13 +276,13 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2025-55182",
-        "latest_run": "cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z",
+        "latest_run": "cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z",
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/report.md",
-        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/pipeline_status.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/report.md",
+        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/pipeline_status.json",
         "trace_exists": true,
         "report_exists": true,
         "report_md_exists": true,
