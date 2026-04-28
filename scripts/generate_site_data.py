@@ -40,29 +40,61 @@ def latest_run_dir(directory: Path) -> Path | None:
     return sorted(directories)[-1] if directories else None
 
 
-def summarize_progress(report: dict[str, object] | None, trace: list[dict[str, object]]) -> dict[str, object]:
+def summarize_progress(
+    report: dict[str, object] | None,
+    trace: list[dict[str, object]],
+    pipeline_status: dict[str, object] | None,
+) -> dict[str, object]:
+    if pipeline_status and isinstance(pipeline_status.get("stages"), list):
+        stages = list(pipeline_status["stages"])
+        completed_phases = [
+            str(stage.get("phase", ""))
+            for stage in stages
+            if stage.get("status") == "completed"
+        ]
+        reached_phases = [
+            str(stage.get("phase", ""))
+            for stage in stages
+            if stage.get("reached")
+        ]
+        return {
+            "autonomous_status": pipeline_status.get("overall_status", "unknown"),
+            "summary": _summary_from_report(report, pipeline_status),
+            "completed_phases": completed_phases,
+            "reached_phases": reached_phases,
+            "phase_states": stages,
+            "exploit_generated": bool(pipeline_status.get("exploit_generated")),
+            "patch_generated": bool(pipeline_status.get("fix_generated")),
+            "exploit_note": _exploit_note_from_status(pipeline_status),
+            "patch_note": _patch_note_from_status(pipeline_status),
+        }
+
     completed_phases = [str(event.get("phase", "")) for event in trace]
     if not report:
         return {
             "autonomous_status": "not_analyzed",
             "summary": "No autonomous workflow has been run for this CVE yet.",
             "completed_phases": completed_phases,
+            "reached_phases": completed_phases,
+            "phase_states": [],
             "exploit_generated": False,
             "patch_generated": False,
-            "exploit_note": "Not attempted. CVEHunt is a defensive pipeline and does not generate exploit code or payloads.",
-            "patch_note": "No patch artifact has been generated. Only remediation guidance is available after analysis.",
+            "exploit_note": "Not attempted.",
+            "patch_note": "No patch artifact has been generated.",
         }
 
     judgement = report.get("judgement", {})
     status = judgement.get("status", "unknown") if isinstance(judgement, dict) else "unknown"
     return {
         "autonomous_status": status,
-        "summary": "The workflow completed defensive triage using safe local fixtures.",
+        "summary": "The workflow completed defensive triage using the legacy fixture-only path.",
         "completed_phases": completed_phases,
+        "reached_phases": completed_phases,
+        "phase_states": [],
         "exploit_generated": False,
         "patch_generated": False,
-        "exploit_note": "No full exploit was generated or published. The run stopped at safe differential evidence.",
-        "patch_note": "No source patch was generated. The report contains patch-version and remediation guidance only.",
+        "exploit_note": "No full exploit was generated or published.",
+        "patch_note": "No source patch was generated.",
     }
 
 
@@ -90,30 +122,38 @@ def build() -> dict[str, object]:
         report = read_json(report_path)
         pipeline_status = read_json(pipeline_status_path)
         trace = read_trace(trace_path)
+        artifact_dir_rel = artifact_dir.relative_to(ROOT).as_posix()
+        latest_run_rel = run_directory.relative_to(ROOT).as_posix() if run_directory else None
         cves.append(
             {
                 "cve": cve,
                 "report": report,
                 "trace": trace,
                 "pipeline_status": pipeline_status,
-                "progress": summarize_progress(report, trace),
+                "progress": summarize_progress(report, trace, pipeline_status),
                 "artifacts": {
                     "workdir": directory.relative_to(ROOT).as_posix(),
-                    "latest_run": (
-                        run_directory.relative_to(ROOT).as_posix()
-                        if run_directory
-                        else None
-                    ),
+                    "latest_run": latest_run_rel,
                     "workdir_url": repo_url(directory, tree=True),
+                    "latest_run_url": repo_url(artifact_dir, tree=True),
+                    "artifact_blob_prefix": f"{REPO_URL}/blob/main/{artifact_dir_rel}",
                     "cve_json_url": repo_url(cve_path),
                     "trace_url": repo_url(trace_path),
                     "report_json_url": repo_url(report_path),
                     "report_md_url": repo_url(report_md_path),
                     "pipeline_status_url": repo_url(pipeline_status_path),
+                    "sources_url": repo_url(artifact_dir / "sources", tree=True),
+                    "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
+                    "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
+                    "exploiter_stub_url": repo_url(artifact_dir / "exploiter" / "README.md"),
+                    "sources_exists": (artifact_dir / "sources").exists(),
                     "trace_exists": trace_path.exists(),
                     "report_exists": report_path.exists(),
                     "report_md_exists": report_md_path.exists(),
                     "pipeline_status_exists": pipeline_status_path.exists(),
+                    "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
+                    "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
+                    "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),
                 },
             }
         )
@@ -129,6 +169,35 @@ def build() -> dict[str, object]:
         },
         "cves": cves,
     }
+
+
+def _summary_from_report(
+    report: dict[str, object] | None,
+    pipeline_status: dict[str, object],
+) -> str:
+    if not report:
+        return "No autonomous workflow has been run for this CVE yet."
+    notes = pipeline_status.get("notes")
+    if isinstance(notes, list) and notes:
+        return str(notes[0])
+    return "The workflow captured a repository-backed autonomous run."
+
+
+def _exploit_note_from_status(pipeline_status: dict[str, object]) -> str:
+    if pipeline_status.get("exploit_generated"):
+        return "A proof-of-concept artifact was recorded."
+    stages = pipeline_status.get("stages")
+    if isinstance(stages, list):
+        for stage in stages:
+            if stage.get("phase") == "Exploiter":
+                return str(stage.get("message", "Exploit stage did not complete."))
+    return "Exploit stage did not complete."
+
+
+def _patch_note_from_status(pipeline_status: dict[str, object]) -> str:
+    if pipeline_status.get("fix_generated"):
+        return "A source patch artifact was recorded."
+    return "No source fix generation or fix validation stage completed in this run."
 
 
 def main() -> None:

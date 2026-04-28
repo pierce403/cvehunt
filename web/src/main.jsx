@@ -1,9 +1,23 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeft, ExternalLink, Github, Search, ShieldCheck } from 'lucide-react';
+import {
+  ArrowLeft,
+  ExternalLink,
+  Github,
+  Search,
+  ShieldCheck,
+} from 'lucide-react';
 import './styles.css';
 
-const PHASES = ['Collector', 'Researcher', 'Environment Planner', 'Validator', 'Judge'];
+const PHASES = [
+  'Collector',
+  'Researcher',
+  'Harness Builder',
+  'Exploiter',
+  'Fix Developer',
+  'Validator',
+  'Judge',
+];
 
 function useHashRoute() {
   const [hash, setHash] = useState(window.location.hash || '#/');
@@ -29,6 +43,25 @@ function statusLabel(item) {
 
 function statusClass(item) {
   return item.report ? 'status analyzed' : 'status pending';
+}
+
+function phaseStates(item) {
+  const states = item.progress?.phase_states;
+  if (Array.isArray(states) && states.length) return states;
+  return PHASES.map((phase) => {
+    const event = item.trace.find((entry) => entry.phase === phase);
+    return {
+      phase,
+      reached: Boolean(event),
+      status: event ? event.status || 'completed' : 'not_reached',
+      message: event ? event.message : 'Not reached',
+      artifact: event?.artifact || null,
+    };
+  });
+}
+
+function completedPhaseCount(item) {
+  return phaseStates(item).filter((stage) => stage.status === 'completed').length;
 }
 
 function App() {
@@ -146,7 +179,7 @@ function Dashboard({ data }) {
                 <td>{item.cve.disclosed}</td>
                 <td>{item.cve.ecosystem}</td>
                 <td><span className={statusClass(item)}>{statusLabel(item)}</span></td>
-                <td>{item.progress.completed_phases.length}/{PHASES.length} phases</td>
+                <td>{completedPhaseCount(item)}/{PHASES.length} completed</td>
                 <td>
                   <a className="artifactLink" href={item.artifacts.workdir_url}>workdir <ExternalLink size={13} /></a>
                 </td>
@@ -176,6 +209,10 @@ function Detail({ item }) {
   const judgement = report?.judgement;
   const finding = report?.finding;
   const plan = report?.plan;
+  const sources = report?.sources;
+  const harness = report?.harness;
+  const exploiter = report?.exploiter;
+  const states = phaseStates(item);
 
   return (
     <section className="detail">
@@ -207,16 +244,13 @@ function Detail({ item }) {
         </div>
         <p className="mutedText">{item.progress.summary}</p>
         <div className="timeline">
-          {PHASES.map((phase) => {
-            const event = item.trace.find((entry) => entry.phase === phase);
-            return (
-              <div className={event ? 'phase complete' : 'phase'} key={phase}>
-                <strong>{phase}</strong>
-                <span>{event ? event.message : 'Not reached'}</span>
-                {event?.artifact && <a href={artifactFor(item, event.artifact)}>{event.artifact}</a>}
-              </div>
-            );
-          })}
+          {states.map((stage) => (
+            <div className={`phase ${phaseClass(stage.status)}`} key={stage.phase}>
+              <strong>{stage.phase}</strong>
+              <span>{stage.message}</span>
+              {stage.artifact && <a href={artifactFor(item, stage.artifact)}>{stage.artifact}</a>}
+            </div>
+          ))}
         </div>
       </section>
 
@@ -235,6 +269,79 @@ function Detail({ item }) {
               <Info label="Defensive hypothesis" value={finding.defensive_hypothesis} />
               <Info label="Patch signal" value={finding.relevant_patch_signal} />
             </dl>
+            {finding.changed_files?.length > 0 && (
+              <>
+                <h3>Highest-churn files</h3>
+                <ul>{finding.changed_files.map((path) => <li key={path}>{path}</li>)}</ul>
+              </>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Source Acquisition</h2>
+            <dl className="definitionList">
+              <Info label="Status" value={sources?.status || 'none'} />
+              <Info label="Package" value={sources?.package || 'none'} />
+              <Info label="Vulnerable version" value={sources?.vulnerable_version || 'none'} />
+              <Info label="Patched version" value={sources?.patched_version || 'none'} />
+              <Info label="Vulnerable root" value={sources?.vulnerable_root || 'none'} />
+              <Info label="Patched root" value={sources?.patched_root || 'none'} />
+            </dl>
+            {sources?.changed_files?.length > 0 && (
+              <div className="check">
+                <strong>Changed files</strong>
+                {sources.changed_files.slice(0, 10).map((entry) => (
+                  <p key={entry.path}>
+                    {entry.path}: +{entry.additions} / -{entry.deletions}
+                    {entry.patch_signal ? ` (${entry.patch_signal})` : ''}
+                  </p>
+                ))}
+              </div>
+            )}
+            {sources?.notes?.length > 0 && (
+              <>
+                <h3>Notes</h3>
+                <ul>{sources.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+              </>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Harness</h2>
+            <p className="mutedText">{harness?.runtime || 'No harness metadata'} · {harness?.isolation || 'n/a'}</p>
+            <dl className="definitionList">
+              <Info label="Status" value={harness?.status || 'none'} />
+              <Info label="Workspace" value={harness?.workspace || 'none'} />
+            </dl>
+            {harness?.dockerfiles?.length > 0 && (
+              <>
+                <h3>Dockerfiles</h3>
+                <ul>{harness.dockerfiles.map((path) => <li key={path}>{path}</li>)}</ul>
+              </>
+            )}
+            {harness?.helper_scripts?.length > 0 && (
+              <>
+                <h3>Helper artifacts</h3>
+                <ul>{harness.helper_scripts.map((path) => <li key={path}>{path}</li>)}</ul>
+              </>
+            )}
+            {harness?.notes?.length > 0 && (
+              <>
+                <h3>Notes</h3>
+                <ul>{harness.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+              </>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Exploiter</h2>
+            <dl className="definitionList">
+              <Info label="Status" value={exploiter?.status || 'none'} />
+              <Info label="Implemented" value={exploiter?.implemented ? 'yes' : 'no'} />
+              <Info label="Artifact" value={exploiter?.artifact || 'none'} />
+            </dl>
+            <p>{exploiter?.message || 'No exploiter metadata.'}</p>
+            <p className="mutedText">{exploiter?.next_step || ''}</p>
           </section>
 
           <section className="panel">
@@ -245,6 +352,7 @@ function Detail({ item }) {
                 <strong>{check.name}</strong>
                 <p>{check.purpose}</p>
                 <span>{check.safe_method}</span>
+                {check.artifact && <a className="artifactLink" href={artifactFor(item, check.artifact)}>{check.artifact}</a>}
               </div>
             ))}
           </section>
@@ -254,8 +362,9 @@ function Detail({ item }) {
             {report.evidence.map((entry) => (
               <div className="evidence" key={entry.check_name}>
                 <strong>{entry.check_name}</strong>
-                <p>Vulnerable fixture signal: {entry.vulnerable_signal}</p>
-                <p>Patched fixture signal: {entry.patched_signal}</p>
+                <p>Vulnerable signal: {entry.vulnerable_signal}</p>
+                <p>Patched signal: {entry.patched_signal}</p>
+                {entry.artifact && <p><a className="artifactLink" href={artifactFor(item, entry.artifact)}>{entry.artifact}</a></p>}
                 <span className={entry.passed ? 'status analyzed' : 'status pending'}>{entry.passed ? 'passed' : 'failed'}</span>
               </div>
             ))}
@@ -278,11 +387,16 @@ function Detail({ item }) {
         <h2>Repository Artifacts</h2>
         <div className="artifactGrid">
           <Artifact href={item.artifacts.workdir_url} label="CVE workdir" />
+          <Artifact href={item.artifacts.latest_run_url} label="latest run" disabled={!item.artifacts.latest_run} />
           <Artifact href={item.artifacts.cve_json_url} label="cve.json" />
           <Artifact href={item.artifacts.trace_url} label="trace.jsonl" disabled={!item.artifacts.trace_exists} />
           <Artifact href={item.artifacts.pipeline_status_url} label="pipeline_status.json" disabled={!item.artifacts.pipeline_status_exists} />
           <Artifact href={item.artifacts.report_json_url} label="report.json" disabled={!item.artifacts.report_exists} />
           <Artifact href={item.artifacts.report_md_url} label="report.md" disabled={!item.artifacts.report_md_exists} />
+          <Artifact href={item.artifacts.sources_url} label="sources/" disabled={!item.artifacts.sources_exists} />
+          <Artifact href={item.artifacts.source_diff_url} label="research/source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
+          <Artifact href={item.artifacts.harness_readme_url} label="harness/README.md" disabled={!item.artifacts.harness_readme_exists} />
+          <Artifact href={item.artifacts.exploiter_stub_url} label="exploiter/README.md" disabled={!item.artifacts.exploiter_stub_exists} />
         </div>
       </section>
     </section>
@@ -308,10 +422,27 @@ function Artifact({ href, label, disabled }) {
   return <a className="artifact" href={href}>{label} <ExternalLink size={13} /></a>;
 }
 
+function phaseClass(status) {
+  if (status === 'completed') return 'complete';
+  if (status === 'stubbed') return 'stubbed';
+  if (status === 'not_implemented') return 'blocked';
+  return '';
+}
+
 function artifactFor(item, artifact) {
-  if (artifact === 'cve.json') return item.artifacts.cve_json_url;
-  if (artifact === 'report.json') return item.artifacts.report_json_url;
-  return item.artifacts.workdir_url;
+  const known = {
+    'cve.json': item.artifacts.cve_json_url,
+    'report.json': item.artifacts.report_json_url,
+    'report.md': item.artifacts.report_md_url,
+    'trace.jsonl': item.artifacts.trace_url,
+    'pipeline_status.json': item.artifacts.pipeline_status_url,
+    sources: item.artifacts.sources_url,
+    'research/source_diff.patch': item.artifacts.source_diff_url,
+    'harness/README.md': item.artifacts.harness_readme_url,
+    'exploiter/README.md': item.artifacts.exploiter_stub_url,
+  };
+  if (known[artifact]) return known[artifact];
+  return `${item.artifacts.artifact_blob_prefix}/${artifact}`;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

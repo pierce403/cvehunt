@@ -65,12 +65,10 @@ def main() -> None:
     store.ensure()
     if args.command == "run":
         cve = store.read_cve(args.cve_id)
-        report, events = CveHuntWorkflow(model=_model_label(args.model)).run_with_trace(
-            args.cve_id,
-            cve,
-        )
+        workflow = CveHuntWorkflow(model=_model_label(args.model))
+        report, events = workflow.run_with_trace(args.cve_id, cve)
         if args.persist:
-            store.write_report(report, events)
+            store.write_report(report, events, artifact_root=workflow.last_artifact_root)
         if args.json:
             print(json.dumps(report.to_dict(), indent=2))
         else:
@@ -82,7 +80,7 @@ def main() -> None:
             store.write_cve(record)
             if args.run:
                 report, events = workflow.run_with_trace(record.cve_id, record)
-                store.write_report(report, events)
+                store.write_report(report, events, artifact_root=workflow.last_artifact_root)
         print(f"Synced {len(records)} CVEs into {store.cves_dir}")
     elif args.command == "dashboard":
         out = Path(args.out) if args.out else store.root / "dashboard.html"

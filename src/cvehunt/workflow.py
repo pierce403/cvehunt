@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from cvehunt.agents import (
     CollectorAgent,
-    EnvironmentPlannerAgent,
+    ExploiterAgent,
+    HarnessBuilderAgent,
     JudgeAgent,
     ResearcherAgent,
     ValidatorAgent,
@@ -16,9 +20,11 @@ class CveHuntWorkflow:
         self.model = model
         self.collector = CollectorAgent()
         self.researcher = ResearcherAgent()
-        self.planner = EnvironmentPlannerAgent()
+        self.builder = HarnessBuilderAgent()
+        self.exploiter = ExploiterAgent()
         self.validator = ValidatorAgent()
         self.judge = JudgeAgent()
+        self.last_artifact_root: Path | None = None
 
     def run(
         self,
@@ -32,8 +38,12 @@ class CveHuntWorkflow:
         self,
         cve_id: str,
         cve_record: CveRecord | None = None,
+        artifact_root: Path | None = None,
     ) -> tuple[WorkflowReport, list[TraceEvent]]:
         events: list[TraceEvent] = []
+        self.last_artifact_root = artifact_root or Path(
+            tempfile.mkdtemp(prefix=f"cvehunt-{cve_id.lower()}-")
+        )
         cve = cve_record or self.collector.collect(cve_id)
         events.append(
             TraceEvent(
@@ -42,7 +52,7 @@ class CveHuntWorkflow:
                 artifact="cve.json",
             )
         )
-        finding = self.researcher.research(cve)
+        finding, sources = self.researcher.research(cve, self.last_artifact_root)
         events.append(
             TraceEvent(
                 phase="Researcher",
@@ -50,16 +60,30 @@ class CveHuntWorkflow:
                     f"Classified as {finding.vulnerability_class}; "
                     f"surface: {finding.impacted_surface}"
                 ),
+                artifact=sources.diff_path or None,
             )
         )
-        plan = self.planner.plan(cve, finding)
+        harness, plan = self.builder.build(cve, finding, sources, self.last_artifact_root)
         events.append(
             TraceEvent(
-                phase="Environment Planner",
-                message=f"Created {len(plan.checks)} offline validation check(s)",
+                phase="Harness Builder",
+                message=(
+                    f"{harness.status} with {len(harness.dockerfiles)} Dockerfile(s) "
+                    f"and {len(plan.checks)} validation check(s)"
+                ),
+                artifact=(harness.helper_scripts[-1] if harness.helper_scripts else None),
             )
         )
-        evidence = self.validator.validate(cve, plan)
+        exploiter = self.exploiter.run(cve, harness, self.last_artifact_root)
+        events.append(
+            TraceEvent(
+                phase="Exploiter",
+                message=exploiter.message,
+                artifact=exploiter.artifact,
+                status=exploiter.status,
+            )
+        )
+        evidence = self.validator.validate(cve, plan, sources, harness)
         events.append(
             TraceEvent(
                 phase="Validator",
@@ -69,7 +93,7 @@ class CveHuntWorkflow:
                 ),
             )
         )
-        judgement = self.judge.judge(cve, finding, evidence)
+        judgement = self.judge.judge(cve, finding, sources, harness, exploiter, evidence)
         events.append(
             TraceEvent(
                 phase="Judge",
@@ -84,6 +108,9 @@ class CveHuntWorkflow:
             run=RunMetadata(model=self.model),
             cve=cve,
             finding=finding,
+            sources=sources,
+            harness=harness,
+            exploiter=exploiter,
             plan=plan,
             evidence=evidence,
             judgement=judgement,

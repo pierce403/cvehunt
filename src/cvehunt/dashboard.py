@@ -25,6 +25,9 @@ def build_dashboard(store: WorkdirStore, repo_url: str | None = None) -> str:
         if (row["cve"].get("cvss") is not None and row["cve"]["cvss"] >= 7)
     ]
     for row in rows:
+        artifact_dir = row["workdir"]
+        if row["latest_run"] and not (Path(row["workdir"]) / "report.json").exists():
+            artifact_dir = row["latest_run"]
         row["repo_workdir_url"] = _repo_artifact_url(
             repo_url,
             str(row["workdir"]),
@@ -33,7 +36,7 @@ def build_dashboard(store: WorkdirStore, repo_url: str | None = None) -> str:
         row["repo_trace_url"] = _repo_artifact_url(repo_url, str(row["trace"]))
         row["repo_report_url"] = _repo_artifact_url(
             repo_url,
-            f"{row['workdir']}/report.md",
+            f"{artifact_dir}/report.md",
         )
     payload = json.dumps(rows)
     github_link = (

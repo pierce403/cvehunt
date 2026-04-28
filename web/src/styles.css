@@ -303,6 +303,14 @@ td span {
   border-color: #80e59d;
 }
 
+.phase.stubbed {
+  border-color: #ffd782;
+}
+
+.phase.blocked {
+  border-color: #8a90a5;
+}
+
 .phase strong,
 .phase span {
   display: block;

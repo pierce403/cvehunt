@@ -38,6 +38,37 @@ class ResearchFinding:
     vulnerability_class: str
     defensive_hypothesis: str
     relevant_patch_signal: str
+    changed_files: list[str] = field(default_factory=list)
+    research_notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ChangedFile:
+    path: str
+    additions: int
+    deletions: int
+    patch_signal: str | None = None
+
+
+SourceStatus = Literal["materialized", "not_supported", "failed"]
+
+
+@dataclass(frozen=True)
+class SourceBundle:
+    status: SourceStatus
+    ecosystem: str
+    package: str | None
+    vulnerable_version: str | None
+    patched_version: str | None
+    vulnerable_tarball_url: str | None
+    patched_tarball_url: str | None
+    vulnerable_tarball_sha256: str | None
+    patched_tarball_sha256: str | None
+    vulnerable_root: str | None
+    patched_root: str | None
+    diff_path: str | None
+    changed_files: list[ChangedFile] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -47,6 +78,7 @@ class ValidationCheck:
     safe_method: str
     expected_vulnerable_signal: str
     expected_patched_signal: str
+    artifact: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,12 +89,39 @@ class ValidationPlan:
     forbidden_outputs: list[str]
 
 
+HarnessStatus = Literal["built", "not_supported", "failed"]
+
+
+@dataclass(frozen=True)
+class HarnessArtifact:
+    status: HarnessStatus
+    runtime: str
+    isolation: str
+    workspace: str
+    dockerfiles: list[str] = field(default_factory=list)
+    helper_scripts: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+ExploiterStatus = Literal["stubbed", "not_supported"]
+
+
+@dataclass(frozen=True)
+class ExploiterArtifact:
+    implemented: bool
+    status: ExploiterStatus
+    message: str
+    artifact: str | None
+    next_step: str
+
+
 @dataclass(frozen=True)
 class Evidence:
     check_name: str
     vulnerable_signal: str
     patched_signal: str
     passed: bool
+    artifact: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +144,9 @@ class WorkflowReport:
     run: RunMetadata
     cve: CveRecord
     finding: ResearchFinding
+    sources: SourceBundle | None
+    harness: HarnessArtifact | None
+    exploiter: ExploiterArtifact | None
     plan: ValidationPlan
     evidence: list[Evidence]
     judgement: Judgement
@@ -98,6 +160,7 @@ class TraceEvent:
     phase: str
     message: str
     artifact: str | None = None
+    status: str = "completed"
     timestamp: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
     )

@@ -1,0 +1,114 @@
+# Contributing to CVEHunt
+
+Thanks for contributing. The shortest useful loop in this repo is:
+
+1. fork the repository
+2. make a focused branch
+3. run the test and build commands locally
+4. run the CVE workflow with a model you are authorized to use
+5. send a pull request back to `pierce403/cvehunt`
+
+## What To Contribute
+
+Useful contributions include:
+
+- pipeline code under `src/cvehunt/`
+- new or improved CVE fixtures
+- dashboard and site improvements under `web/`
+- test coverage under `tests/`
+- real run artifacts for authorized model evaluations
+- documentation updates in `README.md`, `AGENTS.md`, `FEATURES.md`, and this file
+
+## Local Setup
+
+Clone your fork and install the Python and web dependencies:
+
+```bash
+uv sync --dev
+npm install
+```
+
+## Verify Before Opening A PR
+
+Run the current verification steps from the repo root:
+
+```bash
+uv run python -m pytest
+npm run build
+```
+
+If you are changing the pipeline, also run at least one CVE end to end:
+
+```bash
+uv run cvehunt run CVE-2025-55182 --persist --json --model <model-label>
+```
+
+Use a real model label, for example `gpt-5.5-cyber`, `opus-4.7-cyber`, or another model you are authorized to evaluate. The point is to make the run auditable.
+
+## Model-Backed Runs
+
+When you run the workflow with a model:
+
+- pass `--model <label>` or set `CVEHUNT_MODEL`
+- review the resulting workdir under `cves/<CVE-ID>/runs/<RUN-ID>/`
+- confirm the run contains the expected artifacts before committing anything
+
+Typical run artifacts include:
+
+- `cve.json`
+- `trace.jsonl`
+- `pipeline_status.json`
+- `report.json`
+- `report.md`
+- `sources/`
+- `research/`
+- `harness/`
+- `exploiter/`
+
+If a run produces unusually large or noisy artifacts, trim nonessential scratch output before opening the PR. Keep the durable evidence and remove anything that is not needed for reproduction or dashboard display.
+
+## Pull Request Checklist
+
+Include these details in your PR body:
+
+- what changed
+- why it changed
+- which CVE(s) you exercised
+- the exact command(s) you ran
+- the model label(s) you used
+- whether you are committing a new run directory
+- test results from `uv run python -m pytest`
+- build result from `npm run build`
+
+If the PR includes a new run, point reviewers at the run directory path, for example:
+
+```text
+cves/CVE-2025-55182/runs/2026-04-28T16-17-13Z/
+```
+
+## Project Conventions
+
+- Python code lives under `src/cvehunt/`
+- tests live under `tests/`
+- persisted runs live under `cves/<CVE-ID>/runs/<RUN-ID>/`
+- root-level artifacts under `cves/<CVE-ID>/` are reserved for fully successful end-to-end runs
+- the dashboard is built from `web/` and published into `docs/`
+- keep structured pipeline artifacts structured; avoid replacing them with free-form prose
+
+## Safety And Scope
+
+Contribute only runs and changes you are authorized to perform.
+
+- do not commit secrets, tokens, or private credentials
+- do not add code that targets real third-party systems
+- do not turn the repo into a general-purpose attack tool
+- keep evaluations tied to isolated, auditable harnesses and recorded remediation evidence
+
+## Keeping Docs In Sync
+
+If you materially change feature maturity or contributor workflow, update:
+
+- `FEATURES.md`
+- `README.md`
+- `AGENTS.md`
+- `CONTRIBUTING.md`

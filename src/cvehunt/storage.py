@@ -60,7 +60,12 @@ class WorkdirStore:
                 handle.write(json.dumps(event.to_dict()) + "\n")
         return path
 
-    def write_report(self, report: WorkflowReport, events: list[TraceEvent]) -> Path:
+    def write_report(
+        self,
+        report: WorkflowReport,
+        events: list[TraceEvent],
+        artifact_root: Path | None = None,
+    ) -> Path:
         directory = self.cve_dir(report.cve.cve_id)
         directory.mkdir(parents=True, exist_ok=True)
         run_directory = self.run_dir(report.cve.cve_id, report.run.run_id)
@@ -71,6 +76,7 @@ class WorkdirStore:
             report,
             events,
             pipeline_status,
+            artifact_root=artifact_root,
         )
         if pipeline_status["requested_full_pipeline_completed"]:
             self._promote_successful_run(run_directory, directory)
@@ -130,7 +136,10 @@ class WorkdirStore:
         report: WorkflowReport,
         events: list[TraceEvent],
         pipeline_status: dict[str, object],
+        artifact_root: Path | None = None,
     ) -> Path:
+        if artifact_root is not None and artifact_root.exists():
+            self._copy_tree(artifact_root, directory)
         (directory / "cve.json").write_text(
             json.dumps(asdict(report.cve), indent=2),
             encoding="utf-8",
@@ -156,3 +165,13 @@ class WorkdirStore:
             "pipeline_status.json",
         ):
             shutil.copy2(run_directory / name, cve_directory / name)
+
+    def _copy_tree(self, src: Path, dest: Path) -> None:
+        for path in sorted(src.rglob("*")):
+            relative = path.relative_to(src)
+            target = dest / relative
+            if path.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)

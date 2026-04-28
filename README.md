@@ -1,14 +1,14 @@
 # CVEHunt
 
-CVEHunt is a safe proof-of-concept for an agentic CVE exploitability workflow. It borrows the orchestration shape of systems like MOAK without generating exploit code, payloads, or operational attack steps.
+CVEHunt is a defensive proof-of-concept for an agentic CVE exploitability workflow. It borrows the orchestration shape of systems like MOAK while stopping short of exploit generation and real-world attack logic.
 
-The goal is to model a defensive workflow:
+The goal is to model a repository-backed defensive workflow:
 
 1. Collect CVE context.
-2. Research high-level vulnerability traits.
-3. Plan an isolated validation environment.
-4. Collect synthetic evidence.
-5. Judge exploitability and remediation urgency.
+2. Download supported vulnerable and patched package releases and inspect their diff.
+3. Generate an isolated harness scaffold for vulnerable and patched variants.
+4. Record what evidence was actually captured and where the pipeline stops.
+5. Judge exploitability and remediation urgency from the collected artifacts.
 
 ## Quick Start
 
@@ -33,14 +33,15 @@ This repository is intentionally defensive. The PoC does not:
 - Provide bypass instructions
 - Execute against real targets
 
-Instead, it uses local fixtures and synthetic validation checks to demonstrate how an agent pipeline can capture structured evidence and produce an explainable assessment.
+Instead, it uses local fixtures plus real package-source acquisition for supported ecosystems to demonstrate how an agent pipeline can capture structured evidence and produce an explainable assessment.
 
 ## Current Pipeline
 
 - `CollectorAgent`: loads CVE metadata from fixtures.
-- `ResearcherAgent`: extracts defensive hypotheses and impacted surfaces.
-- `EnvironmentPlannerAgent`: creates a safe validation plan.
-- `ValidatorAgent`: simulates vulnerable/patched evidence from fixtures.
+- `ResearcherAgent`: extracts defensive hypotheses, downloads supported package releases, and writes a real source diff.
+- `HarnessBuilderAgent`: generates Dockerfiles and helper scripts for offline vulnerable/patched harness builds.
+- `ExploiterAgent`: writes a clear stub artifact only; no proof-of-concept logic is implemented.
+- `ValidatorAgent`: records evidence for source acquisition, diff capture, harness generation, and fixture differentials.
 - `JudgeAgent`: assigns a status, confidence, and remediation notes.
 
 ## Dashboard And Workdirs
@@ -54,6 +55,10 @@ cves/
     runs/
       2026-04-28T14-39-50Z/
         cve.json
+        sources/
+        research/
+        harness/
+        exploiter/
         trace.jsonl
         pipeline_status.json
         report.json
@@ -83,4 +88,4 @@ The build reads `cves/` and emits `web/public/data/cves.json` before bundling th
 uv run cvehunt run CVE-2025-55182 --model gpt-5.5-cyber
 ```
 
-The command prints a markdown report with the pipeline outcome and defensive recommendations.
+The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, and explicit notes about unimplemented exploit and fix stages.
