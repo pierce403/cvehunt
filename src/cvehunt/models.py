@@ -6,7 +6,7 @@ from typing import Literal
 
 
 def utc_run_id() -> str:
-    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
 ExploitabilityStatus = Literal[

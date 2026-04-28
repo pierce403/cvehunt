@@ -52,7 +52,7 @@ cves/
   CVE-2025-55182/
     cve.json
     runs/
-      20260428T143950984545Z/
+      2026-04-28T14-39-50Z/
         cve.json
         trace.jsonl
         pipeline_status.json
