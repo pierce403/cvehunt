@@ -76,6 +76,7 @@ npm run build
 - The React site now reads phase-level status from `pipeline_status.json`; if a stage is stubbed or not implemented, fix the run data rather than trying to infer progress from `trace.jsonl` length alone.
 - The dashboard now uses an inline accordion on the main CVE table: clicking a CVE expands the latest run summary in place, while `#/cve/<CVE-ID>` remains the deep-link detail route.
 - For the inline dashboard accordion, the whole summary row should toggle open/closed; artifact links inside the row should stop propagation so they remain direct navigation targets.
+- NVD may lag behind newly published advisories. If a CVE like `CVE-2026-42208` has no NVD record yet, it is acceptable to add `cves/<CVE-ID>/cve.json` from a primary advisory source such as a GitHub advisory, then rebuild the site so it appears as tracked but not analyzed.
 
 ## Agent Tips
 

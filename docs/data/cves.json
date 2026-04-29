@@ -2,10 +2,10 @@
   "generated_at": "build-time",
   "repo_url": "https://github.com/pierce403/cvehunt",
   "counts": {
-    "tracked": 6,
+    "tracked": 7,
     "analyzed": 1,
-    "not_analyzed": 5,
-    "high": 5
+    "not_analyzed": 6,
+    "high": 6
   },
   "cves": [
     {
@@ -602,6 +602,63 @@
         "source_diff_exists": true,
         "harness_readme_exists": true,
         "exploiter_stub_exists": true
+      }
+    },
+    {
+      "cve": {
+        "cve_id": "CVE-2026-42208",
+        "name": "LiteLLM",
+        "summary": "Pre-authentication SQL injection in LiteLLM proxy API key verification. A caller-controlled Authorization header can reach a database query and expose or modify stored proxy credentials.",
+        "cvss": 9.3,
+        "disclosed": "2026-04-20",
+        "ecosystem": "pypi",
+        "vulnerable_versions": [
+          "litellm >=1.81.16,<1.83.7"
+        ],
+        "patched_versions": [
+          "litellm 1.83.7"
+        ],
+        "kev": false,
+        "known_exploitation_window": null,
+        "safe_fixture": {}
+      },
+      "report": null,
+      "trace": [],
+      "pipeline_status": null,
+      "progress": {
+        "autonomous_status": "not_analyzed",
+        "summary": "No autonomous workflow has been run for this CVE yet.",
+        "completed_phases": [],
+        "reached_phases": [],
+        "phase_states": [],
+        "exploit_generated": false,
+        "patch_generated": false,
+        "exploit_note": "Not attempted.",
+        "patch_note": "No patch artifact has been generated."
+      },
+      "artifacts": {
+        "workdir": "cves/CVE-2026-42208",
+        "latest_run": null,
+        "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208",
+        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208",
+        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208",
+        "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/cve.json",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/report.md",
+        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/pipeline_status.json",
+        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/sources",
+        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/research/source_diff.patch",
+        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/harness/README.md",
+        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/exploiter/README.md",
+        "sources_exists": false,
+        "trace_exists": false,
+        "report_exists": false,
+        "report_md_exists": false,
+        "pipeline_status_exists": false,
+        "source_diff_exists": false,
+        "harness_readme_exists": false,
+        "exploiter_stub_exists": false
       }
     },
     {
