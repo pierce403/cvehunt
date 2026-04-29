@@ -42,6 +42,25 @@ FIXTURES: dict[str, CveRecord] = {
             "patched_signal": "synthetic dangerous lookup prefix rejected",
         },
     ),
+    "CVE-2026-42208": CveRecord(
+        cve_id="CVE-2026-42208",
+        name="LiteLLM",
+        summary=(
+            "Pre-authentication SQL injection in LiteLLM proxy API key "
+            "verification. A caller-controlled Authorization header can reach "
+            "a database query and expose or modify stored proxy credentials."
+        ),
+        cvss=9.3,
+        disclosed="2026-04-20",
+        ecosystem="pypi",
+        vulnerable_versions=["litellm 1.81.16"],
+        patched_versions=["litellm 1.83.7"],
+        kev=False,
+        safe_fixture={
+            "vulnerable_signal": "synthetic concatenated SQL accepts a crafted Authorization header",
+            "patched_signal": "synthetic parameterized query rejects the same crafted header",
+        },
+    ),
 }
 
 

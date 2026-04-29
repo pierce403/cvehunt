@@ -61,9 +61,11 @@ npm run build
 - `.github/workflows/pages.yml` runs uv tests plus the Vite build and deploys GitHub Pages on pushes to `main`.
 - Local `gh` OAuth push rejected workflow-file commits without `workflow` scope; the GitHub app connector was able to create `.github/workflows/pages.yml`, then `git pull --ff-only` synced it locally.
 - Use `uv run cvehunt run CVE-2025-55182 --persist --json --model <model-label>` when comparing models. Reports include `Run ID` and `Model`; the current real-source-plus-fixture workflow reaches `defensive_signal_observed` at 0.78 confidence on `CVE-2025-55182`.
-- The current implemented pipeline is no longer fixture-only for supported npm CVEs: `ResearcherAgent` downloads vulnerable and patched package tarballs, extracts them into `sources/`, and writes `research/source_diff.patch`.
-- `HarnessBuilderAgent` now writes `harness/Dockerfile.vulnerable`, `harness/Dockerfile.patched`, `harness/build-images.sh`, and `harness/README.md` into each persisted run.
-- `ExploiterAgent` is intentionally a stub. It writes `exploiter/README.md` and must remain explicit about not generating or executing a proof-of-concept in this assistant context.
+- The current implemented pipeline is no longer fixture-only for supported npm and pypi CVEs: `ResearcherAgent` downloads vulnerable and patched package archives (npm tarballs via the npm registry; pypi sdists via `https://pypi.org/pypi/<pkg>/<version>/json`), extracts them into `sources/`, and writes `research/source_diff.patch`. PyPI version specs must be a single resolvable version (e.g. `litellm 1.81.16`), not a range.
+- `HarnessBuilderAgent` writes `harness/Dockerfile.vulnerable`, `harness/Dockerfile.patched`, `harness/docker-compose.yml`, `harness/build-images.sh`, and `harness/README.md` into each persisted run. Compose port bindings are forced to `127.0.0.1` only.
+- `ExploiterAgent` generates a localhost-scoped PoC (`exploiter/poc.py`) and orchestration runner (`exploiter/run-poc.sh`) keyed on `finding.vulnerability_class` (`sql injection`, `unsafe deserialization`, `unsafe interpolation`). PoC scripts hardcode `127.0.0.1:4000` (vulnerable) and `127.0.0.1:4001` (patched) targets and pass through `SafetyPolicy.assert_localhost_scoped` before being written. Add new templates by extending `_select_poc_template` in `agents.py`.
+- `FixDeveloperAgent` promotes the upstream vulnerable→patched diff as the candidate fix at `fix/candidate.patch` with rationale at `fix/rationale.md`. Fix *validation* (re-running the PoC against a locally patched build) is not yet implemented; the candidate is currently treated as the authoritative remediation.
+- `SafetyPolicy` enforces localhost-only PoC targets and blocks explicit attack-tooling phrases (`reverse shell`, `bind shell`, `weaponize`). It does not filter security vocabulary like `exploit`/`payload`/`poc` since those are unavoidable in legitimate harness-bound CVE validation.
 - `uv run cvehunt run CVE-2025-55182 --persist --json` now performs a real npm package acquisition for `react-server-dom-webpack 19.0.0` and `19.0.1`, captures a 17-file diff, and records the strongest patch signal around `Object.prototype.hasOwnProperty`.
 - Docker is installed in this environment (`docker --version` succeeded), but the current pipeline generates Dockerfiles and a build helper script rather than automatically building images during the run.
 - The Researcher now classifies SQL injection summaries explicitly. For unsupported ecosystems without fixture coverage, the fallback differential check must fail and the run should end as `insufficient_evidence`, not `needs_human_review`.
@@ -83,7 +85,7 @@ npm run build
 
 - Read `README.md` for the product framing before changing behavior.
 - If adding real integrations later, keep them behind explicit adapters and test with fixtures first.
-- If a request asks for exploit details, redirect the implementation toward defensive evidence, remediation guidance, or toy-only demonstrations.
+- PoC artifacts must stay harness-bound: hardcoded `127.0.0.1` targets, no environment-overridable hosts, no credential exfiltration. `SafetyPolicy.assert_localhost_scoped` is the runtime check; keep templates routed through it.
 - For MOAK-like dashboard work, keep agent traces complete and structured so each CVE workdir can be inspected independently.
 
 ## Rapport & Reflection
