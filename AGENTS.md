@@ -66,6 +66,7 @@ npm run build
 - `ExploiterAgent` is intentionally a stub. It writes `exploiter/README.md` and must remain explicit about not generating or executing a proof-of-concept in this assistant context.
 - `uv run cvehunt run CVE-2025-55182 --persist --json` now performs a real npm package acquisition for `react-server-dom-webpack 19.0.0` and `19.0.1`, captures a 17-file diff, and records the strongest patch signal around `Object.prototype.hasOwnProperty`.
 - Docker is installed in this environment (`docker --version` succeeded), but the current pipeline generates Dockerfiles and a build helper script rather than automatically building images during the run.
+- The Researcher now classifies SQL injection summaries explicitly. For unsupported ecosystems without fixture coverage, the fallback differential check must fail and the run should end as `insufficient_evidence`, not `needs_human_review`.
 
 ## Known Issues & Solutions
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from cvehunt.agents import ResearcherAgent, SafetyPolicy
 from cvehunt.dashboard import _repo_artifact_url, build_dashboard
 from cvehunt.fixtures import get_fixture
-from cvehunt.models import ChangedFile, ResearchFinding, SourceBundle
+from cvehunt.models import ChangedFile, CveRecord, ResearchFinding, SourceBundle
 from cvehunt.storage import WorkdirStore
 from cvehunt.workflow import CveHuntWorkflow
 
@@ -154,3 +154,35 @@ def test_dashboard_includes_tracked_cves(tmp_path) -> None:
         )
         == "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182"
     )
+
+
+def test_unsupported_ecosystem_without_fixture_fails_differential_check(tmp_path) -> None:
+    workflow = CveHuntWorkflow()
+    cve = CveRecord(
+        cve_id="CVE-2026-42208",
+        name="LiteLLM",
+        summary=(
+            "Pre-authentication SQL injection in LiteLLM proxy API key verification. "
+            "A caller-controlled Authorization header can reach a database query."
+        ),
+        cvss=9.3,
+        disclosed="2026-04-20",
+        ecosystem="pypi",
+        vulnerable_versions=["litellm >=1.81.16,<1.83.7"],
+        patched_versions=["litellm 1.83.7"],
+    )
+    report, _events = workflow.run_with_trace(
+        "CVE-2026-42208",
+        cve_record=cve,
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert report.finding.vulnerability_class == "sql injection"
+    assert report.sources is not None
+    assert report.sources.status == "not_supported"
+    assert report.harness is not None
+    assert report.harness.status == "not_supported"
+    assert report.exploiter is not None
+    assert report.exploiter.status == "not_supported"
+    assert report.evidence[0].passed is False
+    assert report.judgement.status == "insufficient_evidence"

@@ -101,6 +101,17 @@ class ResearcherAgent:
                 ),
                 "Look for disabled lookup handlers or stronger interpolation allowlists.",
             )
+        if "sql injection" in normalized or "sqli" in normalized:
+            return (
+                "sql injection",
+                "authentication and proxy API key verification query construction",
+                (
+                    "Inspect vulnerable and patched releases for parameterized query "
+                    "handling in the authentication path, then confirm any local fixture "
+                    "captures the same input-validation boundary."
+                ),
+                "Look for caller-supplied values being passed as separate query parameters.",
+            )
         return (
             "unknown",
             "unknown",
@@ -590,6 +601,17 @@ class ValidatorAgent:
                         vulnerable_signal=check.expected_vulnerable_signal,
                         patched_signal=check.expected_patched_signal,
                         passed=passed,
+                        artifact=check.artifact,
+                    )
+                )
+                continue
+            if check.name == "patched-vs-vulnerable differential check" and not cve.safe_fixture:
+                evidence.append(
+                    Evidence(
+                        check_name=check.name,
+                        vulnerable_signal=check.expected_vulnerable_signal,
+                        patched_signal=check.expected_patched_signal,
+                        passed=False,
                         artifact=check.artifact,
                     )
                 )

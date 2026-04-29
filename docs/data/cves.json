@@ -3,8 +3,8 @@
   "repo_url": "https://github.com/pierce403/cvehunt",
   "counts": {
     "tracked": 7,
-    "analyzed": 1,
-    "not_analyzed": 6,
+    "analyzed": 2,
+    "not_analyzed": 5,
     "high": 6
   },
   "cves": [
@@ -622,43 +622,355 @@
         "known_exploitation_window": null,
         "safe_fixture": {}
       },
-      "report": null,
-      "trace": [],
-      "pipeline_status": null,
+      "report": {
+        "run": {
+          "run_id": "2026-04-29T16-53-21Z",
+          "model": "unspecified"
+        },
+        "cve": {
+          "cve_id": "CVE-2026-42208",
+          "name": "LiteLLM",
+          "summary": "Pre-authentication SQL injection in LiteLLM proxy API key verification. A caller-controlled Authorization header can reach a database query and expose or modify stored proxy credentials.",
+          "cvss": 9.3,
+          "disclosed": "2026-04-20",
+          "ecosystem": "pypi",
+          "vulnerable_versions": [
+            "litellm >=1.81.16,<1.83.7"
+          ],
+          "patched_versions": [
+            "litellm 1.83.7"
+          ],
+          "kev": false,
+          "known_exploitation_window": null,
+          "safe_fixture": {}
+        },
+        "finding": {
+          "impacted_surface": "authentication and proxy API key verification query construction",
+          "vulnerability_class": "sql injection",
+          "defensive_hypothesis": "Inspect vulnerable and patched releases for parameterized query handling in the authentication path, then confirm any local fixture captures the same input-validation boundary.",
+          "relevant_patch_signal": "Look for caller-supplied values being passed as separate query parameters.",
+          "changed_files": [],
+          "research_notes": [
+            "Real source acquisition is not implemented for ecosystem pypi."
+          ]
+        },
+        "sources": {
+          "status": "not_supported",
+          "ecosystem": "pypi",
+          "package": null,
+          "vulnerable_version": null,
+          "patched_version": null,
+          "vulnerable_tarball_url": null,
+          "patched_tarball_url": null,
+          "vulnerable_tarball_sha256": null,
+          "patched_tarball_sha256": null,
+          "vulnerable_root": null,
+          "patched_root": null,
+          "diff_path": null,
+          "changed_files": [],
+          "notes": [
+            "Real source acquisition is not implemented for ecosystem pypi."
+          ]
+        },
+        "harness": {
+          "status": "not_supported",
+          "runtime": "fixture-only validation for pypi",
+          "isolation": "offline defensive triage only",
+          "workspace": ".",
+          "dockerfiles": [],
+          "helper_scripts": [],
+          "notes": [
+            "Real source acquisition is not implemented for ecosystem pypi."
+          ]
+        },
+        "exploiter": {
+          "implemented": false,
+          "status": "not_supported",
+          "message": "Exploit development is intentionally absent, and no harness was available to extend.",
+          "artifact": "exploiter/README.md",
+          "next_step": "Extend the harness first if you want a local placeholder to sit on top of it."
+        },
+        "plan": {
+          "runtime": "fixture-only validation for pypi",
+          "isolation": "offline defensive triage only",
+          "checks": [
+            {
+              "name": "patched-vs-vulnerable differential check",
+              "purpose": "Confirm the local fixture still exposes a vulnerable/patched differential.",
+              "safe_method": "Run only local synthetic checks. No external targets or proof-of-concept execution.",
+              "expected_vulnerable_signal": "no vulnerable fixture signal available",
+              "expected_patched_signal": "no patched fixture signal available",
+              "artifact": null
+            }
+          ],
+          "forbidden_outputs": [
+            "exploit scripts",
+            "payloads",
+            "bypass steps",
+            "target-specific instructions"
+          ]
+        },
+        "evidence": [
+          {
+            "check_name": "patched-vs-vulnerable differential check",
+            "vulnerable_signal": "no vulnerable fixture signal available",
+            "patched_signal": "no patched fixture signal available",
+            "passed": false,
+            "artifact": null
+          }
+        ],
+        "judgement": {
+          "status": "insufficient_evidence",
+          "confidence": 0.35,
+          "rationale": "The workflow did not fully materialize enough offline evidence to assess this CVE.",
+          "remediation_notes": [
+            "Review the captured source acquisition and harness notes manually.",
+            "Confirm affected versions and package availability before retrying."
+          ],
+          "safety_notes": [
+            "Assessment stayed within offline package acquisition and local fixtures.",
+            "No proof-of-concept logic was generated."
+          ]
+        }
+      },
+      "trace": [
+        {
+          "phase": "Collector",
+          "message": "Collected metadata for CVE-2026-42208",
+          "artifact": "cve.json",
+          "status": "completed",
+          "timestamp": "2026-04-29T16:53:21+00:00"
+        },
+        {
+          "phase": "Researcher",
+          "message": "Classified as sql injection; surface: authentication and proxy API key verification query construction",
+          "artifact": null,
+          "status": "completed",
+          "timestamp": "2026-04-29T16:53:21+00:00"
+        },
+        {
+          "phase": "Harness Builder",
+          "message": "not_supported with 0 Dockerfile(s) and 1 validation check(s)",
+          "artifact": null,
+          "status": "completed",
+          "timestamp": "2026-04-29T16:53:21+00:00"
+        },
+        {
+          "phase": "Exploiter",
+          "message": "Exploit development is intentionally absent, and no harness was available to extend.",
+          "artifact": "exploiter/README.md",
+          "status": "not_supported",
+          "timestamp": "2026-04-29T16:53:21+00:00"
+        },
+        {
+          "phase": "Validator",
+          "message": "Collected 0 passing evidence item(s) out of 1",
+          "artifact": null,
+          "status": "completed",
+          "timestamp": "2026-04-29T16:53:21+00:00"
+        },
+        {
+          "phase": "Judge",
+          "message": "Assigned insufficient_evidence with 0.35 confidence",
+          "artifact": "report.json",
+          "status": "completed",
+          "timestamp": "2026-04-29T16:53:21+00:00"
+        }
+      ],
+      "pipeline_status": {
+        "cve_id": "CVE-2026-42208",
+        "run_id": "2026-04-29T16-53-21Z",
+        "model": "unspecified",
+        "overall_status": "insufficient_evidence",
+        "confidence": 0.35,
+        "furthest_completed_stage": "Judge",
+        "requested_full_pipeline_completed": false,
+        "exploit_generated": false,
+        "fix_generated": false,
+        "fix_validated": false,
+        "notes": [
+          "Real source acquisition is not implemented for ecosystem pypi.",
+          "Real source acquisition is not implemented for ecosystem pypi.",
+          "Exploit development is intentionally absent, and no harness was available to extend.",
+          "No source fix generation or fix validation stage is implemented in this run."
+        ],
+        "stages": [
+          {
+            "phase": "Collector",
+            "goal": "Collect CVE metadata and local fixture context.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Collected metadata for CVE-2026-42208",
+            "artifact": "cve.json"
+          },
+          {
+            "phase": "Researcher",
+            "goal": "Acquire supported package sources and derive patch signals from the real release diff.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Classified as sql injection; surface: authentication and proxy API key verification query construction",
+            "artifact": null
+          },
+          {
+            "phase": "Harness Builder",
+            "goal": "Generate isolated vulnerable and patched environment scaffolding from the acquired sources.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "not_supported with 0 Dockerfile(s) and 1 validation check(s)",
+            "artifact": null
+          },
+          {
+            "phase": "Exploiter",
+            "goal": "Develop a harness-scoped proof-of-concept.",
+            "implemented": false,
+            "reached": true,
+            "status": "not_supported",
+            "message": "Exploit development is intentionally absent, and no harness was available to extend.",
+            "artifact": "exploiter/README.md"
+          },
+          {
+            "phase": "Fix Developer",
+            "goal": "Generate or apply a candidate source fix and re-validate it.",
+            "implemented": false,
+            "reached": false,
+            "status": "not_implemented",
+            "message": "Not implemented in the current CVEHunt pipeline.",
+            "artifact": null
+          },
+          {
+            "phase": "Validator",
+            "goal": "Compare vulnerable and patched/fixed behavior and capture evidence.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Collected 0 passing evidence item(s) out of 1",
+            "artifact": null
+          },
+          {
+            "phase": "Judge",
+            "goal": "Assess evidence, safety boundaries, and remediation efficacy.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Assigned insufficient_evidence with 0.35 confidence",
+            "artifact": "report.json"
+          }
+        ]
+      },
       "progress": {
-        "autonomous_status": "not_analyzed",
-        "summary": "No autonomous workflow has been run for this CVE yet.",
-        "completed_phases": [],
-        "reached_phases": [],
-        "phase_states": [],
+        "autonomous_status": "insufficient_evidence",
+        "summary": "Real source acquisition is not implemented for ecosystem pypi.",
+        "completed_phases": [
+          "Collector",
+          "Researcher",
+          "Harness Builder",
+          "Validator",
+          "Judge"
+        ],
+        "reached_phases": [
+          "Collector",
+          "Researcher",
+          "Harness Builder",
+          "Exploiter",
+          "Validator",
+          "Judge"
+        ],
+        "phase_states": [
+          {
+            "phase": "Collector",
+            "goal": "Collect CVE metadata and local fixture context.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Collected metadata for CVE-2026-42208",
+            "artifact": "cve.json"
+          },
+          {
+            "phase": "Researcher",
+            "goal": "Acquire supported package sources and derive patch signals from the real release diff.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Classified as sql injection; surface: authentication and proxy API key verification query construction",
+            "artifact": null
+          },
+          {
+            "phase": "Harness Builder",
+            "goal": "Generate isolated vulnerable and patched environment scaffolding from the acquired sources.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "not_supported with 0 Dockerfile(s) and 1 validation check(s)",
+            "artifact": null
+          },
+          {
+            "phase": "Exploiter",
+            "goal": "Develop a harness-scoped proof-of-concept.",
+            "implemented": false,
+            "reached": true,
+            "status": "not_supported",
+            "message": "Exploit development is intentionally absent, and no harness was available to extend.",
+            "artifact": "exploiter/README.md"
+          },
+          {
+            "phase": "Fix Developer",
+            "goal": "Generate or apply a candidate source fix and re-validate it.",
+            "implemented": false,
+            "reached": false,
+            "status": "not_implemented",
+            "message": "Not implemented in the current CVEHunt pipeline.",
+            "artifact": null
+          },
+          {
+            "phase": "Validator",
+            "goal": "Compare vulnerable and patched/fixed behavior and capture evidence.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Collected 0 passing evidence item(s) out of 1",
+            "artifact": null
+          },
+          {
+            "phase": "Judge",
+            "goal": "Assess evidence, safety boundaries, and remediation efficacy.",
+            "implemented": true,
+            "reached": true,
+            "status": "completed",
+            "message": "Assigned insufficient_evidence with 0.35 confidence",
+            "artifact": "report.json"
+          }
+        ],
         "exploit_generated": false,
         "patch_generated": false,
-        "exploit_note": "Not attempted.",
-        "patch_note": "No patch artifact has been generated."
+        "exploit_note": "Exploit development is intentionally absent, and no harness was available to extend.",
+        "patch_note": "No source fix generation or fix validation stage completed in this run."
       },
       "artifacts": {
         "workdir": "cves/CVE-2026-42208",
-        "latest_run": null,
+        "latest_run": "cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z",
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208",
-        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208",
-        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208",
+        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z",
+        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/report.md",
-        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/pipeline_status.json",
-        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/sources",
-        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/research/source_diff.patch",
-        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/harness/README.md",
-        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/exploiter/README.md",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/report.md",
+        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/pipeline_status.json",
+        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/sources",
+        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/research/source_diff.patch",
+        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/harness/README.md",
+        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T16-53-21Z/exploiter/README.md",
         "sources_exists": false,
-        "trace_exists": false,
-        "report_exists": false,
-        "report_md_exists": false,
-        "pipeline_status_exists": false,
+        "trace_exists": true,
+        "report_exists": true,
+        "report_md_exists": true,
+        "pipeline_status_exists": true,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": true
       }
     },
     {
