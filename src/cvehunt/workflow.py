@@ -6,6 +6,7 @@ from pathlib import Path
 from cvehunt.agents import (
     CollectorAgent,
     ExploiterAgent,
+    FixDeveloperAgent,
     HarnessBuilderAgent,
     JudgeAgent,
     ResearcherAgent,
@@ -22,6 +23,7 @@ class CveHuntWorkflow:
         self.researcher = ResearcherAgent()
         self.builder = HarnessBuilderAgent()
         self.exploiter = ExploiterAgent()
+        self.fix_developer = FixDeveloperAgent()
         self.validator = ValidatorAgent()
         self.judge = JudgeAgent()
         self.last_artifact_root: Path | None = None
@@ -74,7 +76,7 @@ class CveHuntWorkflow:
                 artifact=(harness.helper_scripts[-1] if harness.helper_scripts else None),
             )
         )
-        exploiter = self.exploiter.run(cve, harness, self.last_artifact_root)
+        exploiter = self.exploiter.run(cve, finding, harness, self.last_artifact_root)
         events.append(
             TraceEvent(
                 phase="Exploiter",
@@ -83,7 +85,16 @@ class CveHuntWorkflow:
                 status=exploiter.status,
             )
         )
-        evidence = self.validator.validate(cve, plan, sources, harness)
+        fix = self.fix_developer.develop(cve, sources, finding, self.last_artifact_root)
+        events.append(
+            TraceEvent(
+                phase="Fix Developer",
+                message=fix.message,
+                artifact=fix.candidate_patch,
+                status=fix.status,
+            )
+        )
+        evidence = self.validator.validate(cve, plan, sources, harness, exploiter, fix)
         events.append(
             TraceEvent(
                 phase="Validator",
@@ -93,7 +104,7 @@ class CveHuntWorkflow:
                 ),
             )
         )
-        judgement = self.judge.judge(cve, finding, sources, harness, exploiter, evidence)
+        judgement = self.judge.judge(cve, finding, sources, harness, exploiter, fix, evidence)
         events.append(
             TraceEvent(
                 phase="Judge",
@@ -111,6 +122,7 @@ class CveHuntWorkflow:
             sources=sources,
             harness=harness,
             exploiter=exploiter,
+            fix=fix,
             plan=plan,
             evidence=evidence,
             judgement=judgement,

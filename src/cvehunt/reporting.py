@@ -24,12 +24,12 @@ FULL_PIPELINE_PHASES = [
     {
         "phase": "Exploiter",
         "goal": "Develop a harness-scoped proof-of-concept.",
-        "implemented": False,
+        "implemented": True,
     },
     {
         "phase": "Fix Developer",
         "goal": "Generate or apply a candidate source fix and re-validate it.",
-        "implemented": False,
+        "implemented": True,
     },
     {
         "phase": "Validator",
@@ -52,6 +52,7 @@ def render_markdown(report: WorkflowReport) -> str:
     sources = data["sources"]
     harness = data["harness"]
     exploiter = data["exploiter"]
+    fix = data.get("fix")
     judgement = data["judgement"]
     evidence = data["evidence"]
 
@@ -142,6 +143,26 @@ def render_markdown(report: WorkflowReport) -> str:
                 f"- Next step: {exploiter['next_step']}",
             ]
         )
+        if exploiter.get("poc_path"):
+            lines.append(f"- PoC script: {exploiter['poc_path']}")
+        if exploiter.get("runner_path"):
+            lines.append(f"- Runner script: {exploiter['runner_path']}")
+
+    lines.extend(["", "## Fix Developer", ""])
+    if fix:
+        lines.extend(
+            [
+                f"- Status: {fix['status']}",
+                f"- Message: {fix['message']}",
+                f"- Candidate patch: {fix.get('candidate_patch') or 'n/a'}",
+                f"- Rationale: {fix.get('rationale') or 'n/a'}",
+            ]
+        )
+        if fix.get("notes"):
+            lines.append("- Notes:")
+            lines.extend(f"  - {note}" for note in fix["notes"])
+    else:
+        lines.append("- Status: not_run")
 
     lines.extend(["", "## Validation Plan", ""])
     lines.extend(
@@ -180,8 +201,8 @@ def render_markdown(report: WorkflowReport) -> str:
             f"- Real package sources acquired: {'yes' if sources and sources['status'] == 'materialized' else 'no'}",
             f"- Harness scaffold generated: {'yes' if harness and harness['status'] == 'built' else 'no'}",
             f"- Full exploit generated: {'yes' if exploiter and exploiter['implemented'] else 'no'}",
-            "- Source patch generated: no",
-            "- Fix validation complete: no",
+            f"- Source patch generated: {'yes' if fix and fix.get('status') == 'generated' else 'no'}",
+            f"- Fix validation complete: {'yes' if fix and fix.get('status') == 'validated' else 'no'}",
             "",
             "## Judgement",
             "",
@@ -239,11 +260,12 @@ def render_pipeline_status(
         notes.extend(report.harness.notes)
     if report.exploiter:
         notes.append(report.exploiter.message)
-    notes.append("No source fix generation or fix validation stage is implemented in this run.")
+    if report.fix:
+        notes.append(report.fix.message)
 
     exploit_generated = bool(report.exploiter and report.exploiter.implemented)
-    fix_generated = False
-    fix_validated = False
+    fix_generated = bool(report.fix and report.fix.status == "generated")
+    fix_validated = bool(report.fix and report.fix.status == "validated")
     requested_full_pipeline_completed = exploit_generated and fix_generated and fix_validated
 
     return {

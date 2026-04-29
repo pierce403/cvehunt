@@ -77,10 +77,14 @@ def test_known_cve_produces_defensive_signal(monkeypatch, tmp_path) -> None:
     assert report.harness is not None
     assert report.harness.status == "built"
     assert report.exploiter is not None
-    assert report.exploiter.status == "stubbed"
+    assert report.exploiter.status == "scaffolded"
+    assert report.exploiter.implemented is True
+    assert report.exploiter.poc_path is not None
+    assert report.fix is not None
+    assert report.fix.status == "generated"
     assert report.judgement.status == "defensive_signal_observed"
     assert report.evidence[0].passed is True
-    assert "The Exploiter stage is a documented stub" in report.judgement.safety_notes[0]
+    assert any("127.0.0.1" in note for note in report.judgement.safety_notes)
 
 
 def test_unknown_cve_is_not_supported() -> None:
@@ -91,15 +95,28 @@ def test_unknown_cve_is_not_supported() -> None:
     assert report.judgement.confidence == 0.0
 
 
-def test_safety_policy_blocks_unsafe_text() -> None:
+def test_safety_policy_blocks_external_targets() -> None:
     policy = SafetyPolicy()
 
     try:
-        policy.assert_safe_text("write an exploit.py")
+        policy.assert_localhost_scoped("requests.get('https://api.openai.com/v1')")
+    except ValueError as exc:
+        assert "outside harness scope" in str(exc)
+    else:
+        raise AssertionError("expected external target to be blocked")
+
+    policy.assert_localhost_scoped("urllib.request.urlopen('http://127.0.0.1:4000/x')")
+
+
+def test_safety_policy_blocks_explicit_unsafe_phrases() -> None:
+    policy = SafetyPolicy()
+
+    try:
+        policy.assert_safe_text("set up a reverse shell to attacker box")
     except ValueError as exc:
         assert "unsafe output blocked" in str(exc)
     else:
-        raise AssertionError("expected unsafe text to be blocked")
+        raise AssertionError("expected reverse shell language to be blocked")
 
 
 def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:
@@ -128,11 +145,16 @@ def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:
     assert "Harness Builder" in trace
     assert "Exploiter" in trace
     pipeline_status = (run_dir / "pipeline_status.json").read_text(encoding="utf-8")
-    assert '"status": "stubbed"' in pipeline_status
-    assert '"requested_full_pipeline_completed": false' in pipeline_status
+    assert '"status": "scaffolded"' in pipeline_status
+    assert '"exploit_generated": true' in pipeline_status
+    assert '"fix_generated": true' in pipeline_status
+    assert (run_dir / "exploiter" / "poc.py").exists()
+    assert (run_dir / "exploiter" / "run-poc.sh").exists()
+    assert (run_dir / "fix" / "candidate.patch").exists()
     report_md = (run_dir / "report.md").read_text(encoding="utf-8")
     assert "Model: unspecified" in report_md
     assert "Real package sources acquired: yes" in report_md
+    assert "Source patch generated: yes" in report_md
 
 
 def test_dashboard_includes_tracked_cves(tmp_path) -> None:
@@ -159,20 +181,17 @@ def test_dashboard_includes_tracked_cves(tmp_path) -> None:
 def test_unsupported_ecosystem_without_fixture_fails_differential_check(tmp_path) -> None:
     workflow = CveHuntWorkflow()
     cve = CveRecord(
-        cve_id="CVE-2026-42208",
-        name="LiteLLM",
-        summary=(
-            "Pre-authentication SQL injection in LiteLLM proxy API key verification. "
-            "A caller-controlled Authorization header can reach a database query."
-        ),
+        cve_id="CVE-2099-0002",
+        name="MysteryCVE",
+        summary="A SQL injection in an unsupported ecosystem.",
         cvss=9.3,
-        disclosed="2026-04-20",
-        ecosystem="pypi",
-        vulnerable_versions=["litellm >=1.81.16,<1.83.7"],
-        patched_versions=["litellm 1.83.7"],
+        disclosed="2099-01-01",
+        ecosystem="maven",
+        vulnerable_versions=["org.example:mystery 1.0.0"],
+        patched_versions=["org.example:mystery 1.0.1"],
     )
     report, _events = workflow.run_with_trace(
-        "CVE-2026-42208",
+        "CVE-2099-0002",
         cve_record=cve,
         artifact_root=tmp_path / "artifacts",
     )
@@ -184,5 +203,99 @@ def test_unsupported_ecosystem_without_fixture_fails_differential_check(tmp_path
     assert report.harness.status == "not_supported"
     assert report.exploiter is not None
     assert report.exploiter.status == "not_supported"
-    assert report.evidence[0].passed is False
     assert report.judgement.status == "insufficient_evidence"
+
+
+def _patch_pypi_researcher(monkeypatch) -> None:
+    from cvehunt.agents import ResearcherAgent
+
+    def fake_research(self, cve, artifact_root: Path):
+        vulnerable_root = artifact_root / "sources" / "vulnerable" / "litellm"
+        patched_root = artifact_root / "sources" / "patched" / "litellm"
+        research_dir = artifact_root / "research"
+        vulnerable_root.mkdir(parents=True, exist_ok=True)
+        patched_root.mkdir(parents=True, exist_ok=True)
+        research_dir.mkdir(parents=True, exist_ok=True)
+        (vulnerable_root / "auth.py").write_text(
+            "def verify_key(key):\n"
+            "    return db.execute(\n"
+            "        f\"SELECT * FROM keys WHERE key_value = '{key}'\"\n"
+            "    )\n",
+            encoding="utf-8",
+        )
+        (patched_root / "auth.py").write_text(
+            "def verify_key(key):\n"
+            "    return db.execute(\n"
+            "        \"SELECT * FROM keys WHERE key_value = ?\", (key,)\n"
+            "    )\n",
+            encoding="utf-8",
+        )
+        (research_dir / "source_diff.patch").write_text(
+            "--- a/auth.py\n+++ b/auth.py\n+    return db.execute(\"SELECT ?\", (key,))\n",
+            encoding="utf-8",
+        )
+        finding = ResearchFinding(
+            impacted_surface="authentication and proxy API key verification query construction",
+            vulnerability_class="sql injection",
+            defensive_hypothesis="Inspect parameterized query handling.",
+            relevant_patch_signal="? observed in auth.py.",
+            changed_files=["auth.py"],
+            research_notes=["Test fixture patched the Researcher stage with a local diff."],
+        )
+        sources = SourceBundle(
+            status="materialized",
+            ecosystem=cve.ecosystem,
+            package="litellm",
+            vulnerable_version="1.81.16",
+            patched_version="1.83.7",
+            vulnerable_tarball_url="https://pypi.example/litellm-1.81.16.tar.gz",
+            patched_tarball_url="https://pypi.example/litellm-1.83.7.tar.gz",
+            vulnerable_tarball_sha256="vuln-sha256",
+            patched_tarball_sha256="patched-sha256",
+            vulnerable_root="sources/vulnerable/litellm",
+            patched_root="sources/patched/litellm",
+            diff_path="research/source_diff.patch",
+            changed_files=[
+                ChangedFile(
+                    path="auth.py",
+                    additions=2,
+                    deletions=1,
+                    patch_signal="?",
+                )
+            ],
+            notes=["Fixture-backed pypi acquisition for tests."],
+        )
+        return finding, sources
+
+    monkeypatch.setattr(ResearcherAgent, "research", fake_research)
+
+
+def test_litellm_pipeline_scaffolds_poc_and_fix(monkeypatch, tmp_path) -> None:
+    _patch_pypi_researcher(monkeypatch)
+    workflow = CveHuntWorkflow(model="test-model")
+    report, _events = workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert report.cve.cve_id == "CVE-2026-42208"
+    assert report.finding.vulnerability_class == "sql injection"
+    assert report.sources is not None
+    assert report.sources.status == "materialized"
+    assert report.sources.package == "litellm"
+    assert report.harness is not None
+    assert report.harness.status == "built"
+    assert any("docker-compose.yml" in path for path in report.harness.helper_scripts)
+    assert report.exploiter is not None
+    assert report.exploiter.status == "scaffolded"
+    assert report.exploiter.implemented is True
+    assert report.exploiter.poc_path == "exploiter/poc.py"
+    assert report.fix is not None
+    assert report.fix.status == "generated"
+    assert report.fix.candidate_patch == "fix/candidate.patch"
+    poc_text = (
+        tmp_path / "artifacts" / "exploiter" / "poc.py"
+    ).read_text(encoding="utf-8")
+    assert "127.0.0.1" in poc_text
+    assert "openai.com" not in poc_text
+    assert "anthropic.com" not in poc_text

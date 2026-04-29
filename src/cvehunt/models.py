@@ -103,7 +103,19 @@ class HarnessArtifact:
     notes: list[str] = field(default_factory=list)
 
 
-ExploiterStatus = Literal["stubbed", "not_supported"]
+ExploiterStatus = Literal[
+    "stubbed",
+    "not_supported",
+    "scaffolded",
+    "executed",
+]
+
+
+@dataclass(frozen=True)
+class ExploitOutcome:
+    variant: Literal["vulnerable", "patched"]
+    triggered: bool
+    detail: str
 
 
 @dataclass(frozen=True)
@@ -113,6 +125,27 @@ class ExploiterArtifact:
     message: str
     artifact: str | None
     next_step: str
+    poc_path: str | None = None
+    runner_path: str | None = None
+    outcomes: list[ExploitOutcome] = field(default_factory=list)
+
+
+FixStatus = Literal[
+    "not_implemented",
+    "not_applicable",
+    "generated",
+    "validated",
+    "rejected",
+]
+
+
+@dataclass(frozen=True)
+class FixArtifact:
+    status: FixStatus
+    message: str
+    candidate_patch: str | None = None
+    rationale: str | None = None
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -147,6 +180,7 @@ class WorkflowReport:
     sources: SourceBundle | None
     harness: HarnessArtifact | None
     exploiter: ExploiterArtifact | None
+    fix: FixArtifact | None
     plan: ValidationPlan
     evidence: list[Evidence]
     judgement: Judgement

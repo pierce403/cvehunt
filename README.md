@@ -25,23 +25,23 @@ npm run build
 
 ## Safety Boundary
 
-This repository is intentionally defensive. The PoC does not:
+PoC artifacts in this repository are scoped to the local CVEHunt harness only:
 
-- Generate exploit scripts
-- Produce payloads
-- Fetch public PoCs
-- Provide bypass instructions
-- Execute against real targets
+- Service ports are bound to `127.0.0.1` exclusively in the generated `harness/docker-compose.yml`.
+- Generated PoC scripts hardcode `http://127.0.0.1:4000` (vulnerable) and `http://127.0.0.1:4001` (patched). There is no environment override.
+- `SafetyPolicy.assert_localhost_scoped` rejects any PoC content that would reach a non-loopback host.
+- The pipeline does not exfiltrate credentials, target real third-party deployments, or fetch weaponized public exploit code.
 
-Instead, it uses local fixtures plus real package-source acquisition for supported ecosystems to demonstrate how an agent pipeline can capture structured evidence and produce an explainable assessment.
+The PoC validates the harness, not real services.
 
 ## Current Pipeline
 
 - `CollectorAgent`: loads CVE metadata from fixtures.
-- `ResearcherAgent`: extracts defensive hypotheses, downloads supported package releases, and writes a real source diff.
-- `HarnessBuilderAgent`: generates Dockerfiles and helper scripts for offline vulnerable/patched harness builds.
-- `ExploiterAgent`: writes a clear stub artifact only; no proof-of-concept logic is implemented.
-- `ValidatorAgent`: records evidence for source acquisition, diff capture, harness generation, and fixture differentials.
+- `ResearcherAgent`: extracts defensive hypotheses, downloads supported package releases (npm and pypi), and writes a real source diff.
+- `HarnessBuilderAgent`: generates Dockerfiles plus a localhost-only `docker-compose.yml` for the vulnerable and patched variants.
+- `ExploiterAgent`: emits a localhost-scoped PoC (`exploiter/poc.py`) and orchestration runner (`exploiter/run-poc.sh`) keyed on the inferred vulnerability class.
+- `FixDeveloperAgent`: promotes the upstream vulnerable→patched diff as `fix/candidate.patch` with a rationale.
+- `ValidatorAgent`: records evidence for source acquisition, diff capture, harness generation, PoC scaffolding, and candidate fix.
 - `JudgeAgent`: assigns a status, confidence, and remediation notes.
 
 ## Dashboard And Workdirs

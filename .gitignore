@@ -14,3 +14,8 @@ build/
 .DS_Store
 moak_site_notes/
 .openmoak/
+.claude/
+.omc/
+cves/*/runs/*/sources/
+cves/*/runs/*/research/source_diff.patch
+cves/*/runs/*/fix/candidate.patch
