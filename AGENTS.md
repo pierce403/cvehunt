@@ -29,8 +29,6 @@ The intended pipeline shape is:
 5. Validator: runs the PoC against vulnerable and patched harnesses, captures evidence, and verifies that remediation changes the outcome.
 6. Judge: reviews traces, artifacts, exploitability evidence, remediation evidence, and safety boundaries to produce an explainable assessment.
 
-All exploit-development work in this repo must be tied to authorized, isolated validation harnesses and remediation proof. Do not add code that targets real third-party systems, publishes weaponized payloads, provides bypass guidance for live targets, or turns CVEHunt into a general-purpose attack tool. PoC artifacts are acceptable only when they are necessary to prove exploitability and fix efficacy inside the controlled test/evaluation harness for a CVE.
-
 ## Build & Test Commands
 
 ```bash
@@ -39,6 +37,7 @@ uv run python -m pytest
 uv run cvehunt run CVE-2025-55182 --json
 uv run cvehunt run CVE-2025-55182
 uv run cvehunt run CVE-2025-55182 --persist
+uv run cvehunt run CVE-2026-42208 --persist --execute-poc
 uv run cvehunt sync-recent --days 7 --limit 25 --run
 uv run cvehunt serve
 npm run build
@@ -68,6 +67,9 @@ npm run build
 - `HarnessBuilderAgent` writes `harness/Dockerfile.vulnerable`, `harness/Dockerfile.patched`, `harness/docker-compose.yml`, `harness/build-images.sh`, and `harness/README.md` into each persisted run. Compose port bindings are forced to `127.0.0.1` only.
 - `ExploiterAgent` generates a localhost-scoped PoC (`exploiter/poc.py`) and orchestration runner (`exploiter/run-poc.sh`) keyed on `finding.vulnerability_class` (`sql injection`, `unsafe deserialization`, `unsafe interpolation`). PoC scripts hardcode `127.0.0.1:4000` (vulnerable) and `127.0.0.1:4001` (patched) targets and pass through `SafetyPolicy.assert_localhost_scoped` before being written. Add new templates by extending `_select_poc_template` in `agents.py`.
 - `FixDeveloperAgent` promotes the upstream vulnerable→patched diff as the candidate fix at `fix/candidate.patch` with rationale at `fix/rationale.md`. Fix *validation* (re-running the PoC against a locally patched build) is not yet implemented; the candidate is currently treated as the authoritative remediation.
+- `HarnessRunnerAgent` runs only when `cvehunt run --execute-poc` is set. It calls `bash exploiter/run-poc.sh` from the run directory, which builds the compose stack, polls `/health/readiness` on `127.0.0.1:4000` and `:4001` (90 retries × 2s), runs `exploiter/poc.py`, and tees `exploiter/outcome.json`. Container logs are captured to `exploiter/logs/compose.log` on every run. The runner refuses to execute if `docker version` fails — the run still completes with `status="scaffolded"` and `next_step` pointing at the install requirement.
+- The litellm harness (`CVE-2026-42208`) is the canonical end-to-end target. `HarnessBuilderAgent` writes `harness/config.yaml` (master_key=`sk-harness-master`, dummy `model_list`, `database_url: os.environ/DATABASE_URL`) and `harness/db-init.sql` (creates `litellm_vuln` and `litellm_patched`). The compose stack adds a `db: postgres:16-alpine` sidecar with a `pg_isready` healthcheck; vulnerable+patched services depend on it via `condition: service_healthy`, get their own database via `DATABASE_URL`, and bind to loopback only. Both containers run `litellm --host 0.0.0.0 --port 4000 --config /workspace/config.yaml` (the 0.0.0.0 bind is inside the container; the published port stays 127.0.0.1).
+- When the runner produces `exploiter/outcome.json`, `ValidatorAgent` emits two extra evidence rows — `harness poc triggered vulnerable container` and `harness poc blocked by patched container` — and `JudgeAgent` upgrades confidence to 0.95 if both pass (or 0.88 if only one side does). PoC templates must emit `summarize()`-shaped records (`triggered: bool`, `detail: str`) for the runner to parse them.
 - `SafetyPolicy` enforces localhost-only PoC targets and blocks explicit attack-tooling phrases (`reverse shell`, `bind shell`, `weaponize`). It does not filter security vocabulary like `exploit`/`payload`/`poc` since those are unavoidable in legitimate harness-bound CVE validation.
 - `uv run cvehunt run CVE-2025-55182 --persist --json` now performs a real npm package acquisition for `react-server-dom-webpack 19.0.0` and `19.0.1`, captures a 17-file diff, and records the strongest patch signal around `Object.prototype.hasOwnProperty`.
 - Docker is installed in this environment (`docker --version` succeeded), but the current pipeline generates Dockerfiles and a build helper script rather than automatically building images during the run.

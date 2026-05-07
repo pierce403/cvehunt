@@ -8,6 +8,7 @@ from cvehunt.agents import (
     ExploiterAgent,
     FixDeveloperAgent,
     HarnessBuilderAgent,
+    HarnessRunnerAgent,
     JudgeAgent,
     ResearcherAgent,
     ValidatorAgent,
@@ -23,6 +24,7 @@ class CveHuntWorkflow:
         self.researcher = ResearcherAgent()
         self.builder = HarnessBuilderAgent()
         self.exploiter = ExploiterAgent()
+        self.harness_runner = HarnessRunnerAgent()
         self.fix_developer = FixDeveloperAgent()
         self.validator = ValidatorAgent()
         self.judge = JudgeAgent()
@@ -41,6 +43,7 @@ class CveHuntWorkflow:
         cve_id: str,
         cve_record: CveRecord | None = None,
         artifact_root: Path | None = None,
+        execute_poc: bool = False,
     ) -> tuple[WorkflowReport, list[TraceEvent]]:
         events: list[TraceEvent] = []
         self.last_artifact_root = artifact_root or Path(
@@ -77,6 +80,10 @@ class CveHuntWorkflow:
             )
         )
         exploiter = self.exploiter.run(cve, finding, harness, self.last_artifact_root)
+        if execute_poc:
+            exploiter = self.harness_runner.run(
+                cve, harness, exploiter, self.last_artifact_root
+            )
         events.append(
             TraceEvent(
                 phase="Exploiter",

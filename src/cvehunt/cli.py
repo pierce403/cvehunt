@@ -26,6 +26,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Model label for this run, defaults to CVEHUNT_MODEL or unspecified",
     )
+    run.add_argument(
+        "--execute-poc",
+        action="store_true",
+        help=(
+            "Build the harness images, bring up the compose stack, and run the "
+            "PoC against the local containers. Requires Docker."
+        ),
+    )
 
     sync = subcommands.add_parser("sync-recent", help="Fetch recent CVEs from NVD")
     sync.add_argument("--days", type=int, default=7, help="Publication lookback window")
@@ -66,7 +74,9 @@ def main() -> None:
     if args.command == "run":
         cve = store.read_cve(args.cve_id)
         workflow = CveHuntWorkflow(model=_model_label(args.model))
-        report, events = workflow.run_with_trace(args.cve_id, cve)
+        report, events = workflow.run_with_trace(
+            args.cve_id, cve, execute_poc=args.execute_poc
+        )
         if args.persist:
             store.write_report(report, events, artifact_root=workflow.last_artifact_root)
         if args.json:

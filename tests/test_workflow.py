@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 
-from cvehunt.agents import ResearcherAgent, SafetyPolicy
+from cvehunt import agents as agents_module
+from cvehunt.agents import (
+    ExploiterAgent,
+    HarnessBuilderAgent,
+    HarnessRunnerAgent,
+    ResearcherAgent,
+    SafetyPolicy,
+)
 from cvehunt.dashboard import _repo_artifact_url, build_dashboard
 from cvehunt.fixtures import get_fixture
-from cvehunt.models import ChangedFile, CveRecord, ResearchFinding, SourceBundle
+from cvehunt.models import (
+    ChangedFile,
+    CveRecord,
+    ExploiterArtifact,
+    HarnessArtifact,
+    ResearchFinding,
+    SourceBundle,
+)
 from cvehunt.storage import WorkdirStore
 from cvehunt.workflow import CveHuntWorkflow
 
@@ -299,3 +315,163 @@ def test_litellm_pipeline_scaffolds_poc_and_fix(monkeypatch, tmp_path) -> None:
     assert "127.0.0.1" in poc_text
     assert "openai.com" not in poc_text
     assert "anthropic.com" not in poc_text
+
+
+def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path) -> None:
+    _patch_pypi_researcher(monkeypatch)
+    workflow = CveHuntWorkflow(model="test-model")
+    workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    harness_dir = tmp_path / "artifacts" / "harness"
+    config_yaml = (harness_dir / "config.yaml").read_text(encoding="utf-8")
+    db_init = (harness_dir / "db-init.sql").read_text(encoding="utf-8")
+    compose = (harness_dir / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "master_key: sk-harness-master" in config_yaml
+    assert "database_url: os.environ/DATABASE_URL" in config_yaml
+    assert "CREATE DATABASE litellm_vuln" in db_init
+    assert "CREATE DATABASE litellm_patched" in db_init
+    assert "postgres:16-alpine" in compose
+    assert "DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_vuln" in compose
+    assert "DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_patched" in compose
+    assert "condition: service_healthy" in compose
+    runner = (tmp_path / "artifacts" / "exploiter" / "run-poc.sh").read_text(encoding="utf-8")
+    assert "seq 1 90" in runner
+    assert "exploiter/logs/compose.log" in runner
+
+
+def _build_exploiter_state(tmp_path: Path) -> tuple[CveRecord, HarnessArtifact, ExploiterArtifact]:
+    cve = get_fixture("CVE-2026-42208")
+    assert cve is not None
+    artifact_root = tmp_path / "artifacts"
+    (artifact_root / "exploiter").mkdir(parents=True, exist_ok=True)
+    (artifact_root / "exploiter" / "run-poc.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    harness = HarnessArtifact(
+        status="built",
+        runtime="dockerized offline harness for litellm",
+        isolation="local package sources only",
+        workspace=".",
+        dockerfiles=["harness/Dockerfile.vulnerable", "harness/Dockerfile.patched"],
+        helper_scripts=[
+            "harness/build-images.sh",
+            "harness/docker-compose.yml",
+            "harness/config.yaml",
+            "harness/db-init.sql",
+            "harness/README.md",
+        ],
+    )
+    exploiter = ExploiterArtifact(
+        implemented=True,
+        status="scaffolded",
+        message="Generated a localhost-scoped PoC.",
+        artifact="exploiter/README.md",
+        next_step="Run bash exploiter/run-poc.sh.",
+        poc_path="exploiter/poc.py",
+        runner_path="exploiter/run-poc.sh",
+    )
+    return cve, harness, exploiter
+
+
+def test_harness_runner_skips_when_docker_missing(monkeypatch, tmp_path) -> None:
+    cve, harness, exploiter = _build_exploiter_state(tmp_path)
+    monkeypatch.setattr(agents_module, "_docker_available", lambda: False)
+    runner = HarnessRunnerAgent()
+    result = runner.run(cve, harness, exploiter, tmp_path / "artifacts")
+    assert result.outcomes == []
+    assert result.status == "scaffolded"
+    assert "Install Docker" in result.next_step
+
+
+def test_harness_runner_parses_outcome_into_evidence(monkeypatch, tmp_path) -> None:
+    cve, harness, exploiter = _build_exploiter_state(tmp_path)
+    artifact_root = tmp_path / "artifacts"
+    monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
+
+    fake_outcome = {
+        "cve_id": cve.cve_id,
+        "vulnerable": {
+            "base_url": "http://127.0.0.1:4000",
+            "triggered": True,
+            "detail": "/key/info returned 200 for payload Bearer ' OR 1=1-- ",
+        },
+        "patched": {
+            "base_url": "http://127.0.0.1:4001",
+            "triggered": False,
+            "detail": "no permissive 2xx response observed",
+        },
+    }
+
+    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+        (Path(cwd) / "exploiter" / "outcome.json").write_text(
+            json.dumps(fake_outcome), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = HarnessRunnerAgent().run(cve, harness, exploiter, artifact_root)
+
+    assert result.status == "executed"
+    assert len(result.outcomes) == 2
+    triggered = next(item for item in result.outcomes if item.variant == "vulnerable")
+    blocked = next(item for item in result.outcomes if item.variant == "patched")
+    assert triggered.triggered is True
+    assert blocked.triggered is False
+    assert "triggered the vulnerable container" in result.message
+
+
+def test_workflow_execute_poc_flag_threads_outcomes_into_judge(monkeypatch, tmp_path) -> None:
+    _patch_pypi_researcher(monkeypatch)
+    monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
+
+    fake_outcome = {
+        "cve_id": "CVE-2026-42208",
+        "vulnerable": {"base_url": "http://127.0.0.1:4000", "triggered": True, "detail": "vulnerable triggered"},
+        "patched": {"base_url": "http://127.0.0.1:4001", "triggered": False, "detail": "patched blocked"},
+    }
+
+    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+        (Path(cwd) / "exploiter" / "outcome.json").write_text(
+            json.dumps(fake_outcome), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    workflow = CveHuntWorkflow(model="test-model")
+    report, _events = workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+        execute_poc=True,
+    )
+
+    assert report.exploiter is not None
+    assert report.exploiter.status == "executed"
+    triggered_evidence = [
+        item for item in report.evidence
+        if item.check_name == "harness poc triggered vulnerable container"
+    ]
+    blocked_evidence = [
+        item for item in report.evidence
+        if item.check_name == "harness poc blocked by patched container"
+    ]
+    assert triggered_evidence and triggered_evidence[0].passed
+    assert blocked_evidence and blocked_evidence[0].passed
+    assert report.judgement.confidence >= 0.95
+    assert "triggered the vulnerable container" in report.judgement.rationale
+
+
+def test_workflow_default_does_not_invoke_runner(monkeypatch, tmp_path) -> None:
+    _patch_pypi_researcher(monkeypatch)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("subprocess.run must not be called when execute_poc is off")
+
+    monkeypatch.setattr(subprocess, "run", fail_if_called)
+    workflow = CveHuntWorkflow(model="test-model")
+    report, _events = workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+    )
+    assert report.exploiter is not None
+    assert report.exploiter.status == "scaffolded"

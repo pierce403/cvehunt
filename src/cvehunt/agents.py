@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import shutil
+import subprocess
 import tarfile
 from difflib import unified_diff
 from pathlib import Path
@@ -508,6 +511,13 @@ class HarnessBuilderAgent:
             ),
             encoding="utf-8",
         )
+        extra_helper_paths: list[Path] = []
+        if cve.ecosystem == "pypi" and sources.package == "litellm":
+            config_path = harness_dir / "config.yaml"
+            db_init_path = harness_dir / "db-init.sql"
+            config_path.write_text(_litellm_config_yaml(), encoding="utf-8")
+            db_init_path.write_text(_litellm_db_init_sql(), encoding="utf-8")
+            extra_helper_paths.extend([config_path, db_init_path])
         readme.write_text(
             _harness_readme(
                 cve=cve,
@@ -579,6 +589,7 @@ class HarnessBuilderAgent:
                 helper_scripts=[
                     _relpath(build_script, artifact_root),
                     _relpath(compose_path, artifact_root),
+                    *[_relpath(path, artifact_root) for path in extra_helper_paths],
                     _relpath(readme, artifact_root),
                 ],
                 notes=[
@@ -661,6 +672,125 @@ class ExploiterAgent:
             next_step="Run `bash exploiter/run-poc.sh` from the run directory to execute against the harness.",
             poc_path=_relpath(poc_path, artifact_root),
             runner_path=_relpath(runner_path, artifact_root),
+        )
+
+
+class HarnessRunnerAgent:
+    """Executes the harness orchestration script and parses the PoC outcome.
+
+    The runner only invokes the scripts emitted by HarnessBuilderAgent and
+    ExploiterAgent — both of which already passed SafetyPolicy review. It does
+    not synthesize new commands or accept caller-controlled targets.
+    """
+
+    runner_timeout_seconds: int = 1200
+
+    def __init__(self, safety_policy: SafetyPolicy | None = None) -> None:
+        self.safety_policy = safety_policy or SafetyPolicy()
+
+    def run(
+        self,
+        cve: CveRecord,
+        harness: HarnessArtifact | None,
+        exploiter: ExploiterArtifact,
+        artifact_root: Path,
+    ) -> ExploiterArtifact:
+        if not (harness and harness.status == "built" and exploiter.implemented):
+            return exploiter
+        runner_path = artifact_root / "exploiter" / "run-poc.sh"
+        if not runner_path.exists():
+            return exploiter
+        if not _docker_available():
+            return dataclasses.replace(
+                exploiter,
+                next_step=(
+                    "Install Docker to run the harness, then re-run with --execute-poc."
+                ),
+            )
+        outcome_path = artifact_root / "exploiter" / "outcome.json"
+        if outcome_path.exists():
+            outcome_path.unlink()
+        log_dir = artifact_root / "exploiter" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        runner_log = log_dir / "run-poc.log"
+        try:
+            completed = subprocess.run(
+                ["bash", str(runner_path)],
+                cwd=str(artifact_root),
+                capture_output=True,
+                text=True,
+                timeout=self.runner_timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            runner_log.write_text(
+                f"runner timed out after {self.runner_timeout_seconds}s\n"
+                f"stdout:\n{(exc.stdout or '')}\n"
+                f"stderr:\n{(exc.stderr or '')}\n",
+                encoding="utf-8",
+            )
+            return dataclasses.replace(
+                exploiter,
+                status="executed",
+                message=(
+                    f"Harness runner timed out after {self.runner_timeout_seconds}s; "
+                    "no PoC outcome was captured."
+                ),
+                next_step=(
+                    "Inspect exploiter/logs/run-poc.log and exploiter/logs/compose.log."
+                ),
+            )
+        runner_log.write_text(
+            f"exit_code: {completed.returncode}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}\n",
+            encoding="utf-8",
+        )
+        outcomes: list[ExploitOutcome] = []
+        if outcome_path.exists():
+            try:
+                payload = json.loads(outcome_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                outcomes = _parse_poc_outcome(payload)
+        if not outcomes:
+            return dataclasses.replace(
+                exploiter,
+                status="executed",
+                message=(
+                    f"Harness runner exited with code {completed.returncode} but no "
+                    "structured PoC outcome was captured."
+                ),
+                next_step=(
+                    "Inspect exploiter/logs/run-poc.log and exploiter/logs/compose.log."
+                ),
+            )
+        triggered = next((item for item in outcomes if item.variant == "vulnerable" and item.triggered), None)
+        blocked = next((item for item in outcomes if item.variant == "patched" and not item.triggered), None)
+        if triggered and blocked:
+            message = (
+                "Harness PoC triggered the vulnerable container and was blocked "
+                "by the patched container."
+            )
+        elif triggered:
+            message = (
+                "Harness PoC triggered the vulnerable container, but the patched "
+                "container did not behave as expected."
+            )
+        elif blocked:
+            message = (
+                "Harness PoC was blocked by the patched container, but the "
+                "vulnerable container did not exhibit the expected signal."
+            )
+        else:
+            message = "Harness PoC ran but produced no decisive vulnerable/patched differential."
+        return dataclasses.replace(
+            exploiter,
+            status="executed",
+            message=message,
+            outcomes=outcomes,
+            next_step="Review exploiter/outcome.json and exploiter/logs/ for raw evidence.",
         )
 
 
@@ -799,6 +929,43 @@ class ValidatorAgent:
                     artifact=exploiter.artifact,
                 )
             )
+            if exploiter.outcomes:
+                vulnerable_outcome = next(
+                    (item for item in exploiter.outcomes if item.variant == "vulnerable"),
+                    None,
+                )
+                patched_outcome = next(
+                    (item for item in exploiter.outcomes if item.variant == "patched"),
+                    None,
+                )
+                if vulnerable_outcome is not None:
+                    evidence.append(
+                        Evidence(
+                            check_name="harness poc triggered vulnerable container",
+                            vulnerable_signal=vulnerable_outcome.detail,
+                            patched_signal=(
+                                patched_outcome.detail
+                                if patched_outcome is not None
+                                else "no patched outcome captured"
+                            ),
+                            passed=vulnerable_outcome.triggered,
+                            artifact="exploiter/outcome.json",
+                        )
+                    )
+                if patched_outcome is not None:
+                    evidence.append(
+                        Evidence(
+                            check_name="harness poc blocked by patched container",
+                            vulnerable_signal=(
+                                vulnerable_outcome.detail
+                                if vulnerable_outcome is not None
+                                else "no vulnerable outcome captured"
+                            ),
+                            patched_signal=patched_outcome.detail,
+                            passed=not patched_outcome.triggered,
+                            artifact="exploiter/outcome.json",
+                        )
+                    )
         if fix is not None:
             evidence.append(
                 Evidence(
@@ -851,11 +1018,22 @@ class JudgeAgent:
         if sources and sources.status == "materialized" and harness and harness.status == "built":
             poc_scaffolded = bool(exploiter and exploiter.implemented)
             fix_generated = bool(fix and fix.status == "generated")
+            outcomes = list(exploiter.outcomes) if exploiter else []
+            vulnerable_triggered = any(
+                item.variant == "vulnerable" and item.triggered for item in outcomes
+            )
+            patched_blocked = any(
+                item.variant == "patched" and not item.triggered for item in outcomes
+            )
             confidence = 0.78
             if poc_scaffolded:
                 confidence = 0.85
             if poc_scaffolded and fix_generated:
                 confidence = 0.92
+            if vulnerable_triggered and patched_blocked:
+                confidence = 0.95
+            elif vulnerable_triggered or patched_blocked:
+                confidence = max(confidence, 0.88)
             rationale = (
                 f"Downloaded vulnerable and patched {cve.ecosystem} releases, captured a real source diff, "
                 f"and generated an isolated harness scaffold. The strongest observed patch signal was: "
@@ -868,6 +1046,24 @@ class JudgeAgent:
                 )
             if fix_generated:
                 rationale += " A candidate fix was promoted from the upstream diff."
+            if outcomes:
+                if vulnerable_triggered and patched_blocked:
+                    rationale += (
+                        " The PoC triggered the vulnerable container and was blocked "
+                        "by the patched container against the local harness."
+                    )
+                elif vulnerable_triggered:
+                    rationale += (
+                        " The PoC triggered the vulnerable container, but the patched "
+                        "container did not produce the expected blocked signal."
+                    )
+                elif patched_blocked:
+                    rationale += (
+                        " The PoC was blocked by the patched container, but the "
+                        "vulnerable container did not trigger as expected."
+                    )
+                else:
+                    rationale += " The PoC ran but no decisive differential was observed."
             remediation_notes = [
                 f"Pin deployments to {', '.join(cve.patched_versions) or 'the patched release'} as a minimum floor.",
                 "Review the generated source diff and carry the same guard conditions into downstream forks.",
@@ -903,6 +1099,36 @@ class JudgeAgent:
                 "Assessment remained limited to offline defensive workflow steps.",
             ],
         )
+
+
+def _docker_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    try:
+        completed = subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0 and completed.stdout.strip() != ""
+
+
+def _parse_poc_outcome(payload: dict) -> list[ExploitOutcome]:
+    outcomes: list[ExploitOutcome] = []
+    for variant in ("vulnerable", "patched"):
+        record = payload.get(variant)
+        if not isinstance(record, dict):
+            continue
+        triggered = bool(record.get("triggered"))
+        detail = str(record.get("detail") or record.get("error") or "")
+        outcomes.append(
+            ExploitOutcome(variant=variant, triggered=triggered, detail=detail)
+        )
+    return outcomes
 
 
 def _parse_version_spec(spec: str) -> tuple[str, str] | None:
@@ -1060,12 +1286,8 @@ def _compose_for_harness(*, cve_id: str, package: str, ecosystem: str) -> str:
     package_slug = package.replace("/", "-")
     image_vuln = f"cvehunt/{slug}-{package_slug}:vulnerable"
     image_patched = f"cvehunt/{slug}-{package_slug}:patched"
-    if ecosystem == "pypi":
-        vuln_command = _litellm_compose_command(package, variant="vulnerable")
-        patched_command = _litellm_compose_command(package, variant="patched")
-    else:
-        vuln_command = ""
-        patched_command = ""
+    if ecosystem == "pypi" and package == "litellm":
+        return _litellm_compose(image_vuln=image_vuln, image_patched=image_patched)
     lines = [
         "version: \"3.9\"",
         "services:",
@@ -1076,32 +1298,110 @@ def _compose_for_harness(*, cve_id: str, package: str, ecosystem: str) -> str:
         "      dockerfile: harness/Dockerfile.vulnerable",
         "    ports:",
         "      - \"127.0.0.1:4000:4000\"",
+        "  patched:",
+        f"    image: {image_patched}",
+        "    build:",
+        "      context: ..",
+        "      dockerfile: harness/Dockerfile.patched",
+        "    ports:",
+        "      - \"127.0.0.1:4001:4000\"",
+        "",
     ]
-    if vuln_command:
-        lines.append(f"    command: {vuln_command}")
-    lines.extend(
+    return "\n".join(lines)
+
+
+def _litellm_compose(*, image_vuln: str, image_patched: str) -> str:
+    command = (
+        '["litellm", "--host", "0.0.0.0", "--port", "4000", '
+        '"--config", "/workspace/config.yaml"]'
+    )
+    return "\n".join(
         [
+            'version: "3.9"',
+            "services:",
+            "  db:",
+            "    image: postgres:16-alpine",
+            "    environment:",
+            "      POSTGRES_USER: litellm",
+            "      POSTGRES_PASSWORD: litellm",
+            "      POSTGRES_DB: litellm",
+            "    healthcheck:",
+            '      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]',
+            "      interval: 3s",
+            "      timeout: 3s",
+            "      retries: 30",
+            "    volumes:",
+            "      - ./db-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro",
+            "  vulnerable:",
+            f"    image: {image_vuln}",
+            "    build:",
+            "      context: ..",
+            "      dockerfile: harness/Dockerfile.vulnerable",
+            "    depends_on:",
+            "      db:",
+            "        condition: service_healthy",
+            "    environment:",
+            "      DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_vuln",
+            "      LITELLM_MASTER_KEY: sk-harness-master",
+            '      STORE_MODEL_IN_DB: "True"',
+            "    volumes:",
+            "      - ./config.yaml:/workspace/config.yaml:ro",
+            "    ports:",
+            '      - "127.0.0.1:4000:4000"',
+            f"    command: {command}",
             "  patched:",
             f"    image: {image_patched}",
             "    build:",
             "      context: ..",
             "      dockerfile: harness/Dockerfile.patched",
+            "    depends_on:",
+            "      db:",
+            "        condition: service_healthy",
+            "    environment:",
+            "      DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_patched",
+            "      LITELLM_MASTER_KEY: sk-harness-master",
+            '      STORE_MODEL_IN_DB: "True"',
+            "    volumes:",
+            "      - ./config.yaml:/workspace/config.yaml:ro",
             "    ports:",
-            "      - \"127.0.0.1:4001:4000\"",
+            '      - "127.0.0.1:4001:4000"',
+            f"    command: {command}",
+            "",
         ]
     )
-    if patched_command:
-        lines.append(f"    command: {patched_command}")
-    lines.append("")
-    return "\n".join(lines)
 
 
-def _litellm_compose_command(package: str, *, variant: str) -> str:
-    if package != "litellm":
-        return ""
-    return (
-        '["litellm", "--host", "0.0.0.0", "--port", "4000", '
-        '"--config", "/workspace/config.yaml"]'
+def _litellm_config_yaml() -> str:
+    return "\n".join(
+        [
+            "# Harness-only LiteLLM proxy config.",
+            "# A dummy model_list keeps the proxy bootable without external API",
+            "# credentials. The proxy never reaches the upstream provider during",
+            "# the harness PoC because the SQLi probe targets the auth path.",
+            "model_list:",
+            "  - model_name: harness-stub",
+            "    litellm_params:",
+            "      model: openai/harness-stub",
+            "      api_base: http://127.0.0.1:9/disabled",
+            '      api_key: "harness-only-not-a-real-key"',
+            "general_settings:",
+            "  master_key: sk-harness-master",
+            "  database_url: os.environ/DATABASE_URL",
+            "",
+        ]
+    )
+
+
+def _litellm_db_init_sql() -> str:
+    return "\n".join(
+        [
+            "-- Per-variant databases keep prisma migrations from each release",
+            "-- isolated. Both databases live in the same harness postgres",
+            "-- container; neither is reachable outside the compose network.",
+            "CREATE DATABASE litellm_vuln;",
+            "CREATE DATABASE litellm_patched;",
+            "",
+        ]
     )
 
 
@@ -1343,12 +1643,32 @@ def probe(base_url: str) -> dict:
         return {{"base_url": base_url, "status": None, "error": str(exc)}}
 
 
+def summarize(record: dict) -> dict:
+    status = record.get("status")
+    body = record.get("body_prefix", "") or ""
+    if status is not None and 200 <= status < 300 and "harness-canary" in body:
+        return {{
+            "base_url": record["base_url"],
+            "triggered": True,
+            "detail": "deserialization echoed harness-canary marker",
+        }}
+    return {{
+        "base_url": record["base_url"],
+        "triggered": False,
+        "detail": f"status={{status}} did not return canary marker",
+    }}
+
+
 def main() -> int:
-    print(json.dumps({{
+    vulnerable = probe(VULNERABLE_BASE_URL)
+    patched = probe(PATCHED_BASE_URL)
+    summary = {{
         "cve_id": "{cve_id}",
-        "vulnerable": probe(VULNERABLE_BASE_URL),
-        "patched": probe(PATCHED_BASE_URL),
-    }}, indent=2))
+        "vulnerable": summarize(vulnerable),
+        "patched": summarize(patched),
+        "raw": {{"vulnerable": vulnerable, "patched": patched}},
+    }}
+    print(json.dumps(summary, indent=2))
     return 0
 
 
@@ -1396,12 +1716,32 @@ def probe(base_url: str) -> dict:
         return {{"base_url": base_url, "status": None, "error": str(exc)}}
 
 
+def summarize(record: dict) -> dict:
+    status = record.get("status")
+    body = record.get("body_prefix", "") or ""
+    if status is not None and 200 <= status < 300 and "2" in body:
+        return {{
+            "base_url": record["base_url"],
+            "triggered": True,
+            "detail": "lookup prefix evaluated server-side",
+        }}
+    return {{
+        "base_url": record["base_url"],
+        "triggered": False,
+        "detail": f"status={{status}} did not evaluate lookup",
+    }}
+
+
 def main() -> int:
-    print(json.dumps({{
+    vulnerable = probe(VULNERABLE_BASE_URL)
+    patched = probe(PATCHED_BASE_URL)
+    summary = {{
         "cve_id": "{cve_id}",
-        "vulnerable": probe(VULNERABLE_BASE_URL),
-        "patched": probe(PATCHED_BASE_URL),
-    }}, indent=2))
+        "vulnerable": summarize(vulnerable),
+        "patched": summarize(patched),
+        "raw": {{"vulnerable": vulnerable, "patched": patched}},
+    }}
+    print(json.dumps(summary, indent=2))
     return 0
 
 
@@ -1418,18 +1758,35 @@ def _poc_runner_script(cve: CveRecord) -> str:
             "# services on 127.0.0.1 only, run the PoC, capture evidence, tear down.",
             "set -euo pipefail",
             f'echo "[cvehunt] orchestrating harness for {cve.cve_id}"',
-            "pushd \"$(dirname \"$0\")/..\" >/dev/null",
-            "trap 'docker compose -f harness/docker-compose.yml down --remove-orphans >/dev/null 2>&1 || true' EXIT",
+            'pushd "$(dirname "$0")/.." >/dev/null',
+            "mkdir -p exploiter/logs",
+            "capture_logs() {",
+            '  docker compose -f harness/docker-compose.yml logs --no-color --tail 200 \\',
+            '    >exploiter/logs/compose.log 2>&1 || true',
+            "}",
+            "cleanup() {",
+            "  capture_logs",
+            '  docker compose -f harness/docker-compose.yml down --remove-orphans \\',
+            '    >/dev/null 2>&1 || true',
+            "}",
+            "trap cleanup EXIT",
             "docker compose -f harness/docker-compose.yml build",
             "docker compose -f harness/docker-compose.yml up -d",
-            "echo \"[cvehunt] waiting for harness services\"",
-            "for _ in $(seq 1 30); do",
-            "  if curl --silent --fail http://127.0.0.1:4000/health/readiness >/dev/null 2>&1 \\",
-            "    && curl --silent --fail http://127.0.0.1:4001/health/readiness >/dev/null 2>&1; then",
+            'echo "[cvehunt] waiting for harness services on 127.0.0.1:4000 and :4001"',
+            "ready=0",
+            "for _ in $(seq 1 90); do",
+            '  if curl --silent --fail http://127.0.0.1:4000/health/readiness >/dev/null 2>&1 \\',
+            '    && curl --silent --fail http://127.0.0.1:4001/health/readiness >/dev/null 2>&1; then',
+            "    ready=1",
             "    break",
             "  fi",
             "  sleep 2",
             "done",
+            'if [ "$ready" -ne 1 ]; then',
+            '  echo "[cvehunt] services did not reach readiness within window" >&2',
+            "  capture_logs",
+            "  exit 2",
+            "fi",
             "python3 exploiter/poc.py | tee exploiter/outcome.json",
             "popd >/dev/null",
             "",
