@@ -51,7 +51,7 @@ You can also use the interactive wrapper:
 ./contribute.sh CVE-2025-55182
 ```
 
-The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), asks for the model, records runs as `<harness>:<model>`, runs `uv run cvehunt run ... --persist --json`, and rebuilds the public dashboard with `npm run build`.
+The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), asks for the model, records runs as `<harness>:<model>`, syncs missing Python or Node project dependencies when prompted, runs `uv run cvehunt run ... --persist --json`, and rebuilds the public dashboard with `npm run build`.
 
 ## Model-Backed Runs
 
