@@ -712,23 +712,14 @@ class HarnessRunnerAgent:
             outcome_path.unlink()
         log_dir = artifact_root / "exploiter" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        runner_log = log_dir / "run-poc.log"
         try:
             completed = subprocess.run(
                 ["bash", str(runner_path)],
                 cwd=str(artifact_root),
-                capture_output=True,
-                text=True,
                 timeout=self.runner_timeout_seconds,
                 check=False,
             )
-        except subprocess.TimeoutExpired as exc:
-            runner_log.write_text(
-                f"runner timed out after {self.runner_timeout_seconds}s\n"
-                f"stdout:\n{(exc.stdout or '')}\n"
-                f"stderr:\n{(exc.stderr or '')}\n",
-                encoding="utf-8",
-            )
+        except subprocess.TimeoutExpired:
             return dataclasses.replace(
                 exploiter,
                 status="executed",
@@ -740,12 +731,6 @@ class HarnessRunnerAgent:
                     "Inspect exploiter/logs/run-poc.log and exploiter/logs/compose.log."
                 ),
             )
-        runner_log.write_text(
-            f"exit_code: {completed.returncode}\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}\n",
-            encoding="utf-8",
-        )
         outcomes: list[ExploitOutcome] = []
         if outcome_path.exists():
             try:
@@ -1255,20 +1240,47 @@ def _python_dockerfile(
     display_package = package or "unknown-package"
     display_version = version or "unknown-version"
     pip_extras = ""
+    extra_packages: list[str] = []
     if display_package == "litellm":
         pip_extras = "[proxy]"
+        # The published litellm[proxy] wheel does not actually pull `prisma`,
+        # but proxy_server.py imports it eagerly during DB setup. Pin to the
+        # version litellm declares in its source pyproject.
+        extra_packages.append("prisma==0.11.0")
     install_target = f"{display_package}{pip_extras}=={display_version}"
+    install_args = " ".join(
+        f'"{spec}"' for spec in [install_target, *extra_packages]
+    )
     runtime_message = f"{variant} harness ready for {display_package} {display_version}"
-    return "\n".join(
+    apt_packages = ["curl"]
+    if display_package == "litellm":
+        # prisma-client-py shells out to npm to install its JS CLI. The
+        # bundled-node bootstrap fails on python:3.11-slim, so install
+        # debian's nodejs/npm and let prisma reuse the global runtime.
+        apt_packages.extend(["nodejs", "npm", "ca-certificates", "openssl"])
+    lines = [
+        "FROM python:3.11-slim",
+        "ENV PYTHONUNBUFFERED=1",
+        "ENV PIP_DISABLE_PIP_VERSION_CHECK=1",
+        "WORKDIR /workspace",
+        "RUN apt-get update "
+        "&& apt-get install -y --no-install-recommends "
+        + " ".join(apt_packages)
+        + " && rm -rf /var/lib/apt/lists/*",
+        f"RUN pip install --no-cache-dir {install_args}",
+    ]
+    if display_package == "litellm":
+        # Generate the prisma client against the schema bundled inside the
+        # installed litellm wheel. Without this step the proxy aborts at
+        # startup with "Unable to find Prisma binaries". Engine binaries
+        # are downloaded once at image build time.
+        lines.append("ENV PRISMA_USE_GLOBAL_NODE=true")
+        lines.append(
+            "RUN prisma generate "
+            "--schema=/usr/local/lib/python3.11/site-packages/litellm/proxy/schema.prisma"
+        )
+    lines.extend(
         [
-            "FROM python:3.11-slim",
-            "ENV PYTHONUNBUFFERED=1",
-            "ENV PIP_DISABLE_PIP_VERSION_CHECK=1",
-            "WORKDIR /workspace",
-            "RUN apt-get update "
-            "&& apt-get install -y --no-install-recommends curl "
-            "&& rm -rf /var/lib/apt/lists/*",
-            f'RUN pip install --no-cache-dir "{install_target}"',
             "EXPOSE 4000",
             (
                 'CMD ["python", "-c", '
@@ -1279,6 +1291,7 @@ def _python_dockerfile(
             "",
         ]
     )
+    return "\n".join(lines)
 
 
 def _compose_for_harness(*, cve_id: str, package: str, ecosystem: str) -> str:
@@ -1504,8 +1517,21 @@ PROBE_PAYLOADS = [
 PROBE_PATHS = [
     "/key/info",
     "/v1/models",
-    "/health/readiness",
 ]
+
+
+# Substrings that imply the SQLi caused the auth path to admit the caller
+# as a real principal. Public/unauthenticated health endpoints don't expose
+# these structures, so requiring one of them filters out trivial 200s.
+AUTH_BYPASS_BODY_MARKERS = (
+    '"keys"',
+    '"data"',
+    '"key_name"',
+    '"models"',
+    '"user_id"',
+    '"team_id"',
+    '"models":[',
+)
 
 
 def probe(base_url: str) -> dict:
@@ -1557,17 +1583,20 @@ def probe(base_url: str) -> dict:
 
 def summarize(record: dict) -> dict:
     triggered = False
-    detail = "no permissive 2xx response observed"
+    detail = "no auth-bypass response observed against probed paths"
     for entry in record["results"]:
         status = entry.get("status")
         body = entry.get("body_prefix", "") or ""
-        if status is not None and 200 <= status < 300 and len(body) > 0:
-            triggered = True
-            detail = (
-                f"{{entry['path']}} returned {{status}} for payload "
-                f"{{entry['payload']!r}}"
-            )
-            break
+        if status is None or not (200 <= status < 300):
+            continue
+        if not any(marker in body for marker in AUTH_BYPASS_BODY_MARKERS):
+            continue
+        triggered = True
+        detail = (
+            f"{{entry['path']}} returned {{status}} with auth-shaped body "
+            f"for payload {{entry['payload']!r}}"
+        )
+        break
     return {{
         "base_url": record["base_url"],
         "triggered": triggered,
@@ -1760,6 +1789,7 @@ def _poc_runner_script(cve: CveRecord) -> str:
             f'echo "[cvehunt] orchestrating harness for {cve.cve_id}"',
             'pushd "$(dirname "$0")/.." >/dev/null',
             "mkdir -p exploiter/logs",
+            'exec > >(tee exploiter/logs/run-poc.log) 2>&1',
             "capture_logs() {",
             '  docker compose -f harness/docker-compose.yml logs --no-color --tail 200 \\',
             '    >exploiter/logs/compose.log 2>&1 || true',

@@ -403,11 +403,11 @@ def test_harness_runner_parses_outcome_into_evidence(monkeypatch, tmp_path) -> N
         },
     }
 
-    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+    def fake_run(cmd, cwd, timeout, check):
         (Path(cwd) / "exploiter" / "outcome.json").write_text(
             json.dumps(fake_outcome), encoding="utf-8"
         )
-        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+        return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = HarnessRunnerAgent().run(cve, harness, exploiter, artifact_root)
@@ -431,11 +431,11 @@ def test_workflow_execute_poc_flag_threads_outcomes_into_judge(monkeypatch, tmp_
         "patched": {"base_url": "http://127.0.0.1:4001", "triggered": False, "detail": "patched blocked"},
     }
 
-    def fake_run(cmd, cwd, capture_output, text, timeout, check):
+    def fake_run(cmd, cwd, timeout, check):
         (Path(cwd) / "exploiter" / "outcome.json").write_text(
             json.dumps(fake_outcome), encoding="utf-8"
         )
-        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+        return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     workflow = CveHuntWorkflow(model="test-model")
