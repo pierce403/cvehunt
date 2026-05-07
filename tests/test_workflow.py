@@ -461,6 +461,84 @@ def test_workflow_execute_poc_flag_threads_outcomes_into_judge(monkeypatch, tmp_
     assert "triggered the vulnerable container" in report.judgement.rationale
 
 
+def test_litellm_harness_emits_shim_artifacts_for_sql_injection(monkeypatch, tmp_path) -> None:
+    _patch_pypi_researcher(monkeypatch)
+    workflow = CveHuntWorkflow(model="test-model")
+    workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+    )
+    shim_dir = tmp_path / "artifacts" / "harness" / "shim"
+    vuln_app = (shim_dir / "vulnerable" / "app.py").read_text(encoding="utf-8")
+    patched_app = (shim_dir / "patched" / "app.py").read_text(encoding="utf-8")
+    compose = (
+        tmp_path / "artifacts" / "harness" / "docker-compose.yml"
+    ).read_text(encoding="utf-8")
+    poc = (tmp_path / "artifacts" / "exploiter" / "poc.py").read_text(encoding="utf-8")
+    assert "f\"SELECT key_alias, user_id FROM api_keys WHERE token = '{token}'" in vuln_app
+    assert "WHERE token = ? LIMIT 1" in patched_app
+    assert "127.0.0.1:4010:8000" in compose
+    assert "127.0.0.1:4011:8000" in compose
+    assert "SHIM_VULNERABLE_BASE_URL" in poc
+    assert "127.0.0.1:4010" in poc and "127.0.0.1:4011" in poc
+
+
+def test_workflow_shim_outcomes_drive_judge_when_upstream_silent(monkeypatch, tmp_path) -> None:
+    _patch_pypi_researcher(monkeypatch)
+    monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
+
+    fake_outcome = {
+        "cve_id": "CVE-2026-42208",
+        "vulnerable": {
+            "base_url": "http://127.0.0.1:4000",
+            "triggered": False,
+            "detail": "no auth-bypass response observed against probed paths",
+        },
+        "patched": {
+            "base_url": "http://127.0.0.1:4001",
+            "triggered": False,
+            "detail": "no auth-bypass response observed against probed paths",
+        },
+        "shim_vulnerable": {
+            "base_url": "http://127.0.0.1:4010",
+            "triggered": True,
+            "detail": "/verify returned 200 with auth-shaped body for payload \"Bearer ' OR 1=1-- \"",
+        },
+        "shim_patched": {
+            "base_url": "http://127.0.0.1:4011",
+            "triggered": False,
+            "detail": "no auth-bypass response observed against probed paths",
+        },
+    }
+
+    def fake_run(cmd, cwd, timeout, check):
+        (Path(cwd) / "exploiter" / "outcome.json").write_text(
+            json.dumps(fake_outcome), encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    workflow = CveHuntWorkflow(model="test-model")
+    report, _events = workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+        execute_poc=True,
+    )
+
+    shim_triggered = [
+        item for item in report.evidence
+        if item.check_name == "harness shim triggered vulnerable demo surface"
+    ]
+    shim_blocked = [
+        item for item in report.evidence
+        if item.check_name == "harness shim blocked by patched demo surface"
+    ]
+    assert shim_triggered and shim_triggered[0].passed
+    assert shim_blocked and shim_blocked[0].passed
+    assert "harness shim demonstrated" in report.judgement.rationale
+    assert report.judgement.confidence >= 0.90
+
+
 def test_workflow_default_does_not_invoke_runner(monkeypatch, tmp_path) -> None:
     _patch_pypi_researcher(monkeypatch)
 

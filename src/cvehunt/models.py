@@ -113,7 +113,7 @@ ExploiterStatus = Literal[
 
 @dataclass(frozen=True)
 class ExploitOutcome:
-    variant: Literal["vulnerable", "patched"]
+    variant: Literal["vulnerable", "patched", "shim_vulnerable", "shim_patched"]
     triggered: bool
     detail: str
 
