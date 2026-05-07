@@ -14,6 +14,7 @@ build/
 .DS_Store
 moak_site_notes/
 .openmoak/
+.codex
 .claude/
 .omc/
 cves/*/runs/*/sources/
