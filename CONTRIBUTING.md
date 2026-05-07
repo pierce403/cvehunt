@@ -45,11 +45,20 @@ uv run cvehunt run CVE-2025-55182 --persist --json --model <model-label>
 
 Use a real model label, for example `gpt-5.5-cyber`, `opus-4.7-cyber`, or another model you are authorized to evaluate. The point is to make the run auditable.
 
+You can also use the interactive wrapper:
+
+```bash
+./contribute.sh CVE-2025-55182
+```
+
+The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), asks for the model, records runs as `<harness>:<model>`, runs `uv run cvehunt run ... --persist --json`, and rebuilds the public dashboard with `npm run build`.
+
 ## Model-Backed Runs
 
 When you run the workflow with a model:
 
 - pass `--model <label>` or set `CVEHUNT_MODEL`
+- when using `./contribute.sh`, expect model attribution in the form `<harness>:<model>`
 - review the resulting workdir under `cves/<CVE-ID>/runs/<RUN-ID>/`
 - confirm the run contains the expected artifacts before committing anything
 

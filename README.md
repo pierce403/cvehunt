@@ -21,6 +21,7 @@ uv run cvehunt sync-recent --days 7 --limit 25
 uv run cvehunt serve
 uv run python -m pytest
 npm run build
+./contribute.sh CVE-2025-55182
 ```
 
 ## Safety Boundary
@@ -89,3 +90,5 @@ uv run cvehunt run CVE-2025-55182 --model gpt-5.5-cyber
 ```
 
 The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, and explicit notes about unimplemented exploit and fix stages.
+
+For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), asks which model to attribute, runs a persisted CVEHunt workflow, and rebuilds the dashboard data.
