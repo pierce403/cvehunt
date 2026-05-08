@@ -61,6 +61,7 @@ When you run the workflow with a model:
 - when using `./contribute.sh`, expect model attribution in the form `<harness>:<model>`
 - review the resulting workdir under `cves/<CVE-ID>/runs/<RUN-ID>/`
 - confirm the run contains the expected artifacts before committing anything
+- check the run score in `pipeline_status.json` and `report.md`; 100 means PoC, patch, and fix validation all succeeded
 - read `contribution_audit.md` to verify what was captured, what was only attribution, what the pipeline attempted, and what it refused or skipped
 - read `isolation-preflight.log` to verify the selected target isolation backend and dependency checks
 - do not invent branded model names; use the exact provider/harness slug shown by the CLI when available

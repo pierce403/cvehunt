@@ -75,13 +75,15 @@ uv run cvehunt sync-recent --days 7 --limit 25
 Each CVE directory is intended to become the durable working directory for that CVE. The initial implementation writes structured metadata, a full phase trace, and report artifacts.
 Persisted runs are written to timestamped `runs/<RUN-ID>/` directories. Root-level report artifacts should only be promoted into `cves/<CVE-ID>/` after a fully successful end-to-end run.
 
+Every persisted run receives a run score out of 100. A score of 100 means the workflow produced a working PoC against the vulnerable target, produced a candidate patch, and proved the patch blocks the same PoC. Partial runs receive lower scores based on source acquisition, harness setup, PoC generation/execution, patch generation, and fix validation.
+
 The public site is a React/Vite app generated into `docs/` for GitHub Pages:
 
 ```bash
 npm run build
 ```
 
-The build reads `cves/` and emits `web/public/data/cves.json` before bundling the site. GitHub Actions runs the same build and deploys Pages on commits to `main`.
+The build reads `cves/`, emits `web/public/data/cves.json`, and exposes both the latest CVE state and an all-runs leaderboard sorted by run score before bundling the site. GitHub Actions runs the same build and deploys Pages on commits to `main`.
 
 ## Example
 

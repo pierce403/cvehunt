@@ -161,14 +161,20 @@ def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:
     assert "Harness Builder" in trace
     assert "Exploiter" in trace
     pipeline_status = (run_dir / "pipeline_status.json").read_text(encoding="utf-8")
+    pipeline_status_json = json.loads(pipeline_status)
     assert '"status": "scaffolded"' in pipeline_status
     assert '"exploit_generated": true' in pipeline_status
     assert '"fix_generated": true' in pipeline_status
+    assert pipeline_status_json["run_score"]["score"] == 55
     assert (run_dir / "exploiter" / "poc.py").exists()
     assert (run_dir / "exploiter" / "run-poc.sh").exists()
     assert (run_dir / "fix" / "candidate.patch").exists()
     report_md = (run_dir / "report.md").read_text(encoding="utf-8")
     assert "Model: unspecified" in report_md
+    assert "Run score: 55/100" in report_md
+    assert "## Target Environment" in report_md
+    assert "Vulnerable versions: react-server-dom-webpack 19.0.0" in report_md
+    assert "PoC vulnerable target: http://127.0.0.1:4000" in report_md
     assert "Real package sources acquired: yes" in report_md
     assert "Source patch generated: yes" in report_md
 

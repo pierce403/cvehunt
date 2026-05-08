@@ -78,7 +78,7 @@ main {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -143,6 +143,36 @@ select {
   overflow-x: auto;
   border: 1px solid #252a3c;
   border-radius: 8px;
+}
+
+.runsPanel {
+  margin: 18px 0;
+  padding: 16px;
+}
+
+.compactRunTable {
+  margin-top: 12px;
+}
+
+.runScore {
+  background: #1e3045;
+  color: #b7ddff;
+}
+
+.loadMore {
+  margin-top: 12px;
+  border: 1px solid #333a54;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #151a29;
+  color: #f3f5fb;
+  font: inherit;
+  cursor: pointer;
+}
+
+.scoreGrid {
+  display: grid;
+  gap: 10px;
 }
 
 table {

@@ -5,6 +5,89 @@ from dataclasses import asdict
 from cvehunt.models import TraceEvent, WorkflowReport
 
 
+def calculate_run_score(report: WorkflowReport) -> dict[str, object]:
+    """Score how far the run progressed toward full exploit+fix proof.
+
+    A score of 100 requires a vulnerable-target PoC trigger, the patched target
+    blocking the same behavior, a candidate fix, and fix validation.
+    """
+    components = [
+        {
+            "name": "metadata_collected",
+            "points": 5,
+            "earned": bool(report.cve and report.cve.cve_id),
+            "description": "CVE metadata was collected.",
+        },
+        {
+            "name": "source_diff_captured",
+            "points": 15,
+            "earned": bool(
+                report.sources
+                and report.sources.status == "materialized"
+                and report.sources.diff_path
+                and report.sources.changed_files
+            ),
+            "description": "Vulnerable/patched sources were acquired and diffed.",
+        },
+        {
+            "name": "isolated_harness_built",
+            "points": 15,
+            "earned": bool(report.harness and report.harness.status == "built"),
+            "description": "An isolated vulnerable/patched target harness was generated.",
+        },
+        {
+            "name": "poc_generated",
+            "points": 10,
+            "earned": bool(report.exploiter and report.exploiter.implemented),
+            "description": "A harness-scoped PoC artifact was generated.",
+        },
+        {
+            "name": "poc_triggers_vulnerable_target",
+            "points": 20,
+            "earned": _outcome_triggered(report, "vulnerable"),
+            "description": "The PoC triggered the vulnerable target environment.",
+        },
+        {
+            "name": "patched_target_blocks_poc",
+            "points": 10,
+            "earned": _outcome_triggered(report, "vulnerable") and _outcome_blocked(report, "patched"),
+            "description": "The patched target blocked the same PoC behavior.",
+        },
+        {
+            "name": "candidate_fix_generated",
+            "points": 10,
+            "earned": bool(report.fix and report.fix.status in {"generated", "validated"}),
+            "description": "A candidate remediation patch was generated or promoted.",
+        },
+        {
+            "name": "candidate_fix_validated",
+            "points": 15,
+            "earned": bool(report.fix and report.fix.status == "validated"),
+            "description": "The candidate fix was applied and validated against the PoC.",
+        },
+    ]
+    score = sum(component["points"] for component in components if component["earned"])
+    max_score = sum(component["points"] for component in components)
+    return {
+        "score": score,
+        "max_score": max_score,
+        "percent": round((score / max_score) * 100, 2) if max_score else 0.0,
+        "components": components,
+    }
+
+
+def _outcome_triggered(report: WorkflowReport, variant: str) -> bool:
+    if not report.exploiter:
+        return False
+    return any(item.variant == variant and item.triggered for item in report.exploiter.outcomes)
+
+
+def _outcome_blocked(report: WorkflowReport, variant: str) -> bool:
+    if not report.exploiter:
+        return False
+    return any(item.variant == variant and not item.triggered for item in report.exploiter.outcomes)
+
+
 FULL_PIPELINE_PHASES = [
     {
         "phase": "Collector",
@@ -55,6 +138,7 @@ def render_markdown(report: WorkflowReport) -> str:
     fix = data.get("fix")
     judgement = data["judgement"]
     evidence = data["evidence"]
+    run_score = calculate_run_score(report)
 
     lines = [
         f"# CVEHunt Report: {cve['cve_id']}",
@@ -65,6 +149,17 @@ def render_markdown(report: WorkflowReport) -> str:
         f"Ecosystem: {cve['ecosystem']}",
         f"Run ID: {run['run_id']}",
         f"Model: {run['model']}",
+        f"Run score: {run_score['score']}/{run_score['max_score']} ({run_score['percent']:.2f}%)",
+        "",
+        "## Run Score",
+        "",
+        *[
+            (
+                f"- [{'x' if component['earned'] else ' '}] "
+                f"{component['name']}: {component['points']} point(s) - {component['description']}"
+            )
+            for component in run_score["components"]
+        ],
         "",
         "## Finding",
         "",
@@ -111,6 +206,30 @@ def render_markdown(report: WorkflowReport) -> str:
         if sources["notes"]:
             lines.append("- Notes:")
             lines.extend(f"  - {note}" for note in sources["notes"])
+
+    lines.extend(["", "## Target Environment", ""])
+    target_lines = [
+        f"- CVE: {cve['cve_id']} ({cve['name']})",
+        f"- Ecosystem: {cve['ecosystem']}",
+        f"- Vulnerable versions: {', '.join(cve['vulnerable_versions']) or 'n/a'}",
+        f"- Patched versions: {', '.join(cve['patched_versions']) or 'n/a'}",
+        f"- Harness runtime: {harness['runtime'] if harness else 'n/a'}",
+        f"- Harness isolation: {harness['isolation'] if harness else 'n/a'}",
+        f"- Source package: {sources['package'] if sources else 'n/a'}",
+        f"- Vulnerable source root: {sources['vulnerable_root'] if sources else 'n/a'}",
+        f"- Patched source root: {sources['patched_root'] if sources else 'n/a'}",
+        f"- Vulnerable tarball SHA-256: {sources['vulnerable_tarball_sha256'] if sources else 'n/a'}",
+        f"- Patched tarball SHA-256: {sources['patched_tarball_sha256'] if sources else 'n/a'}",
+        f"- PoC vulnerable target: http://127.0.0.1:4000",
+        f"- PoC patched target: http://127.0.0.1:4001",
+    ]
+    if exploiter and exploiter.get("outcomes"):
+        target_lines.append("- Captured PoC outcomes:")
+        target_lines.extend(
+            f"  - {outcome['variant']}: triggered={outcome['triggered']} detail={outcome['detail']}"
+            for outcome in exploiter["outcomes"]
+        )
+    lines.extend(target_lines)
 
     lines.extend(["", "## Harness", ""])
     if harness:
@@ -268,12 +387,15 @@ def render_pipeline_status(
     fix_validated = bool(report.fix and report.fix.status == "validated")
     requested_full_pipeline_completed = exploit_generated and fix_generated and fix_validated
 
+    run_score = calculate_run_score(report)
+
     return {
         "cve_id": report.cve.cve_id,
         "run_id": report.run.run_id,
         "model": report.run.model,
         "overall_status": report.judgement.status,
         "confidence": report.judgement.confidence,
+        "run_score": run_score,
         "furthest_completed_stage": events[-1].phase if events else None,
         "requested_full_pipeline_completed": requested_full_pipeline_completed,
         "exploit_generated": exploit_generated,

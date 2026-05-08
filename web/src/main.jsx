@@ -66,6 +66,14 @@ function completedPhaseCount(item) {
   return phaseStates(item).filter((stage) => stage.status === 'completed').length;
 }
 
+function runScore(item) {
+  return item.run_score || item.progress?.run_score || { score: 0, max_score: 100, percent: 0 };
+}
+
+function runDetailHref(item) {
+  return `#/run/${encodeURIComponent(item.cve.cve_id)}/${encodeURIComponent(item.run_id)}`;
+}
+
 function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -83,6 +91,18 @@ function App() {
 
   if (error) return <Shell><div className="empty">{error}</div></Shell>;
   if (!data) return <Shell><div className="empty">Loading CVE data...</div></Shell>;
+
+  const runMatch = route.match(/^#\/run\/([^/]+)\/([^/]+)$/);
+  if (runMatch) {
+    const cveId = decodeURIComponent(runMatch[1]).toUpperCase();
+    const runId = decodeURIComponent(runMatch[2]);
+    const item = data.runs?.find((entry) => entry.cve.cve_id.toUpperCase() === cveId && entry.run_id === runId);
+    return (
+      <Shell repoUrl={data.repo_url}>
+        <Detail item={item} />
+      </Shell>
+    );
+  }
 
   const detailMatch = route.match(/^#\/cve\/([^/]+)$/);
   if (detailMatch) {
@@ -162,7 +182,9 @@ function Dashboard({ data }) {
         <Stat label="Analyzed" value={data.counts.analyzed} />
         <Stat label="Not analyzed" value={data.counts.not_analyzed} />
         <Stat label="CVSS >= 7" value={data.counts.high} />
+        <Stat label="Runs scored" value={data.counts.runs || 0} />
       </section>
+      <RunLeaderboard runs={data.runs || []} />
       <section className="controls" aria-label="Dashboard controls">
         <label className="searchBox">
           <Search size={16} />
@@ -240,6 +262,57 @@ function Dashboard({ data }) {
   );
 }
 
+function RunLeaderboard({ runs }) {
+  const [limit, setLimit] = useState(10);
+  const visible = runs.slice(0, limit);
+
+  if (!runs.length) {
+    return null;
+  }
+
+  return (
+    <section className="panel runsPanel">
+      <div className="panelTitle">
+        <ShieldCheck size={18} />
+        Run Score Leaderboard
+      </div>
+      <p className="mutedText">All persisted runs sorted by how far they got toward exploit generation, patch generation, and patch validation.</p>
+      <div className="tableWrap compactRunTable">
+        <table>
+          <thead>
+            <tr>
+              <th>Score</th>
+              <th>CVE</th>
+              <th>Run</th>
+              <th>Model</th>
+              <th>Status</th>
+              <th>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((item) => {
+              const score = runScore(item);
+              return (
+                <tr key={`${item.cve.cve_id}-${item.run_id}`}>
+                  <td><span className="score runScore">{score.score}/{score.max_score}</span></td>
+                  <td><strong>{item.cve.cve_id}</strong><span>{item.cve.name}</span></td>
+                  <td>{item.run_id}</td>
+                  <td>{item.report?.run?.model || item.pipeline_status?.model || 'none'}</td>
+                  <td><span className={statusClass(item)}>{statusLabel(item)}</span></td>
+                  <td><a className="artifactLink" href={runDetailHref(item)}>View run</a></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {limit < runs.length && (
+        <button className="loadMore" onClick={() => setLimit((current) => current + 10)}>Show more runs</button>
+      )}
+    </section>
+  );
+}
+
 function Stat({ label, value }) {
   return <div className="stat"><strong>{value}</strong><span>{label}</span></div>;
 }
@@ -259,6 +332,7 @@ function InlineRunDetails({ item }) {
             <span className={cvssClass(item.cve.cvss)}>CVSS {item.cve.cvss ?? 'unknown'}</span>
             <span className={statusClass(item)}>{statusLabel(item)}</span>
             <span className="metaPill">Run {item.report?.run?.run_id || item.pipeline_status?.run_id || 'none'}</span>
+            <span className="metaPill">Score {runScore(item).score}/{runScore(item).max_score}</span>
             <span className="metaPill">Model {item.report?.run?.model || item.pipeline_status?.model || 'none'}</span>
           </div>
         </div>
@@ -372,7 +446,8 @@ function Detail({ item }) {
         <Info label="Disclosed" value={item.cve.disclosed} />
         <Info label="Ecosystem" value={item.cve.ecosystem} />
         <Info label="Known exploited" value={item.cve.kev ? 'yes' : 'no'} />
-        <Info label="Latest run" value={item.report?.run?.run_id || item.pipeline_status?.run_id || 'none'} />
+        <Info label="Latest run" value={item.report?.run?.run_id || item.pipeline_status?.run_id || item.run_id || 'none'} />
+        <Info label="Run score" value={`${runScore(item).score}/${runScore(item).max_score} (${Number(runScore(item).percent).toFixed(2)}%)`} />
         <Info label="Model" value={item.report?.run?.model || item.pipeline_status?.model || 'none'} />
       </section>
 
@@ -396,6 +471,19 @@ function Detail({ item }) {
       <section className="panel gridTwo">
         <Outcome title="Exploit generated" value={item.progress.exploit_generated} note={item.progress.exploit_note} />
         <Outcome title="Patch generated" value={item.progress.patch_generated} note={item.progress.patch_note} />
+      </section>
+
+      <section className="panel">
+        <h2>Run Score</h2>
+        <p className="mutedText">{runScore(item).score}/{runScore(item).max_score} points. 100 requires a working vulnerable-target PoC, a candidate patch, and fix validation proving the patch blocks the PoC.</p>
+        <div className="scoreGrid">
+          {(runScore(item).components || []).map((component) => (
+            <div className="check" key={component.name}>
+              <strong>{component.earned ? 'Earned' : 'Missing'}: {component.name}</strong>
+              <p>{component.points} point(s){component.description ? ` - ${component.description}` : ''}</p>
+            </div>
+          ))}
+        </div>
       </section>
 
       {report && (
