@@ -16,6 +16,7 @@ moak_site_notes/
 .openmoak/
 .codex
 .claude/
+.pi/
 .omc/
 cves/*/runs/*/sources/
 cves/*/runs/*/research/source_diff.patch
