@@ -49,9 +49,10 @@ You can also use the interactive wrapper:
 
 ```bash
 ./contribute.sh CVE-2025-55182
+./contribute.sh --cve CVE-2025-55182 --harness codex --model gpt-5.5 --dry-run
 ```
 
-The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs the target-isolation preflight from `ISOLATION.md`, records runs as `<harness>:<model>`, syncs missing Python or Node project dependencies when prompted, runs `uv run cvehunt run ... --persist --json`, writes contribution audit artifacts, and rebuilds the public dashboard with `npm run build`.
+The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs the target-isolation preflight from `ISOLATION.md`, records runs as `<harness>:<model>`, syncs missing Python or Node project dependencies when prompted, runs `uv run cvehunt run ... --persist --json`, writes contribution audit artifacts, and rebuilds the public dashboard with `npm run build`. Every `CVEHUNT_*` environment override documented by `./contribute.sh --help` also has an equivalent CLI flag.
 
 ## Model-Backed Runs
 

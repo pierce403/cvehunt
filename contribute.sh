@@ -6,9 +6,21 @@ DEFAULT_CVE="CVE-2025-55182"
 
 usage() {
   cat <<'USAGE'
-Usage: ./contribute.sh [CVE-ID]
+Usage: ./contribute.sh [CVE-ID] [options]
 
 Interactive contributor runner for CVEHunt.
+
+Options:
+  --cve CVE-ID             CVE to run, same as CVEHUNT_CVE
+  --harness HARNESS        Agent harness label, same as CVEHUNT_HARNESS
+  --model MODEL            Model name to record, same as CVEHUNT_MODEL
+  --skip-install           Skip uv/npm dependency installation checks
+  --skip-build             Skip npm run build after the persisted run
+  --skip-git               Skip automatic git commit/push and PR recommendation
+  --dry-run                Print commands without running them
+  --execute-poc            Build/run the localhost harness PoC with --execute-poc
+  --isolation-backend NAME Target isolation preflight backend
+  -h, --help               Show this help
 
 Environment overrides:
   CVEHUNT_CVE       CVE to run when no positional CVE is provided
@@ -26,6 +38,102 @@ USAGE
 
 has_command() {
   command -v "$1" >/dev/null 2>&1
+}
+
+missing_flag_value() {
+  echo "Missing value for $1" >&2
+  exit 2
+}
+
+parse_cli_args() {
+  local positional_cve=""
+  local cve_from_flag=0
+
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --cve)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_CVE="$1"
+        cve_from_flag=1
+        ;;
+      --cve=*)
+        CVEHUNT_CVE="${1#*=}"
+        cve_from_flag=1
+        ;;
+      --harness)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_HARNESS="$1"
+        ;;
+      --harness=*)
+        CVEHUNT_HARNESS="${1#*=}"
+        ;;
+      --model)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_MODEL="$1"
+        ;;
+      --model=*)
+        CVEHUNT_MODEL="${1#*=}"
+        ;;
+      --skip-install)
+        CVEHUNT_SKIP_INSTALL=1
+        ;;
+      --skip-build)
+        CVEHUNT_SKIP_BUILD=1
+        ;;
+      --skip-git)
+        CVEHUNT_SKIP_GIT=1
+        ;;
+      --dry-run)
+        CVEHUNT_DRY_RUN=1
+        ;;
+      --execute-poc)
+        CVEHUNT_EXECUTE_POC=1
+        ;;
+      --isolation-backend)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_ISOLATION_BACKEND="$1"
+        ;;
+      --isolation-backend=*)
+        CVEHUNT_ISOLATION_BACKEND="${1#*=}"
+        ;;
+      --)
+        shift
+        while [[ "$#" -gt 0 ]]; do
+          if [[ -n "$positional_cve" || "$cve_from_flag" -eq 1 ]]; then
+            echo "Unexpected extra positional argument: $1" >&2
+            exit 2
+          fi
+          positional_cve="$1"
+          shift
+        done
+        break
+        ;;
+      --*)
+        echo "Unknown option: $1" >&2
+        exit 2
+        ;;
+      *)
+        if [[ -n "$positional_cve" || "$cve_from_flag" -eq 1 ]]; then
+          echo "Unexpected extra positional argument: $1" >&2
+          exit 2
+        fi
+        positional_cve="$1"
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -n "$positional_cve" ]]; then
+    CVEHUNT_CVE="$positional_cve"
+  fi
 }
 
 detect_harnesses() {
@@ -679,10 +787,7 @@ auto_commit_push_and_recommend_pr() {
 }
 
 main() {
-  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    exit 0
-  fi
+  parse_cli_args "$@"
 
   local repo_root
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -701,7 +806,7 @@ main() {
     detected_harnesses[${#detected_harnesses[@]}]="$harness"
   done < <(detect_harnesses)
 
-  local cve_id="${1:-${CVEHUNT_CVE:-}}"
+  local cve_id="${CVEHUNT_CVE:-}"
   if [[ -z "$cve_id" ]]; then
     cve_id="$(prompt "CVE ID" "$DEFAULT_CVE")"
   fi
