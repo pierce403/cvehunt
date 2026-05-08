@@ -33,7 +33,7 @@ PoC artifacts in this repository are scoped to the local CVEHunt harness only:
 - `SafetyPolicy.assert_localhost_scoped` rejects any PoC content that would reach a non-loopback host.
 - The pipeline does not exfiltrate credentials, target real third-party deployments, or fetch weaponized public exploit code.
 
-The PoC validates the harness, not real services.
+The PoC validates the harness, not real services. See `ISOLATION.md` for the target-environment policy: Docker is the current implemented userland harness backend, while kernel, Kubernetes escape, container escape, browser, and runtime-boundary CVEs should use disposable VM or microVM backends such as QEMU/KVM, Firecracker, Cloud Hypervisor, or Kata Containers when those backends are implemented.
 
 ## Current Pipeline
 
@@ -91,4 +91,4 @@ uv run cvehunt run CVE-2025-55182 --model codex:gpt-5.5
 
 The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, and explicit notes about unimplemented exploit and fix stages.
 
-For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, syncs missing project dependencies when prompted, runs a persisted CVEHunt workflow, writes `contribution_audit.{json,md}` plus interaction/output logs into the run directory, and rebuilds the dashboard data.
+For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs an isolation preflight (`CVEHUNT_ISOLATION_BACKEND=docker` by default), syncs missing project dependencies when prompted, runs a persisted CVEHunt workflow, writes `contribution_audit.{json,md}` plus interaction/output/isolation logs into the run directory, and rebuilds the dashboard data.

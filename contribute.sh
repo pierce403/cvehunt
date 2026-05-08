@@ -19,6 +19,8 @@ Environment overrides:
   CVEHUNT_SKIP_GIT=1    Skip automatic git commit/push and PR recommendation
   CVEHUNT_DRY_RUN=1     Print commands without running them
   CVEHUNT_EXECUTE_POC=1 Build/run the localhost harness PoC with --execute-poc
+  CVEHUNT_ISOLATION_BACKEND=docker|external-vm|firecracker|qemu
+                         Target isolation preflight backend (docker is current execution backend)
 USAGE
 }
 
@@ -294,6 +296,85 @@ github_owner_from_remote_url() {
   esac
 }
 
+docker_server_available() {
+  has_command docker && docker version --format '{{.Server.Version}}' >/dev/null 2>&1
+}
+
+print_virtualization_hint() {
+  if has_command systemd-detect-virt; then
+    local virt
+    virt="$(systemd-detect-virt 2>/dev/null || true)"
+    if [[ -n "$virt" ]]; then
+      echo "Host virtualization hint: $virt"
+      return
+    fi
+  fi
+  echo "Host virtualization hint: unknown"
+}
+
+preflight_isolation_dependencies() {
+  local backend="${CVEHUNT_ISOLATION_BACKEND:-docker}"
+  local execute_poc="${CVEHUNT_EXECUTE_POC:-0}"
+
+  echo "Isolation preflight"
+  echo "Selected backend: $backend"
+  echo "PoC execution requested: $execute_poc"
+  print_virtualization_hint
+
+  case "$backend" in
+    docker)
+      echo "Backend meaning: Docker/Compose harness for userland package CVEs. Containers share the host kernel."
+      if has_command docker; then
+        echo "docker CLI: $(command -v docker)"
+      else
+        echo "docker CLI: missing"
+      fi
+      if docker_server_available; then
+        echo "docker server: available ($(docker version --format '{{.Server.Version}}' 2>/dev/null))"
+        docker info --format 'docker rootless/security: rootless={{.SecurityOptions}} cgroup={{.CgroupDriver}} os={{.OperatingSystem}}' 2>/dev/null || true
+      else
+        echo "docker server: unavailable"
+        if [[ "$execute_poc" == "1" ]]; then
+          echo "CVEHUNT_EXECUTE_POC=1 requires a working Docker server; failing before the CVE workflow starts." >&2
+          return 1
+        fi
+      fi
+      ;;
+    external-vm)
+      echo "Backend meaning: contributor asserts this workflow is already running inside a disposable VM boundary."
+      echo "CVEHunt cannot verify VM disposability automatically; reviewers must check the surrounding environment."
+      if [[ "$execute_poc" == "1" ]]; then
+        if docker_server_available; then
+          echo "docker server inside asserted VM: available ($(docker version --format '{{.Server.Version}}' 2>/dev/null))"
+        else
+          echo "CVEHUNT_EXECUTE_POC=1 with external-vm still requires Docker inside the VM; failing early." >&2
+          return 1
+        fi
+      fi
+      ;;
+    firecracker)
+      echo "Backend meaning: preferred future microVM backend for Linux kernel/container-boundary testing."
+      [[ -e /dev/kvm ]] && echo "/dev/kvm: present" || echo "/dev/kvm: missing"
+      has_command firecracker && echo "firecracker: $(command -v firecracker)" || echo "firecracker: missing"
+      has_command jailer && echo "jailer: $(command -v jailer)" || echo "jailer: missing"
+      echo "Firecracker execution is not implemented in CVEHunt yet; use this preflight to discover dependencies early." >&2
+      return 1
+      ;;
+    qemu)
+      echo "Backend meaning: preferred future full-VM backend for kernel, Kubernetes escape, browser/client, or non-container targets."
+      [[ -e /dev/kvm ]] && echo "/dev/kvm: present" || echo "/dev/kvm: missing"
+      has_command qemu-system-x86_64 && echo "qemu-system-x86_64: $(command -v qemu-system-x86_64)" || echo "qemu-system-x86_64: missing"
+      echo "QEMU execution is not implemented in CVEHunt yet; use this preflight to discover dependencies early." >&2
+      return 1
+      ;;
+    *)
+      echo "Unsupported CVEHUNT_ISOLATION_BACKEND: $backend" >&2
+      echo "Supported values: docker, external-vm, firecracker, qemu" >&2
+      return 2
+      ;;
+  esac
+}
+
 extract_run_id() {
   local output_file="$1"
   local cve_id="$2"
@@ -334,6 +415,7 @@ write_contribution_audit() {
   local model_label="$5"
   local run_json_output="$6"
   local contribution_log="$7"
+  local isolation_preflight_log="$8"
   local run_dir="cves/$cve_id/runs/$run_id"
 
   if [[ ! -d "$run_dir" ]]; then
@@ -343,6 +425,7 @@ write_contribution_audit() {
 
   cp "$run_json_output" "$run_dir/contribute-output.log"
   cp "$contribution_log" "$run_dir/contribution-interaction.log"
+  cp "$isolation_preflight_log" "$run_dir/isolation-preflight.log"
 
   CVEHUNT_AUDIT_CVE_ID="$cve_id" \
   CVEHUNT_AUDIT_RUN_ID="$run_id" \
@@ -351,6 +434,7 @@ write_contribution_audit() {
   CVEHUNT_AUDIT_MODEL_LABEL="$model_label" \
   CVEHUNT_AUDIT_RUN_DIR="$run_dir" \
   CVEHUNT_AUDIT_EXECUTE_POC="${CVEHUNT_EXECUTE_POC:-0}" \
+  CVEHUNT_AUDIT_ISOLATION_BACKEND="${CVEHUNT_ISOLATION_BACKEND:-docker}" \
   python3 <<'PY'
 from __future__ import annotations
 
@@ -366,6 +450,7 @@ harness = os.environ["CVEHUNT_AUDIT_HARNESS"]
 model = os.environ["CVEHUNT_AUDIT_MODEL"]
 model_label = os.environ["CVEHUNT_AUDIT_MODEL_LABEL"]
 execute_poc = os.environ.get("CVEHUNT_AUDIT_EXECUTE_POC") == "1"
+isolation_backend = os.environ.get("CVEHUNT_AUDIT_ISOLATION_BACKEND", "docker")
 
 pipeline_status_path = run_dir / "pipeline_status.json"
 report_path = run_dir / "report.json"
@@ -418,6 +503,11 @@ audit = {
             "Raw typed prompt answers beyond the selected harness/model values recorded here",
         ],
     },
+    "isolation": {
+        "selected_backend": isolation_backend,
+        "preflight_log": "isolation-preflight.log",
+        "policy": "Select the isolation backend by vulnerability class. Docker is the current implemented userland harness backend; VM/microVM backends are preferred for kernel, container escape, Kubernetes escape, browser, and runtime-boundary targets.",
+    },
     "pipeline_boundaries": {
         "will_do": [
             "Collect CVE metadata available to the local workflow",
@@ -454,6 +544,7 @@ audit = {
     "artifacts": {
         "interaction_log": "contribution-interaction.log",
         "workflow_stdout": "contribute-output.log",
+        "isolation_preflight": "isolation-preflight.log",
         "trace": "trace.jsonl",
         "pipeline_status": "pipeline_status.json",
         "report": "report.json",
@@ -470,6 +561,7 @@ lines = [
     f"Harness: {harness}",
     f"Model label: {model_label}",
     f"Model validation: {validation_state} via {validation_source}",
+    f"Isolation backend: {isolation_backend}",
     "",
     "## Attribution Boundary",
     "",
@@ -480,6 +572,7 @@ lines = [
 ]
 lines.extend(f"- Captured: {item}" for item in audit["interaction_logging"]["captured"])
 lines.extend(f"- Not captured: {item}" for item in audit["interaction_logging"]["not_captured"])
+lines.extend(["", "## Isolation", "", f"- Selected backend: {isolation_backend}", "- Preflight log: isolation-preflight.log", f"- Policy: {audit['isolation']['policy']}"])
 lines.extend(["", "## Pipeline Will Do", ""])
 lines.extend(f"- {item}" for item in audit["pipeline_boundaries"]["will_do"])
 lines.extend(["", "## Pipeline Refuses", ""])
@@ -596,7 +689,9 @@ main() {
   cd "$repo_root"
 
   local contribution_log
+  local isolation_preflight_log
   contribution_log="$(mktemp "${TMPDIR:-/tmp}/cvehunt-contribute.XXXXXX.log")"
+  isolation_preflight_log="$(mktemp "${TMPDIR:-/tmp}/cvehunt-isolation-preflight.XXXXXX.log")"
   exec > >(tee -a "$contribution_log") 2>&1
   echo "Contribution interaction log started at $contribution_log"
 
@@ -636,6 +731,7 @@ main() {
   export CVEHUNT_HARNESS="$harness"
 
   echo "Running CVEHunt for $cve_id with $model_label"
+  preflight_isolation_dependencies | tee "$isolation_preflight_log"
   if [[ "${CVEHUNT_DRY_RUN:-0}" == "1" ]]; then
     if [[ "${CVEHUNT_SKIP_INSTALL:-0}" != "1" ]]; then
       echo "Would check/install project dependencies"
@@ -670,7 +766,7 @@ main() {
   printf '\n'
   "${run_command[@]}" | tee "$run_json_output"
   run_id="$(extract_run_id "$run_json_output" "$cve_id")"
-  write_contribution_audit "$cve_id" "$run_id" "$harness" "$model" "$model_label" "$run_json_output" "$contribution_log"
+  write_contribution_audit "$cve_id" "$run_id" "$harness" "$model" "$model_label" "$run_json_output" "$contribution_log" "$isolation_preflight_log"
 
   if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
     echo "Regenerating dashboard data and docs"
