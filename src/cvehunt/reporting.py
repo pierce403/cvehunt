@@ -269,6 +269,10 @@ def render_markdown(report: WorkflowReport) -> str:
             lines.append(f"- PoC script: {exploiter['poc_path']}")
         if exploiter.get("runner_path"):
             lines.append(f"- Runner script: {exploiter['runner_path']}")
+        if exploiter.get("investigation_path"):
+            lines.append(f"- Investigation: {exploiter['investigation_path']}")
+        if exploiter.get("investigation_json_path"):
+            lines.append(f"- Investigation JSON: {exploiter['investigation_json_path']}")
 
     lines.extend(["", "## Fix Developer", ""])
     if fix:

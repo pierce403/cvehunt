@@ -168,6 +168,8 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     model_attempt_fix_path = artifact_dir / "model_attempt" / "fix.patch"
     model_attempt_poc_path = artifact_dir / "model_attempt" / "poc.py"
     model_attempt_refusal_path = artifact_dir / "model_attempt" / "refusal.md"
+    exploiter_investigation_path = artifact_dir / "exploiter" / "investigation.md"
+    exploiter_investigation_json_path = artifact_dir / "exploiter" / "investigation.json"
     report = read_json(report_path)
     pipeline_status = read_json(pipeline_status_path)
     trace = read_trace(trace_path)
@@ -216,6 +218,8 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
             "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
             "exploiter_stub_url": repo_url(artifact_dir / "exploiter" / "README.md"),
+            "exploiter_investigation_url": repo_url(exploiter_investigation_path),
+            "exploiter_investigation_json_url": repo_url(exploiter_investigation_json_path),
             "sources_exists": (artifact_dir / "sources").exists(),
             "trace_exists": trace_path.exists(),
             "report_exists": report_path.exists(),
@@ -235,6 +239,8 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
             "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
             "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),
+            "exploiter_investigation_exists": exploiter_investigation_path.exists(),
+            "exploiter_investigation_json_exists": exploiter_investigation_json_path.exists(),
         },
     }
 

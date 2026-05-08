@@ -406,6 +406,7 @@ function InlineRunDetails({ item }) {
             <Artifact href={item.artifacts.source_diff_url} label="source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
             <Artifact href={item.artifacts.harness_readme_url} label="harness/README.md" disabled={!item.artifacts.harness_readme_exists} />
             <Artifact href={item.artifacts.exploiter_stub_url} label="exploiter/README.md" disabled={!item.artifacts.exploiter_stub_exists} />
+            <Artifact href={item.artifacts.exploiter_investigation_url} label="exploiter/investigation.md" disabled={!item.artifacts.exploiter_investigation_exists} />
           </div>
         </section>
       </div>
@@ -639,6 +640,8 @@ function Detail({ item }) {
           <Artifact href={item.artifacts.source_diff_url} label="research/source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
           <Artifact href={item.artifacts.harness_readme_url} label="harness/README.md" disabled={!item.artifacts.harness_readme_exists} />
           <Artifact href={item.artifacts.exploiter_stub_url} label="exploiter/README.md" disabled={!item.artifacts.exploiter_stub_exists} />
+          <Artifact href={item.artifacts.exploiter_investigation_url} label="exploiter/investigation.md" disabled={!item.artifacts.exploiter_investigation_exists} />
+          <Artifact href={item.artifacts.exploiter_investigation_json_url} label="exploiter/investigation.json" disabled={!item.artifacts.exploiter_investigation_json_exists} />
         </div>
       </section>
     </section>
@@ -682,6 +685,8 @@ function artifactFor(item, artifact) {
     'research/source_diff.patch': item.artifacts.source_diff_url,
     'harness/README.md': item.artifacts.harness_readme_url,
     'exploiter/README.md': item.artifacts.exploiter_stub_url,
+    'exploiter/investigation.md': item.artifacts.exploiter_investigation_url,
+    'exploiter/investigation.json': item.artifacts.exploiter_investigation_json_url,
   };
   if (known[artifact]) return known[artifact];
   return `${item.artifacts.artifact_blob_prefix}/${artifact}`;

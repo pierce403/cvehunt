@@ -128,7 +128,8 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 - **Stability**: in-progress
 - **Description**: Generate localhost-scoped PoC artifacts for supported vulnerability classes and controlled harnesses.
 - **Implemented**:
-  - `ExploiterAgent` writes `exploiter/poc.py` and `exploiter/run-poc.sh` when a supported template exists.
+  - `ExploiterAgent` writes `exploiter/investigation.md`, `exploiter/investigation.json`, `exploiter/poc.py`, and `exploiter/run-poc.sh` when a supported template exists.
+  - The investigation artifact records hypotheses, target URLs, probe matrix, controls, expected blockers, and next experiments if the upstream target does not trigger.
   - Supported template classes currently include SQL injection, unsafe deserialization, and unsafe interpolation.
   - Generated PoCs hardcode `127.0.0.1:4000` for vulnerable and `127.0.0.1:4001` for patched targets.
   - `SafetyPolicy.assert_localhost_scoped` rejects non-loopback PoC target URLs before artifacts are written.
@@ -139,7 +140,7 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
   - PoCs targeting real third-party systems.
   - Full vulnerable/patched outcome proof unless `--execute-poc` is used and the harness produces structured outcomes.
 - **Test Criteria**:
-  - [x] Current pipeline writes PoC artifacts for supported classes.
+  - [x] Current pipeline writes structured PoC investigation and PoC artifacts for supported classes.
   - [x] Safety tests block non-localhost PoC targeting and unsafe phrases.
   - [ ] Model-authored PoC attempts are captured as separate audited artifacts.
 

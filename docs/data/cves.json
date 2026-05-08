@@ -76,6 +76,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-15626/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": false,
         "report_exists": false,
@@ -94,7 +96,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -118,7 +122,7 @@
           "patched_signal": "synthetic own-property guard blocks traversal"
         }
       },
-      "run_id": "2026-05-08T17-56-39Z",
+      "run_id": "2026-05-08T19-25-42Z",
       "report": null,
       "trace": [],
       "pipeline_status": null,
@@ -147,30 +151,32 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2025-55182",
-        "latest_run": "cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z",
+        "latest_run": "cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z",
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182",
-        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z",
-        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z",
+        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z",
+        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/report.md",
-        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/pipeline_status.json",
-        "contribution_audit_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/contribution_audit.md",
-        "contribution_audit_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/contribution_audit.json",
-        "isolation_preflight_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/isolation-preflight.log",
-        "model_attempt_metadata_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/metadata.json",
-        "model_attempt_response_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/response.md",
-        "model_attempt_prompt_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/prompt.md",
-        "model_attempt_extracted_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/extracted.json",
-        "model_attempt_notes_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/notes.md",
-        "model_attempt_fix_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/fix.patch",
-        "model_attempt_poc_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/poc.py",
-        "model_attempt_refusal_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/model_attempt/refusal.md",
-        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/sources",
-        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/research/source_diff.patch",
-        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/harness/README.md",
-        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T17-56-39Z/exploiter/README.md",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/report.md",
+        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/pipeline_status.json",
+        "contribution_audit_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/contribution_audit.md",
+        "contribution_audit_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/contribution_audit.json",
+        "isolation_preflight_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/isolation-preflight.log",
+        "model_attempt_metadata_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/metadata.json",
+        "model_attempt_response_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/response.md",
+        "model_attempt_prompt_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/prompt.md",
+        "model_attempt_extracted_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/extracted.json",
+        "model_attempt_notes_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/notes.md",
+        "model_attempt_fix_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/fix.patch",
+        "model_attempt_poc_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/poc.py",
+        "model_attempt_refusal_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/model_attempt/refusal.md",
+        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/sources",
+        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/research/source_diff.patch",
+        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/harness/README.md",
+        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T19-25-42Z/exploiter/investigation.json",
         "sources_exists": true,
         "trace_exists": false,
         "report_exists": false,
@@ -189,7 +195,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": true,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -1123,6 +1131,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -1141,7 +1151,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -1211,6 +1223,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7040/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": false,
         "report_exists": false,
@@ -1229,7 +1243,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -1299,6 +1315,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7123/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": false,
         "report_exists": false,
@@ -1317,7 +1335,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -1387,6 +1407,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7124/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": false,
         "report_exists": false,
@@ -1405,7 +1427,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -1475,6 +1499,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-7125/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": false,
         "report_exists": false,
@@ -1493,7 +1519,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     }
   ],
@@ -2173,6 +2201,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -2191,7 +2221,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -2869,6 +2901,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-40-26Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-40-26Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-40-26Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-40-26Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-40-26Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -2887,7 +2921,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -3565,6 +3601,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T02-16-59Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T02-16-59Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T02-16-59Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T02-16-59Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T02-16-59Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -3583,7 +3621,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -4517,6 +4557,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -4535,7 +4577,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -5438,6 +5482,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-37-42Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-37-42Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-37-42Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-37-42Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-37-42Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -5456,7 +5502,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -6336,6 +6384,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-05-26Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-05-26Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-05-26Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-05-26Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T06-05-26Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -6354,7 +6404,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -7032,6 +7084,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -7050,7 +7104,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -7928,6 +7984,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -7946,7 +8004,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -8588,6 +8648,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T16-17-13Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T16-17-13Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T16-17-13Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T16-17-13Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T16-17-13Z/exploiter/investigation.json",
         "sources_exists": true,
         "trace_exists": true,
         "report_exists": true,
@@ -8606,7 +8668,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": true,
         "harness_readme_exists": true,
-        "exploiter_stub_exists": true
+        "exploiter_stub_exists": true,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -9025,6 +9089,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T15-29-48Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -9043,7 +9109,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -9462,6 +9530,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-39-50Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -9480,7 +9550,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     },
     {
@@ -9893,6 +9965,8 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-13-47Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-13-47Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-13-47Z/exploiter/README.md",
+        "exploiter_investigation_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-13-47Z/exploiter/investigation.md",
+        "exploiter_investigation_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-04-28T14-13-47Z/exploiter/investigation.json",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
@@ -9911,7 +9985,9 @@
         "model_attempt_refusal_exists": false,
         "source_diff_exists": false,
         "harness_readme_exists": false,
-        "exploiter_stub_exists": false
+        "exploiter_stub_exists": false,
+        "exploiter_investigation_exists": false,
+        "exploiter_investigation_json_exists": false
       }
     }
   ]

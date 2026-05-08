@@ -687,8 +687,11 @@ class ExploiterAgent:
 
         poc_path = exploiter_dir / "poc.py"
         runner_path = exploiter_dir / "run-poc.sh"
+        investigation_path = exploiter_dir / "investigation.md"
+        investigation_json_path = exploiter_dir / "investigation.json"
         poc_source = template(cve, base_port=base_port)
         runner_source = _poc_runner_script(cve, base_port=base_port)
+        investigation = _poc_investigation_payload(cve, finding, harness, base_port)
 
         self.safety_policy.assert_safe_text(poc_source)
         self.safety_policy.assert_localhost_scoped(poc_source)
@@ -696,6 +699,8 @@ class ExploiterAgent:
         poc_path.write_text(poc_source, encoding="utf-8")
         runner_path.write_text(runner_source, encoding="utf-8")
         runner_path.chmod(0o755)
+        investigation_json_path.write_text(json.dumps(investigation, indent=2), encoding="utf-8")
+        investigation_path.write_text(_poc_investigation_markdown(investigation), encoding="utf-8")
         readme.write_text(
             _exploiter_scaffolded_readme(cve, finding),
             encoding="utf-8",
@@ -712,6 +717,8 @@ class ExploiterAgent:
             next_step="Run `bash exploiter/run-poc.sh` from the run directory to execute against the harness.",
             poc_path=_relpath(poc_path, artifact_root),
             runner_path=_relpath(runner_path, artifact_root),
+            investigation_path=_relpath(investigation_path, artifact_root),
+            investigation_json_path=_relpath(investigation_json_path, artifact_root),
             target_urls={
                 "vulnerable": f"http://127.0.0.1:{base_port}",
                 "patched": f"http://127.0.0.1:{base_port + 1}",
@@ -834,7 +841,7 @@ class HarnessRunnerAgent:
             status="executed",
             message=message,
             outcomes=outcomes,
-            next_step="Review exploiter/outcome.json and exploiter/logs/ for raw evidence.",
+            next_step="Review exploiter/outcome.json, exploiter/investigation.md, and exploiter/logs/ for raw evidence and next experiments.",
         )
 
 
@@ -1456,6 +1463,180 @@ def _parse_hunk_old_start(header: str) -> int:
         return int(old_range[1:].split(",", 1)[0])
     except (IndexError, ValueError) as exc:
         raise ValueError(f"malformed hunk header: {header.strip()}") from exc
+
+
+def _poc_investigation_payload(
+    cve: CveRecord,
+    finding: ResearchFinding,
+    harness: HarnessArtifact,
+    base_port: int,
+) -> dict[str, object]:
+    target_urls = {
+        "vulnerable": f"http://127.0.0.1:{base_port}",
+        "patched": f"http://127.0.0.1:{base_port + 1}",
+        "shim_vulnerable": f"http://127.0.0.1:{base_port + 10}",
+        "shim_patched": f"http://127.0.0.1:{base_port + 11}",
+    }
+    class_specific = _class_specific_investigation(finding.vulnerability_class)
+    return {
+        "schema_version": 1,
+        "cve_id": cve.cve_id,
+        "vulnerability_class": finding.vulnerability_class,
+        "target_urls": target_urls,
+        "hypothesis": finding.defensive_hypothesis,
+        "patch_signal": finding.relevant_patch_signal,
+        "changed_files": finding.changed_files,
+        "harness": {
+            "runtime": harness.runtime,
+            "isolation": harness.isolation,
+            "dockerfiles": harness.dockerfiles,
+            "helper_scripts": harness.helper_scripts,
+        },
+        "investigation_questions": [
+            "Which request path reaches the patched code path inside the local harness?",
+            "What seed data is required before the vulnerable path can produce an observable differential?",
+            "What negative controls prove that a 2xx response is not from an unauthenticated health or public route?",
+            "Does the upstream vulnerable container trigger, or only the deterministic shim?",
+            "Does the patched container block the same input while preserving normal expected behavior?",
+        ],
+        "probe_matrix": class_specific["probe_matrix"],
+        "success_criteria": [
+            "The vulnerable upstream target records triggered=true with an auth- or vulnerability-shaped response.",
+            "The patched upstream target records triggered=false for the same probe.",
+            "The run preserves raw request/response prefixes in exploiter/outcome.json.",
+            "A shim-only differential is useful but must not be scored as a full upstream exploit proof.",
+        ],
+        "controls": class_specific["controls"],
+        "expected_blockers": class_specific["expected_blockers"],
+        "next_experiments_if_no_upstream_trigger": class_specific["next_experiments"],
+    }
+
+
+def _class_specific_investigation(vulnerability_class: str) -> dict[str, list[dict[str, str]] | list[str]]:
+    if vulnerability_class == "sql injection":
+        return {
+            "probe_matrix": [
+                {
+                    "step": "seed",
+                    "method": "Create a harness-only LiteLLM virtual key using the local master key so the auth lookup has database state to query.",
+                    "expected_signal": "Both upstream containers return 200 from /key/generate with no external provider call.",
+                },
+                {
+                    "step": "format-gate control",
+                    "method": "Use sk-prefixed injected Authorization values so the request passes LiteLLM's virtual-key prefix check.",
+                    "expected_signal": "Failures after this point are token lookup failures, not prefix-format rejections.",
+                },
+                {
+                    "step": "upstream vulnerable probe",
+                    "method": "Probe /key/info and /v1/models on the vulnerable target with the same sk-prefixed SQLi candidates.",
+                    "expected_signal": "A vulnerable trigger requires a 2xx response containing auth-shaped fields such as keys, models, user_id, team_id, or key_name.",
+                },
+                {
+                    "step": "upstream patched probe",
+                    "method": "Repeat the identical probes against the patched target.",
+                    "expected_signal": "The patched target should reject the injected token or avoid returning auth-shaped data.",
+                },
+                {
+                    "step": "shim differential",
+                    "method": "Run the same class of payloads against /verify on shim vulnerable and patched services.",
+                    "expected_signal": "Shim vulnerable returns auth-shaped data; shim patched rejects the payload.",
+                },
+            ],
+            "controls": [
+                "All targets are fixed loopback URLs generated from --base-port.",
+                "The PoC records response prefixes only; it does not exfiltrate credentials.",
+                "A 2xx from a public endpoint is ignored unless auth-shaped body markers are present.",
+                "The shim result is separated from upstream vulnerable/patched outcomes.",
+            ],
+            "expected_blockers": [
+                "LiteLLM may hash the supplied virtual key before database lookup, causing injected raw tokens to miss the vulnerable SQL construction path.",
+                "The public advisory may require a different endpoint, config flag, or database state than the current harness seeds.",
+                "The patched release span may include many unrelated changes, so source-diff patch validation can succeed even while the PoC path remains unproven upstream.",
+            ],
+            "next_experiments": [
+                "Trace LiteLLM 1.81.16 auth flow from Authorization header to database query and identify the exact function that builds SQL from user-controlled input.",
+                "Add a harness-only request path or config that reaches that function without bypassing normal app startup.",
+                "Seed database rows matching the transformed token/hash format used by the vulnerable lookup.",
+                "Record a negative control with a normal invalid sk-token and a positive control with a generated valid key.",
+            ],
+        }
+    return {
+        "probe_matrix": [
+            {
+                "step": "surface mapping",
+                "method": "Map generated harness endpoints to the changed files and patch signal.",
+                "expected_signal": "A local request path reaches code adjacent to the patch signal.",
+            },
+            {
+                "step": "vulnerable/patched differential",
+                "method": "Run the same localhost-only probe against vulnerable and patched targets.",
+                "expected_signal": "Vulnerable target exhibits the class-specific behavior; patched target blocks it.",
+            },
+        ],
+        "controls": [
+            "Use only loopback targets.",
+            "Keep vulnerable and patched probes byte-for-byte comparable.",
+            "Preserve raw outcome artifacts for review.",
+        ],
+        "expected_blockers": [
+            "The package may not expose a runnable service surface with the generated harness yet.",
+            "Additional seed data or configuration may be required to reach the affected code path.",
+        ],
+        "next_experiments": [
+            "Map changed files to public entrypoints.",
+            "Add harness seed data and controls for the affected path.",
+        ],
+    }
+
+
+def _poc_investigation_markdown(payload: dict[str, object]) -> str:
+    def bullet(items):
+        return "\n".join(f"- {item}" for item in items)
+
+    lines = [
+        f"# PoC Investigation: {payload['cve_id']}",
+        "",
+        f"- Vulnerability class: {payload['vulnerability_class']}",
+        f"- Hypothesis: {payload['hypothesis']}",
+        f"- Patch signal: {payload['patch_signal']}",
+        "",
+        "## Target URLs",
+        "",
+    ]
+    for name, url in dict(payload["target_urls"]).items():
+        lines.append(f"- {name}: {url}")
+    lines.extend(["", "## Investigation Questions", "", bullet(payload["investigation_questions"]), "", "## Probe Matrix", ""])
+    for item in payload["probe_matrix"]:
+        lines.extend([
+            f"### {item['step']}",
+            "",
+            f"- Method: {item['method']}",
+            f"- Expected signal: {item['expected_signal']}",
+            "",
+        ])
+    lines.extend([
+        "## Success Criteria",
+        "",
+        bullet(payload["success_criteria"]),
+        "",
+        "## Controls",
+        "",
+        bullet(payload["controls"]),
+        "",
+        "## Expected Blockers",
+        "",
+        bullet(payload["expected_blockers"]),
+        "",
+        "## Next Experiments If No Upstream Trigger",
+        "",
+        bullet(payload["next_experiments_if_no_upstream_trigger"]),
+        "",
+    ])
+    if payload.get("changed_files"):
+        lines.extend(["## Changed Files Considered", ""])
+        lines.extend(f"- `{path}`" for path in payload["changed_files"])
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _docker_available() -> bool:

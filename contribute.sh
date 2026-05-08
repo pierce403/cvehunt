@@ -674,6 +674,12 @@ Reason for refusal.
 {read_excerpt('exploiter/README.md')}
 ```
 
+## exploiter/investigation.md
+
+```markdown
+{read_excerpt('exploiter/investigation.md')}
+```
+
 ## exploiter/poc.py
 
 ```python
