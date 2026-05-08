@@ -836,6 +836,15 @@ main() {
   export CVEHUNT_HARNESS="$harness"
 
   echo "Running CVEHunt for $cve_id with $model_label"
+  echo "Run plan:"
+  echo "  Model invocation: attribution only; the Python workflow does not call $harness yet."
+  if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
+    echo "  Target execution: enabled; will pass --execute-poc to build/run the localhost harness."
+  else
+    echo "  Target execution: disabled; will generate source, harness, PoC, and patch artifacts only."
+    echo "  To build/run the localhost target harness, add --execute-poc."
+  fi
+  echo "  Isolation backend: ${CVEHUNT_ISOLATION_BACKEND:-docker}"
   preflight_isolation_dependencies | tee "$isolation_preflight_log"
   if [[ "${CVEHUNT_DRY_RUN:-0}" == "1" ]]; then
     if [[ "${CVEHUNT_SKIP_INSTALL:-0}" != "1" ]]; then
