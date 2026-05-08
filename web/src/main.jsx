@@ -396,6 +396,7 @@ function InlineRunDetails({ item }) {
           <div className="artifactGrid">
             <Artifact href={item.artifacts.report_md_url} label="report.md" disabled={!item.artifacts.report_md_exists} />
             <Artifact href={item.artifacts.contribution_audit_md_url} label="contribution_audit.md" disabled={!item.artifacts.contribution_audit_md_exists} />
+            <Artifact href={item.artifacts.model_attempt_response_url} label="model_attempt/response.md" disabled={!item.artifacts.model_attempt_response_exists} />
             <Artifact href={item.artifacts.isolation_preflight_url} label="isolation-preflight.log" disabled={!item.artifacts.isolation_preflight_exists} />
             <Artifact href={item.artifacts.pipeline_status_url} label="pipeline_status.json" disabled={!item.artifacts.pipeline_status_exists} />
             <Artifact href={item.artifacts.trace_url} label="trace.jsonl" disabled={!item.artifacts.trace_exists} />
@@ -622,6 +623,9 @@ function Detail({ item }) {
           <Artifact href={item.artifacts.report_md_url} label="report.md" disabled={!item.artifacts.report_md_exists} />
           <Artifact href={item.artifacts.contribution_audit_md_url} label="contribution_audit.md" disabled={!item.artifacts.contribution_audit_md_exists} />
           <Artifact href={item.artifacts.contribution_audit_json_url} label="contribution_audit.json" disabled={!item.artifacts.contribution_audit_json_exists} />
+          <Artifact href={item.artifacts.model_attempt_metadata_url} label="model_attempt/metadata.json" disabled={!item.artifacts.model_attempt_metadata_exists} />
+          <Artifact href={item.artifacts.model_attempt_response_url} label="model_attempt/response.md" disabled={!item.artifacts.model_attempt_response_exists} />
+          <Artifact href={item.artifacts.model_attempt_prompt_url} label="model_attempt/prompt.md" disabled={!item.artifacts.model_attempt_prompt_exists} />
           <Artifact href={item.artifacts.isolation_preflight_url} label="isolation-preflight.log" disabled={!item.artifacts.isolation_preflight_exists} />
           <Artifact href={item.artifacts.sources_url} label="sources/" disabled={!item.artifacts.sources_exists} />
           <Artifact href={item.artifacts.source_diff_url} label="research/source_diff.patch" disabled={!item.artifacts.source_diff_exists} />

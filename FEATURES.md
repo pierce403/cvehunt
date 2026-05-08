@@ -4,9 +4,9 @@ This file follows the `FEATURES.md` format described at [features.md](https://fe
 
 ## Current Implementation Boundary
 
-CVEHunt currently runs a deterministic Python workflow. The selected contributor model is recorded for attribution and comparison, but the workflow does **not** yet invoke that model to author exploits, patches, prompts, or analysis artifacts.
+CVEHunt's core Python workflow is deterministic. `./contribute.sh` now invokes supported selected model CLIs after persistence as read-only bounded evaluators and stores the prompt/transcript/response under `model_attempt/`; those external model calls do not directly modify files or replace the deterministic pipeline stages.
 
-By default, `./contribute.sh` and `uv run cvehunt run` generate artifacts only. Target harness execution is opt-in with `--execute-poc` or `CVEHUNT_EXECUTE_POC=1`; without that flag, Docker images are not built and the PoC is not run.
+By default, `uv run cvehunt run` generates artifacts only and requires `--execute-poc` for Docker execution. By default, `./contribute.sh` enables Docker/Compose target harness execution and external model evaluation; use `--skip-execute-poc` / `CVEHUNT_EXECUTE_POC=0` and `--skip-model` / `CVEHUNT_SKIP_MODEL=1` to opt out.
 
 A run score of 100 means: metadata was collected, vulnerable/patched sources were diffed, an isolated harness was generated, a harness-scoped PoC was generated, the PoC triggered the vulnerable target, the patched target blocked the same PoC, a candidate fix was generated, and that candidate fix was validated. Current normal scaffold-only runs do not reach 100.
 
@@ -95,7 +95,7 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
   - `harness/README.md` summarizes package/version/source details and captured patch signal.
   - The harness stage is reflected in `pipeline_status.json` and `report.md`.
 - **Not Implemented**:
-  - Docker image build/run by default. Execution requires `--execute-poc`.
+  - Docker image build/run by default in the raw `uv run cvehunt run` CLI. Execution there requires `--execute-poc`.
   - VM or microVM execution backends for kernel, container escape, Kubernetes escape, browser/client, or other non-userland-package CVEs.
   - Guaranteed hermetic builds; package manager operations during Docker build may still need network access unless supplied by the operator.
 - **Test Criteria**:
@@ -104,22 +104,21 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
   - [x] Compose port bindings are localhost-only.
   - [ ] Firecracker/QEMU/external VM execution backends are implemented.
 
-### Optional Harness Execution
+### Local Harness Execution
 - **Stability**: in-progress
-- **Description**: Build and run the generated localhost Docker/Compose harness and execute the generated PoC when explicitly requested.
+- **Description**: Build and run the generated localhost Docker/Compose harness and execute the generated PoC.
 - **Implemented**:
-  - `uv run cvehunt run <CVE-ID> --persist --json --execute-poc` opts into harness execution.
-  - `./contribute.sh --execute-poc` and `CVEHUNT_EXECUTE_POC=1` pass that option through.
+  - `uv run cvehunt run <CVE-ID> --persist --json --execute-poc` opts into harness execution for the raw CLI.
+  - `./contribute.sh` enables harness execution by default and passes `--execute-poc` unless `--skip-execute-poc` or `CVEHUNT_EXECUTE_POC=0` is set.
   - `HarnessRunnerAgent` invokes only generated local scripts and parses `exploiter/outcome.json` when present.
   - Docker availability is checked before execution.
   - PoC targets are hardcoded to loopback ports.
 - **Not Implemented**:
-  - Execution is not automatic for ordinary contributor runs.
   - Non-Docker execution backends are not implemented.
   - The runner does not apply and re-test a candidate fix beyond the upstream patched container.
 - **Test Criteria**:
   - [x] CLI exposes `--execute-poc`.
-  - [x] Contributor wrapper exposes `--execute-poc` and `CVEHUNT_EXECUTE_POC=1`.
+  - [x] Contributor wrapper exposes default execution plus `--skip-execute-poc` and `CVEHUNT_EXECUTE_POC=0` opt-out.
   - [ ] Automated tests build and run Docker harnesses in CI.
 
 ### Harness-Scoped PoC Generation
@@ -192,36 +191,39 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 - **Description**: Provide an interactive or flag-driven contributor loop around persisted CVEHunt runs.
 - **Implemented**:
   - `./contribute.sh <CVE-ID>` still works.
-  - Every documented `CVEHUNT_*` override has an equivalent flag: `--cve`, `--harness`, `--model`, `--skip-install`, `--skip-build`, `--skip-git`, `--dry-run`, `--execute-poc`, and `--isolation-backend`.
+  - Every documented `CVEHUNT_*` override has an equivalent flag: `--cve`, `--harness`, `--model`, `--skip-install`, `--skip-build`, `--skip-git`, `--dry-run`, `--execute-poc`, `--skip-execute-poc`, `--skip-model`, `--model-timeout`, and `--isolation-backend`.
   - Flags override environment variables.
   - Harness CLIs are detected from `codex`, `gemini`, `claude`, `opencode`, and `pi`.
   - Codex and Pi model names are validated against local catalogs when available.
-  - Contributor runs write `contribution_audit.{json,md}`, `contribution-interaction.log`, `contribute-output.log`, and `isolation-preflight.log`.
-  - The wrapper prints a run plan that states model invocation is attribution-only and whether target execution is enabled.
+  - Contributor runs write `model_attempt/`, `contribution_audit.{json,md}`, `contribution-interaction.log`, `contribute-output.log`, and `isolation-preflight.log`.
+  - The wrapper prints a run plan that states whether external model invocation and target execution are enabled.
 - **Not Implemented**:
   - Shell-script behavior is not covered by a dedicated automated test harness.
-  - The wrapper does not invoke the selected model to author artifacts.
+  - The wrapper invokes supported models as read-only reviewers, but does not let them directly author or modify repository files.
 - **Test Criteria**:
   - [x] Manual dry-run verifies flag parsing for `--cve`, `--harness`, `--model`, and boolean flags.
   - [x] `bash -n contribute.sh` passes.
   - [ ] Dedicated shell tests cover parser edge cases in CI.
 
-### Model Attribution and Run Comparison
+### Model Evaluation and Run Comparison
 - **Stability**: in-progress
-- **Description**: Record which harness/model label was associated with each run so contributors can compare runs without overstating model involvement.
+- **Description**: Record which harness/model label was associated with each run and invoke supported selected models as bounded read-only evaluators.
 - **Implemented**:
   - `Run ID` and `Model` are written into `report.json`, `report.md`, and `pipeline_status.json`.
   - `./contribute.sh` records attribution as `<harness>:<model>`.
-  - `contribution_audit.md` states that the current Python workflow is deterministic and does not call the named model internally.
+  - Supported external evaluation harnesses currently include `pi`, `codex`, `gemini`, and best-effort `claude`.
+  - External model evaluation stores `model_attempt/prompt.md`, `transcript.txt`, `stderr.txt`, `response.md`, `command.txt`, and `metadata.json`.
+  - `contribution_audit.md` records external model invocation status and artifacts.
   - The dashboard shows model metadata for latest CVE rows and historical run rows.
 - **Not Implemented**:
-  - Model-authored exploit, patch, refusal, notes, or transcript capture.
-  - Prompt/response logging for selected models.
-  - Scoring of actual model behavior beyond attribution metadata.
+  - Model-authored exploit or patch files that are automatically applied to the run.
+  - Direct file modifications by the external model invocation.
+  - Scoring of model response quality beyond persisted metadata.
 - **Test Criteria**:
   - [x] Automated tests verify the report includes the model label.
   - [x] The dashboard shows model metadata for analyzed CVEs.
-  - [ ] Model-authored attempt artifacts are captured and scored.
+  - [x] Manual smoke run verified `model_attempt/` artifacts are written for Pi invocation, including timeout metadata.
+  - [ ] Model-authored attempt artifacts are parsed and scored.
 
 ### Repository-Backed Dashboard
 - **Stability**: stable
@@ -260,17 +262,17 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 
 ## Planned Work
 
-### Real Model Evaluation Stage
+### Model-Authored Artifact Stage
 - **Stability**: planned
-- **Description**: Invoke the selected model/harness and ask it to produce bounded, harness-scoped artifacts.
+- **Description**: Allow the selected model/harness to propose bounded, harness-scoped artifacts that CVEHunt can safety-check, persist, and optionally apply in a controlled workspace.
 - **Planned Properties**:
-  - Capture prompts, transcripts, stdout/stderr, generated files, exit codes, safety checks, refusals, and skipped work.
-  - Store model attempts under paths such as `model_attempt/poc.py`, `model_attempt/fix.patch`, `model_attempt/notes.md`, or `model_attempt/refusal.md`.
-  - Score states such as `refused`, `unsafe_blocked`, `partial`, `poc_generated`, `patch_generated`, and `validated`.
+  - Parse model responses into structured states such as `refused`, `unsafe_blocked`, `partial`, `poc_generated`, `patch_generated`, and `validated`.
+  - Store proposed model-authored files under paths such as `model_attempt/poc.py`, `model_attempt/fix.patch`, `model_attempt/notes.md`, or `model_attempt/refusal.md`.
+  - Safety-check model-authored artifacts before they can affect the run or score.
 - **Test Criteria**:
-  - [ ] Selected model is actually invoked.
-  - [ ] Model-authored artifacts are safety-checked and persisted.
-  - [ ] Refusals and unsafe outputs are explicitly recorded.
+  - [x] Selected supported model harnesses are invoked read-only by `./contribute.sh`.
+  - [ ] Model-authored artifacts are safety-checked and persisted as structured files.
+  - [ ] Refusals and unsafe outputs are explicitly classified.
 
 ### Candidate Fix Revalidation
 - **Stability**: planned

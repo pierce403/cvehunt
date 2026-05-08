@@ -26,7 +26,7 @@ These options are open source and generally available, subject to host OS and ha
 
 ## Current Implementation
 
-The current CVEHunt implementation supports Docker/Compose execution for local harnesses when `--execute-poc` is set, or when `./contribute.sh` is run with `CVEHUNT_EXECUTE_POC=1`.
+The current CVEHunt implementation supports Docker/Compose execution for local harnesses when `uv run cvehunt run ... --execute-poc` is set. `./contribute.sh` enables this local harness execution by default; use `--skip-execute-poc` or `CVEHUNT_EXECUTE_POC=0` to generate artifacts without building/running containers.
 
 Current Docker guarantees:
 
@@ -53,6 +53,6 @@ Environment variables:
 - `CVEHUNT_ISOLATION_BACKEND=firecracker` checks for `/dev/kvm`, `firecracker`, and `jailer`, then exits because Firecracker execution is not implemented yet.
 - `CVEHUNT_ISOLATION_BACKEND=qemu` checks for `/dev/kvm` and `qemu-system-x86_64`, then exits because QEMU execution is not implemented yet.
 - `CVEHUNT_ISOLATION_BACKEND=external-vm` records that the contributor claims the run is already inside a disposable VM and still checks Docker when `CVEHUNT_EXECUTE_POC=1`.
-- `CVEHUNT_EXECUTE_POC=1` opts into building and running the local harness PoC.
+- `CVEHUNT_EXECUTE_POC=0` opts out of building and running the local harness PoC in `./contribute.sh`.
 
 Every contributor run writes `isolation-preflight.log` plus `contribution_audit.{json,md}` into the run directory so downstream reviewers can see the selected backend, detected dependencies, and whether PoC execution was requested.

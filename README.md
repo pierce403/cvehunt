@@ -1,14 +1,15 @@
 # CVEHunt
 
-CVEHunt is a defensive proof-of-concept for an agentic CVE exploitability workflow. It borrows the orchestration shape of systems like MOAK while stopping short of exploit generation and real-world attack logic.
+CVEHunt is a defensive proof-of-concept for an agentic CVE exploitability workflow. It borrows the orchestration shape of systems like MOAK while keeping exploit work scoped to authorized localhost harnesses and remediation proof.
 
 The goal is to model a repository-backed defensive workflow:
 
 1. Collect CVE context.
 2. Download supported vulnerable and patched package releases and inspect their diff.
 3. Generate an isolated harness scaffold for vulnerable and patched variants.
-4. Record what evidence was actually captured and where the pipeline stops.
-5. Judge exploitability and remediation urgency from the collected artifacts.
+4. Generate and optionally execute localhost-scoped PoC checks against the harness.
+5. Record what evidence was actually captured and where the pipeline stops.
+6. Judge exploitability and remediation urgency from the collected artifacts.
 
 ## Quick Start
 
@@ -91,6 +92,6 @@ The build reads `cves/`, emits `web/public/data/cves.json`, and exposes both the
 uv run cvehunt run CVE-2025-55182 --model codex:gpt-5.5
 ```
 
-The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, and explicit notes about unimplemented exploit and fix stages.
+The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, generated localhost PoC artifacts, and explicit notes about any unimplemented validation stages.
 
-For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs an isolation preflight (`CVEHUNT_ISOLATION_BACKEND=docker` by default), syncs missing project dependencies when prompted, runs a persisted CVEHunt workflow, writes `contribution_audit.{json,md}` plus interaction/output/isolation logs into the run directory, and rebuilds the dashboard data. Environment overrides are also available as flags, for example `./contribute.sh --cve CVE-2025-55182 --harness codex --model gpt-5.5 --dry-run`.
+For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs an isolation preflight (`CVEHUNT_ISOLATION_BACKEND=docker` by default), syncs missing project dependencies when prompted, runs a persisted CVEHunt workflow with local harness execution enabled by default, invokes supported model CLIs afterward as read-only bounded reviewers, writes `model_attempt/`, `contribution_audit.{json,md}`, and interaction/output/isolation logs into the run directory, and rebuilds the dashboard data. Environment overrides are also available as flags, for example `./contribute.sh --cve CVE-2025-55182 --harness codex --model gpt-5.5 --dry-run`.

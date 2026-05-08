@@ -160,6 +160,9 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     contribution_audit_md_path = artifact_dir / "contribution_audit.md"
     contribution_audit_json_path = artifact_dir / "contribution_audit.json"
     isolation_preflight_path = artifact_dir / "isolation-preflight.log"
+    model_attempt_metadata_path = artifact_dir / "model_attempt" / "metadata.json"
+    model_attempt_response_path = artifact_dir / "model_attempt" / "response.md"
+    model_attempt_prompt_path = artifact_dir / "model_attempt" / "prompt.md"
     report = read_json(report_path)
     pipeline_status = read_json(pipeline_status_path)
     trace = read_trace(trace_path)
@@ -196,6 +199,9 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "contribution_audit_md_url": repo_url(contribution_audit_md_path),
             "contribution_audit_json_url": repo_url(contribution_audit_json_path),
             "isolation_preflight_url": repo_url(isolation_preflight_path),
+            "model_attempt_metadata_url": repo_url(model_attempt_metadata_path),
+            "model_attempt_response_url": repo_url(model_attempt_response_path),
+            "model_attempt_prompt_url": repo_url(model_attempt_prompt_path),
             "sources_url": repo_url(artifact_dir / "sources", tree=True),
             "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
             "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
@@ -208,6 +214,9 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "contribution_audit_md_exists": contribution_audit_md_path.exists(),
             "contribution_audit_json_exists": contribution_audit_json_path.exists(),
             "isolation_preflight_exists": isolation_preflight_path.exists(),
+            "model_attempt_metadata_exists": model_attempt_metadata_path.exists(),
+            "model_attempt_response_exists": model_attempt_response_path.exists(),
+            "model_attempt_prompt_exists": model_attempt_prompt_path.exists(),
             "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
             "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
             "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),

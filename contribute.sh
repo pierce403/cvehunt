@@ -19,6 +19,9 @@ Options:
   --skip-git               Skip automatic git commit/push and PR recommendation
   --dry-run                Print commands without running them
   --execute-poc            Build/run the localhost harness PoC with --execute-poc
+  --skip-execute-poc       Generate artifacts without building/running the target harness
+  --skip-model             Skip the external model evaluation stage
+  --model-timeout SECONDS  External model evaluation timeout
   --isolation-backend NAME Target isolation preflight backend
   -h, --help               Show this help
 
@@ -30,7 +33,9 @@ Environment overrides:
   CVEHUNT_SKIP_BUILD=1  Skip npm run build after the persisted run
   CVEHUNT_SKIP_GIT=1    Skip automatic git commit/push and PR recommendation
   CVEHUNT_DRY_RUN=1     Print commands without running them
-  CVEHUNT_EXECUTE_POC=1 Build/run the localhost harness PoC with --execute-poc
+  CVEHUNT_EXECUTE_POC=0 Generate artifacts without building/running the target harness
+  CVEHUNT_SKIP_MODEL=1  Skip the external model evaluation stage
+  CVEHUNT_MODEL_TIMEOUT=600  Timeout in seconds for external model evaluation
   CVEHUNT_ISOLATION_BACKEND=docker|external-vm|firecracker|qemu
                          Target isolation preflight backend (docker is current execution backend)
 USAGE
@@ -95,6 +100,20 @@ parse_cli_args() {
         ;;
       --execute-poc)
         CVEHUNT_EXECUTE_POC=1
+        ;;
+      --skip-execute-poc|--no-execute-poc)
+        CVEHUNT_EXECUTE_POC=0
+        ;;
+      --skip-model|--no-model)
+        CVEHUNT_SKIP_MODEL=1
+        ;;
+      --model-timeout)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_MODEL_TIMEOUT="$1"
+        ;;
+      --model-timeout=*)
+        CVEHUNT_MODEL_TIMEOUT="${1#*=}"
         ;;
       --isolation-backend)
         [[ "$#" -ge 2 ]] || missing_flag_value "$1"
@@ -420,6 +439,16 @@ print_virtualization_hint() {
   echo "Host virtualization hint: unknown"
 }
 
+run_with_optional_timeout() {
+  local seconds="$1"
+  shift
+  if has_command timeout; then
+    timeout "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
 preflight_isolation_dependencies() {
   local backend="${CVEHUNT_ISOLATION_BACKEND:-docker}"
   local execute_poc="${CVEHUNT_EXECUTE_POC:-0}"
@@ -515,6 +544,307 @@ PY
   printf '%s\n' "$run_id"
 }
 
+write_model_attempt_prompt() {
+  local cve_id="$1"
+  local run_id="$2"
+  local harness="$3"
+  local model="$4"
+  local run_dir="$5"
+  local prompt_path="$6"
+
+  CVEHUNT_MODEL_PROMPT_CVE_ID="$cve_id" \
+  CVEHUNT_MODEL_PROMPT_RUN_ID="$run_id" \
+  CVEHUNT_MODEL_PROMPT_HARNESS="$harness" \
+  CVEHUNT_MODEL_PROMPT_MODEL="$model" \
+  CVEHUNT_MODEL_PROMPT_RUN_DIR="$run_dir" \
+  CVEHUNT_MODEL_PROMPT_PATH="$prompt_path" \
+  python3 <<'PY'
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+run_dir = Path(os.environ["CVEHUNT_MODEL_PROMPT_RUN_DIR"])
+prompt_path = Path(os.environ["CVEHUNT_MODEL_PROMPT_PATH"])
+cve_id = os.environ["CVEHUNT_MODEL_PROMPT_CVE_ID"]
+run_id = os.environ["CVEHUNT_MODEL_PROMPT_RUN_ID"]
+harness = os.environ["CVEHUNT_MODEL_PROMPT_HARNESS"]
+model = os.environ["CVEHUNT_MODEL_PROMPT_MODEL"]
+
+def read_excerpt(relative: str, limit: int = 6000) -> str:
+    path = run_dir / relative
+    if not path.exists() or not path.is_file():
+        return f"[missing: {relative}]"
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if len(text) > limit:
+        return text[:limit] + f"\n[truncated {len(text) - limit} chars from {relative}]"
+    return text
+
+prompt = f"""# CVEHunt bounded model evaluation
+
+You are being invoked as a real external model evaluation stage for CVEHunt.
+
+Run context:
+- CVE: {cve_id}
+- Run ID: {run_id}
+- Harness CLI: {harness}
+- Model: {model}
+- Run directory: {run_dir}
+
+Safety and scope rules:
+- Work only from the persisted run artifacts below.
+- Do not target, scan, probe, exploit, or provide instructions for real third-party systems.
+- Keep all PoC discussion scoped to the generated localhost harness targets (`127.0.0.1:4000` and `127.0.0.1:4001`).
+- Do not suggest reverse shells, bind shells, credential theft, persistence, evasion, or weaponization.
+- If the existing artifacts are insufficient, say exactly what is missing instead of inventing evidence.
+- This invocation is read-only. Do not modify repository files.
+
+Your task:
+1. Assess whether the persisted artifacts are sufficient to demonstrate exploitability in the generated harness.
+2. Assess whether the candidate fix is generated and whether it is actually validated.
+3. Identify the strongest evidence and the main gaps.
+4. If safe and bounded, propose concrete next implementation steps for CVEHunt itself.
+5. If you cannot comply safely, produce a refusal with the reason.
+
+Return Markdown with these sections:
+- `## Model Attempt Status` with one of: `validated`, `partial`, `insufficient_evidence`, `refused`, `unsafe_blocked`.
+- `## Evidence Reviewed`
+- `## Exploitability Assessment`
+- `## Remediation Assessment`
+- `## Gaps`
+- `## Safe Next Steps`
+
+## report.md
+
+```markdown
+{read_excerpt('report.md')}
+```
+
+## pipeline_status.json
+
+```json
+{read_excerpt('pipeline_status.json')}
+```
+
+## contribution_audit.md if present
+
+```markdown
+{read_excerpt('contribution_audit.md')}
+```
+
+## harness/README.md
+
+```markdown
+{read_excerpt('harness/README.md')}
+```
+
+## exploiter/README.md
+
+```markdown
+{read_excerpt('exploiter/README.md')}
+```
+
+## exploiter/poc.py
+
+```python
+{read_excerpt('exploiter/poc.py')}
+```
+
+## fix/rationale.md
+
+```markdown
+{read_excerpt('fix/rationale.md')}
+```
+"""
+prompt_path.write_text(prompt, encoding="utf-8")
+PY
+}
+
+run_model_attempt() {
+  local cve_id="$1"
+  local run_id="$2"
+  local harness="$3"
+  local model="$4"
+  local model_label="$5"
+  local run_dir="cves/$cve_id/runs/$run_id"
+  local attempt_dir="$run_dir/model_attempt"
+  local prompt_path="$attempt_dir/prompt.md"
+  local transcript_path="$attempt_dir/transcript.txt"
+  local stderr_path="$attempt_dir/stderr.txt"
+  local response_path="$attempt_dir/response.md"
+  local command_path="$attempt_dir/command.txt"
+  local metadata_path="$attempt_dir/metadata.json"
+  local timeout_seconds="${CVEHUNT_MODEL_TIMEOUT:-600}"
+  local exit_code=0
+  local status="completed"
+  local prompt_text
+
+  if [[ "${CVEHUNT_SKIP_MODEL:-0}" == "1" ]]; then
+    echo "Skipping external model evaluation because CVEHUNT_SKIP_MODEL=1."
+    return
+  fi
+
+  if [[ ! -d "$run_dir" ]]; then
+    echo "Could not invoke model; run directory missing: $run_dir" >&2
+    return 1
+  fi
+
+  mkdir -p "$attempt_dir"
+  write_model_attempt_prompt "$cve_id" "$run_id" "$harness" "$model" "$run_dir" "$prompt_path"
+  prompt_text="$(cat "$prompt_path")"
+
+  echo "Invoking external model evaluation with $model_label"
+  case "$harness" in
+    pi)
+      if ! has_command pi; then
+        status="command_missing"
+        exit_code=127
+        echo "pi command missing" > "$stderr_path"
+      else
+        printf 'pi -p --no-tools --no-session --model %q < prompt.md\n' "$model" > "$command_path"
+        set +e
+        run_with_optional_timeout "$timeout_seconds" pi -p --no-tools --no-session --model "$model" "$prompt_text" > "$transcript_path" 2> "$stderr_path"
+        exit_code=$?
+        set -e
+        cp "$transcript_path" "$response_path"
+      fi
+      ;;
+    codex)
+      if ! has_command codex; then
+        status="command_missing"
+        exit_code=127
+        echo "codex command missing" > "$stderr_path"
+      else
+        printf 'codex exec --model %q --sandbox read-only --ask-for-approval never --cd %q --output-last-message response.md - < prompt.md\n' "$model" "$run_dir" > "$command_path"
+        set +e
+        run_with_optional_timeout "$timeout_seconds" codex exec --model "$model" --sandbox read-only --ask-for-approval never --cd "$run_dir" --output-last-message "$PWD/$response_path" - < "$prompt_path" > "$transcript_path" 2> "$stderr_path"
+        exit_code=$?
+        set -e
+        if [[ ! -s "$response_path" ]]; then
+          cp "$transcript_path" "$response_path"
+        fi
+      fi
+      ;;
+    gemini)
+      if ! has_command gemini; then
+        status="command_missing"
+        exit_code=127
+        echo "gemini command missing" > "$stderr_path"
+      else
+        printf 'gemini --model %q --approval-mode plan --prompt <prompt>\n' "$model" > "$command_path"
+        set +e
+        run_with_optional_timeout "$timeout_seconds" gemini --model "$model" --approval-mode plan --prompt "$prompt_text" > "$transcript_path" 2> "$stderr_path"
+        exit_code=$?
+        set -e
+        cp "$transcript_path" "$response_path"
+      fi
+      ;;
+    claude)
+      if ! has_command claude; then
+        status="command_missing"
+        exit_code=127
+        echo "claude command missing" > "$stderr_path"
+      else
+        printf 'claude --model %q --print <prompt>\n' "$model" > "$command_path"
+        set +e
+        run_with_optional_timeout "$timeout_seconds" claude --model "$model" --print "$prompt_text" > "$transcript_path" 2> "$stderr_path"
+        exit_code=$?
+        set -e
+        cp "$transcript_path" "$response_path"
+      fi
+      ;;
+    *)
+      status="not_supported"
+      exit_code=2
+      echo "External model evaluation is not implemented for harness '$harness'." > "$stderr_path"
+      printf 'unsupported harness: %s\n' "$harness" > "$command_path"
+      printf 'External model evaluation is not implemented for harness `%s`.\n' "$harness" > "$response_path"
+      : > "$transcript_path"
+      ;;
+  esac
+
+  if [[ -s "$response_path" ]]; then
+    set +e
+    python3 - "$response_path" "$transcript_path" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+paths = [Path(arg) for arg in sys.argv[1:]]
+forbidden = ["reverse shell", "bind shell", "weaponize"]
+found: set[str] = set()
+for path in paths:
+    if not path.exists():
+        continue
+    text = path.read_text(encoding="utf-8", errors="replace")
+    found.update(item for item in forbidden if item in text.lower())
+if found:
+    notice = (
+        "# Model response blocked\n\n"
+        "The external model output contained content outside CVEHunt's safety boundary "
+        "and was redacted before persistence. Matched phrase(s): "
+        + ", ".join(sorted(found))
+        + "\n"
+    )
+    for path in paths:
+        if path.exists():
+            path.write_text(notice, encoding="utf-8")
+    raise SystemExit(10)
+PY
+    safety_status=$?
+    set -e
+    if [[ "$safety_status" -eq 10 ]]; then
+      status="unsafe_blocked"
+    fi
+  fi
+
+  if [[ "$exit_code" -eq 124 ]]; then
+    status="timeout"
+  elif [[ "$exit_code" -ne 0 && "$status" == "completed" ]]; then
+    status="failed"
+  fi
+
+  CVEHUNT_MODEL_ATTEMPT_METADATA="$metadata_path" \
+  CVEHUNT_MODEL_ATTEMPT_STATUS="$status" \
+  CVEHUNT_MODEL_ATTEMPT_EXIT_CODE="$exit_code" \
+  CVEHUNT_MODEL_ATTEMPT_HARNESS="$harness" \
+  CVEHUNT_MODEL_ATTEMPT_MODEL="$model" \
+  CVEHUNT_MODEL_ATTEMPT_MODEL_LABEL="$model_label" \
+  CVEHUNT_MODEL_ATTEMPT_TIMEOUT="$timeout_seconds" \
+  python3 <<'PY'
+from __future__ import annotations
+
+import json
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+
+path = Path(os.environ["CVEHUNT_MODEL_ATTEMPT_METADATA"])
+metadata = {
+    "schema_version": 1,
+    "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    "status": os.environ["CVEHUNT_MODEL_ATTEMPT_STATUS"],
+    "exit_code": int(os.environ["CVEHUNT_MODEL_ATTEMPT_EXIT_CODE"]),
+    "harness": os.environ["CVEHUNT_MODEL_ATTEMPT_HARNESS"],
+    "model": os.environ["CVEHUNT_MODEL_ATTEMPT_MODEL"],
+    "model_label": os.environ["CVEHUNT_MODEL_ATTEMPT_MODEL_LABEL"],
+    "timeout_seconds": int(os.environ["CVEHUNT_MODEL_ATTEMPT_TIMEOUT"]),
+    "mode": "read_only_bounded_evaluation",
+    "artifacts": {
+        "prompt": "model_attempt/prompt.md",
+        "transcript": "model_attempt/transcript.txt",
+        "stderr": "model_attempt/stderr.txt",
+        "response": "model_attempt/response.md",
+        "command": "model_attempt/command.txt",
+    },
+}
+path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+PY
+
+  echo "Model evaluation status: $status (exit code $exit_code); artifacts in $attempt_dir"
+}
+
 write_contribution_audit() {
   local cve_id="$1"
   local run_id="$2"
@@ -562,8 +892,10 @@ isolation_backend = os.environ.get("CVEHUNT_AUDIT_ISOLATION_BACKEND", "docker")
 
 pipeline_status_path = run_dir / "pipeline_status.json"
 report_path = run_dir / "report.json"
+model_attempt_path = run_dir / "model_attempt" / "metadata.json"
 pipeline_status = json.loads(pipeline_status_path.read_text(encoding="utf-8")) if pipeline_status_path.exists() else {}
 report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+model_attempt = json.loads(model_attempt_path.read_text(encoding="utf-8")) if model_attempt_path.exists() else None
 
 validation_source = {
     "codex": "codex debug models",
@@ -597,17 +929,23 @@ audit = {
     "model_attribution": {
         "state": validation_state,
         "validation_source": validation_source,
-        "meaning": "This label records contributor attribution for the run. The current CVEHunt workflow is deterministic Python and does not call the named model as an internal decision-making API.",
+        "meaning": "This label records the harness/model selected for the run. The core Python pipeline remains deterministic, but ./contribute.sh now invokes supported harness CLIs after persistence as a read-only bounded model evaluation stage.",
+    },
+    "model_invocation": model_attempt or {
+        "status": "skipped_or_missing",
+        "mode": "read_only_bounded_evaluation",
+        "artifacts": {},
     },
     "interaction_logging": {
         "captured": [
             "./contribute.sh terminal output and prompts in contribution-interaction.log",
             "CVEHunt JSON stdout in contribute-output.log",
-            "selected harness, model label, and validation source in this audit file",
+            "external model prompt/transcript/response in model_attempt/ when supported and not skipped",
+            "selected harness, model label, validation source, and model invocation status in this audit file",
             "pipeline phase events in trace.jsonl",
         ],
         "not_captured": [
-            "Private external agent transcripts, unless the harness CLI itself writes them outside this repository",
+            "Private external agent transcripts outside model_attempt/ if the harness CLI writes additional session files elsewhere",
             "Raw typed prompt answers beyond the selected harness/model values recorded here",
         ],
     },
@@ -623,7 +961,8 @@ audit = {
             "Generate localhost-only vulnerable/patched harness scaffolding",
             "Generate harness-scoped PoC artifacts for supported vulnerability classes",
             "Promote the upstream vulnerable-to-patched diff as a candidate remediation artifact",
-            "Run the harness PoC only when explicitly invoked with CVEHUNT_EXECUTE_POC=1 / --execute-poc",
+            "Run the harness PoC by default in ./contribute.sh unless CVEHUNT_EXECUTE_POC=0 / --skip-execute-poc is set",
+            "Invoke supported selected model harnesses as read-only bounded reviewers after artifacts are persisted",
         ],
         "refuses": [
             "Target real third-party systems",
@@ -633,7 +972,8 @@ audit = {
         ],
         "not_yet_implemented": [
             "Rebuild a locally patched source tree from fix/candidate.patch and re-run the PoC against it",
-            "Use the named model as an internal autonomous planner/evaluator inside the Python workflow",
+            "Use the named model as an internal autonomous planner inside the Python workflow",
+            "Allow the external model invocation to modify files directly",
             "Guarantee full exploitability proof when the upstream package exposes no probeable local surface",
         ],
         "requested_execute_poc": execute_poc,
@@ -657,6 +997,7 @@ audit = {
         "pipeline_status": "pipeline_status.json",
         "report": "report.json",
         "human_report": "report.md",
+        "model_attempt": "model_attempt/metadata.json",
     },
 }
 
@@ -669,6 +1010,7 @@ lines = [
     f"Harness: {harness}",
     f"Model label: {model_label}",
     f"Model validation: {validation_state} via {validation_source}",
+    f"Model invocation: {audit['model_invocation'].get('status')}",
     f"Isolation backend: {isolation_backend}",
     "",
     "## Attribution Boundary",
@@ -680,6 +1022,15 @@ lines = [
 ]
 lines.extend(f"- Captured: {item}" for item in audit["interaction_logging"]["captured"])
 lines.extend(f"- Not captured: {item}" for item in audit["interaction_logging"]["not_captured"])
+lines.extend([
+    "",
+    "## Model Invocation",
+    "",
+    f"- Status: {audit['model_invocation'].get('status')}",
+    f"- Mode: {audit['model_invocation'].get('mode')}",
+])
+for label, path in (audit["model_invocation"].get("artifacts") or {}).items():
+    lines.append(f"- {label}: {path}")
 lines.extend(["", "## Isolation", "", f"- Selected backend: {isolation_backend}", "- Preflight log: isolation-preflight.log", f"- Policy: {audit['isolation']['policy']}"])
 lines.extend(["", "## Pipeline Will Do", ""])
 lines.extend(f"- {item}" for item in audit["pipeline_boundaries"]["will_do"])
@@ -831,13 +1182,21 @@ main() {
 
   validate_model_for_harness "$harness" "$model"
 
+  if [[ -z "${CVEHUNT_EXECUTE_POC+x}" ]]; then
+    CVEHUNT_EXECUTE_POC=1
+  fi
+
   local model_label="$harness:$model"
   export CVEHUNT_MODEL="$model_label"
   export CVEHUNT_HARNESS="$harness"
 
   echo "Running CVEHunt for $cve_id with $model_label"
   echo "Run plan:"
-  echo "  Model invocation: attribution only; the Python workflow does not call $harness yet."
+  if [[ "${CVEHUNT_SKIP_MODEL:-0}" == "1" ]]; then
+    echo "  Model invocation: disabled by CVEHUNT_SKIP_MODEL=1 / --skip-model."
+  else
+    echo "  Model invocation: enabled as a read-only bounded external evaluation after artifact persistence."
+  fi
   if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
     echo "  Target execution: enabled; will pass --execute-poc to build/run the localhost harness."
   else
@@ -854,6 +1213,9 @@ main() {
       printf 'Would run: uv run cvehunt run %q --persist --json --model %q --execute-poc\n' "$cve_id" "$model_label"
     else
       printf 'Would run: uv run cvehunt run %q --persist --json --model %q\n' "$cve_id" "$model_label"
+    fi
+    if [[ "${CVEHUNT_SKIP_MODEL:-0}" != "1" ]]; then
+      printf 'Would invoke external model evaluation via %q using model %q\n' "$harness" "$model"
     fi
     if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
       echo "Would run: npm run build"
@@ -880,6 +1242,7 @@ main() {
   printf '\n'
   "${run_command[@]}" | tee "$run_json_output"
   run_id="$(extract_run_id "$run_json_output" "$cve_id")"
+  run_model_attempt "$cve_id" "$run_id" "$harness" "$model" "$model_label"
   write_contribution_audit "$cve_id" "$run_id" "$harness" "$model" "$model_label" "$run_json_output" "$contribution_log" "$isolation_preflight_log"
 
   if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
