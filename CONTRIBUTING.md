@@ -43,7 +43,7 @@ If you are changing the pipeline, also run at least one CVE end to end:
 uv run cvehunt run CVE-2025-55182 --persist --json --model <model-label>
 ```
 
-Use a real model label, for example `gpt-5.5-cyber`, `opus-4.7-cyber`, or another model you are authorized to evaluate. The point is to make the run auditable.
+Use a real model label, for example `codex:gpt-5.5`, `pi:bastet/AEON-7/Gemma-4-31B-it-DECKARD-HERETIC-Uncensored-NVFP4`, or another model you are authorized to evaluate. The point is to make the run auditable.
 
 You can also use the interactive wrapper:
 
@@ -51,7 +51,7 @@ You can also use the interactive wrapper:
 ./contribute.sh CVE-2025-55182
 ```
 
-The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), asks for the model, records runs as `<harness>:<model>`, syncs missing Python or Node project dependencies when prompted, runs `uv run cvehunt run ... --persist --json`, and rebuilds the public dashboard with `npm run build`.
+The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, records runs as `<harness>:<model>`, syncs missing Python or Node project dependencies when prompted, runs `uv run cvehunt run ... --persist --json`, and rebuilds the public dashboard with `npm run build`.
 
 ## Model-Backed Runs
 
@@ -61,6 +61,7 @@ When you run the workflow with a model:
 - when using `./contribute.sh`, expect model attribution in the form `<harness>:<model>`
 - review the resulting workdir under `cves/<CVE-ID>/runs/<RUN-ID>/`
 - confirm the run contains the expected artifacts before committing anything
+- do not invent branded model names; use the exact provider/harness slug shown by the CLI when available
 
 Typical run artifacts include:
 

@@ -13,7 +13,7 @@ Interactive contributor runner for CVEHunt.
 Environment overrides:
   CVEHUNT_CVE       CVE to run when no positional CVE is provided
   CVEHUNT_HARNESS   Agent harness label to record, for example codex or gemini
-  CVEHUNT_MODEL     Model name to record
+  CVEHUNT_MODEL     Model name to record; use the harness' real model slug
   CVEHUNT_SKIP_INSTALL=1  Skip uv/npm dependency installation checks
   CVEHUNT_SKIP_BUILD=1  Skip npm run build after the persisted run
   CVEHUNT_SKIP_GIT=1    Skip automatic git commit/push and PR recommendation
@@ -114,14 +114,114 @@ select_harness() {
   printf '%s\n' "$selected"
 }
 
+codex_default_model() {
+  local discovered
+  discovered="$(codex debug models 2>/dev/null | python3 -c 'import json, sys
+preferred = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5.4-mini"]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+slugs = [model.get("slug", "") for model in data.get("models", [])]
+for candidate in preferred:
+    if candidate in slugs:
+        print(candidate)
+        sys.exit(0)
+if slugs:
+    print(slugs[0])
+' 2>/dev/null || true)"
+  if [[ -n "$discovered" ]]; then
+    printf '%s\n' "$discovered"
+  else
+    printf '%s\n' "gpt-5.5"
+  fi
+}
+
+codex_model_is_available() {
+  local model="$1"
+  if ! has_command codex || ! has_command python3; then
+    return 2
+  fi
+  codex debug models 2>/dev/null | python3 -c 'import json, sys
+wanted = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+for model in data.get("models", []):
+    if model.get("slug") == wanted or model.get("display_name") == wanted:
+        sys.exit(0)
+sys.exit(1)
+' "$model"
+}
+
+list_codex_models() {
+  if ! has_command codex || ! has_command python3; then
+    return
+  fi
+  codex debug models 2>/dev/null | python3 -c 'import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+print(", ".join(model.get("slug", "") for model in data.get("models", []) if model.get("slug")))
+' 2>/dev/null || true
+}
+
+pi_model_is_available() {
+  local model="$1"
+  local search="$model"
+  local output
+  if ! has_command pi; then
+    return 2
+  fi
+  case "$search" in
+    */*) search="${search#*/}" ;;
+  esac
+  output="$(pi --list-models "$search" 2>&1 || true)"
+  printf '%s\n' "$output" | awk -v wanted="$search" 'NR > 1 && $2 == wanted { found = 1 } END { exit found ? 0 : 1 }'
+}
+
+validate_model_for_harness() {
+  local harness="$1"
+  local model="$2"
+  local available
+
+  case "$harness" in
+    codex)
+      if codex_model_is_available "$model"; then
+        return
+      fi
+      available="$(list_codex_models)"
+      echo "Unsupported Codex model: $model" >&2
+      if [[ -n "$available" ]]; then
+        echo "Available Codex model slugs: $available" >&2
+      fi
+      echo "Pick a real Codex slug from the local catalog instead of recording an unverifiable label." >&2
+      exit 2
+      ;;
+    pi)
+      if pi_model_is_available "$model"; then
+        return
+      fi
+      echo "Unsupported Pi model: $model" >&2
+      echo "Run 'pi --list-models' or open /model and use an exact listed provider/model label." >&2
+      exit 2
+      ;;
+    *)
+      echo "Warning: no local model catalog validator for $harness; recording '$model' as user-supplied attribution." >&2
+      ;;
+  esac
+}
+
 default_model_for_harness() {
   case "$1" in
-    codex) printf '%s\n' "gpt-5.5-cyber" ;;
+    codex) codex_default_model ;;
     gemini) printf '%s\n' "gemini-2.5-pro" ;;
-    claude) printf '%s\n' "opus-4.7-cyber" ;;
-    opencode) printf '%s\n' "opencode-default" ;;
-    pi) printf '%s\n' "pi-default" ;;
-    *) printf '%s\n' "unspecified" ;;
+    claude) printf '%s\n' "" ;;
+    opencode) printf '%s\n' "" ;;
+    pi) printf '%s\n' "bastet/AEON-7/Gemma-4-31B-it-DECKARD-HERETIC-Uncensored-NVFP4" ;;
+    *) printf '%s\n' "" ;;
   esac
 }
 
@@ -303,6 +403,12 @@ main() {
     echo "Model is required." >&2
     exit 2
   fi
+
+  case "$model" in
+    "$harness":*) model="${model#*:}" ;;
+  esac
+
+  validate_model_for_harness "$harness" "$model"
 
   local model_label="$harness:$model"
   export CVEHUNT_MODEL="$model_label"

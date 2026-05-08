@@ -85,7 +85,7 @@
       "report": {
         "run": {
           "run_id": "2026-05-08T03-59-30Z",
-          "model": "codex:gpt-5.5-cyber"
+          "model": "codex:gpt-5.5"
         },
         "cve": {
           "cve_id": "CVE-2025-55182",
@@ -446,7 +446,7 @@
       "pipeline_status": {
         "cve_id": "CVE-2025-55182",
         "run_id": "2026-05-08T03-59-30Z",
-        "model": "codex:gpt-5.5-cyber",
+        "model": "codex:gpt-5.5",
         "overall_status": "defensive_signal_observed",
         "confidence": 0.92,
         "furthest_completed_stage": "Judge",
@@ -630,12 +630,12 @@
         "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/research/source_diff.patch",
         "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/harness/README.md",
         "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/exploiter/README.md",
-        "sources_exists": true,
+        "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
         "report_md_exists": true,
         "pipeline_status_exists": true,
-        "source_diff_exists": true,
+        "source_diff_exists": false,
         "harness_readme_exists": true,
         "exploiter_stub_exists": true
       }
