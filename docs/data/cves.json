@@ -84,8 +84,8 @@
       },
       "report": {
         "run": {
-          "run_id": "2026-05-07T03-19-14Z",
-          "model": "claude:opus-4.7-cyber"
+          "run_id": "2026-05-08T03-59-30Z",
+          "model": "codex:gpt-5.5-cyber"
         },
         "cve": {
           "cve_id": "CVE-2025-55182",
@@ -398,55 +398,55 @@
           "message": "Collected metadata for CVE-2025-55182",
           "artifact": "cve.json",
           "status": "completed",
-          "timestamp": "2026-05-07T03:19:12+00:00"
+          "timestamp": "2026-05-08T03:59:29+00:00"
         },
         {
           "phase": "Researcher",
           "message": "Classified as unsafe deserialization; surface: request parsing and server function argument materialization",
           "artifact": "research/source_diff.patch",
           "status": "completed",
-          "timestamp": "2026-05-07T03:19:14+00:00"
+          "timestamp": "2026-05-08T03:59:30+00:00"
         },
         {
           "phase": "Harness Builder",
           "message": "built with 2 Dockerfile(s) and 4 validation check(s)",
           "artifact": "harness/README.md",
           "status": "completed",
-          "timestamp": "2026-05-07T03:19:14+00:00"
+          "timestamp": "2026-05-08T03:59:30+00:00"
         },
         {
           "phase": "Exploiter",
           "message": "Generated a localhost-scoped PoC and orchestration runner for the unsafe deserialization class.",
           "artifact": "exploiter/README.md",
           "status": "scaffolded",
-          "timestamp": "2026-05-07T03:19:14+00:00"
+          "timestamp": "2026-05-08T03:59:30+00:00"
         },
         {
           "phase": "Fix Developer",
           "message": "Candidate patch promoted from the upstream vulnerable\u2192patched diff.",
           "artifact": "fix/candidate.patch",
           "status": "generated",
-          "timestamp": "2026-05-07T03:19:14+00:00"
+          "timestamp": "2026-05-08T03:59:30+00:00"
         },
         {
           "phase": "Validator",
           "message": "Collected 6 passing evidence item(s) out of 6",
           "artifact": null,
           "status": "completed",
-          "timestamp": "2026-05-07T03:19:14+00:00"
+          "timestamp": "2026-05-08T03:59:30+00:00"
         },
         {
           "phase": "Judge",
           "message": "Assigned defensive_signal_observed with 0.92 confidence",
           "artifact": "report.json",
           "status": "completed",
-          "timestamp": "2026-05-07T03:19:14+00:00"
+          "timestamp": "2026-05-08T03:59:30+00:00"
         }
       ],
       "pipeline_status": {
         "cve_id": "CVE-2025-55182",
-        "run_id": "2026-05-07T03-19-14Z",
-        "model": "claude:opus-4.7-cyber",
+        "run_id": "2026-05-08T03-59-30Z",
+        "model": "codex:gpt-5.5-cyber",
         "overall_status": "defensive_signal_observed",
         "confidence": 0.92,
         "furthest_completed_stage": "Judge",
@@ -617,19 +617,19 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2025-55182",
-        "latest_run": "cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z",
+        "latest_run": "cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z",
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182",
-        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z",
-        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z",
+        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z",
+        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/report.md",
-        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/pipeline_status.json",
-        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/sources",
-        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/research/source_diff.patch",
-        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/harness/README.md",
-        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-07T03-19-14Z/exploiter/README.md",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/report.md",
+        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/pipeline_status.json",
+        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/sources",
+        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/research/source_diff.patch",
+        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/harness/README.md",
+        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2025-55182/runs/2026-05-08T03-59-30Z/exploiter/README.md",
         "sources_exists": true,
         "trace_exists": true,
         "report_exists": true,
@@ -663,8 +663,8 @@
       },
       "report": {
         "run": {
-          "run_id": "2026-04-29T20-09-53Z",
-          "model": "test-cyberclaude"
+          "run_id": "2026-05-07T07-22-47Z",
+          "model": "unspecified"
         },
         "cve": {
           "cve_id": "CVE-2026-42208",
@@ -1040,6 +1040,13 @@
           "helper_scripts": [
             "harness/build-images.sh",
             "harness/docker-compose.yml",
+            "harness/config.yaml",
+            "harness/db-init.sql",
+            "harness/shim/vulnerable/app.py",
+            "harness/shim/patched/app.py",
+            "harness/shim/vulnerable/Dockerfile",
+            "harness/shim/patched/Dockerfile",
+            "harness/shim/README.md",
             "harness/README.md"
           ],
           "notes": [
@@ -1049,13 +1056,34 @@
         },
         "exploiter": {
           "implemented": true,
-          "status": "scaffolded",
-          "message": "Generated a localhost-scoped PoC and orchestration runner for the sql injection class.",
+          "status": "executed",
+          "message": "Harness PoC was blocked by the patched container, but the vulnerable container did not exhibit the expected signal.",
           "artifact": "exploiter/README.md",
-          "next_step": "Run `bash exploiter/run-poc.sh` from the run directory to execute against the harness.",
+          "next_step": "Review exploiter/outcome.json and exploiter/logs/ for raw evidence.",
           "poc_path": "exploiter/poc.py",
           "runner_path": "exploiter/run-poc.sh",
-          "outcomes": []
+          "outcomes": [
+            {
+              "variant": "vulnerable",
+              "triggered": false,
+              "detail": "no auth-bypass response observed against probed paths"
+            },
+            {
+              "variant": "patched",
+              "triggered": false,
+              "detail": "no auth-bypass response observed against probed paths"
+            },
+            {
+              "variant": "shim_vulnerable",
+              "triggered": true,
+              "detail": "/verify returned 200 with auth-shaped body for payload \"Bearer ' OR 1=1-- \""
+            },
+            {
+              "variant": "shim_patched",
+              "triggered": false,
+              "detail": "no auth-bypass response observed against probed paths"
+            }
+          ]
         },
         "fix": {
           "status": "generated",
@@ -1148,6 +1176,34 @@
             "artifact": "exploiter/README.md"
           },
           {
+            "check_name": "harness poc triggered vulnerable container",
+            "vulnerable_signal": "no auth-bypass response observed against probed paths",
+            "patched_signal": "no auth-bypass response observed against probed paths",
+            "passed": false,
+            "artifact": "exploiter/outcome.json"
+          },
+          {
+            "check_name": "harness poc blocked by patched container",
+            "vulnerable_signal": "no auth-bypass response observed against probed paths",
+            "patched_signal": "no auth-bypass response observed against probed paths",
+            "passed": true,
+            "artifact": "exploiter/outcome.json"
+          },
+          {
+            "check_name": "harness shim triggered vulnerable demo surface",
+            "vulnerable_signal": "/verify returned 200 with auth-shaped body for payload \"Bearer ' OR 1=1-- \"",
+            "patched_signal": "no auth-bypass response observed against probed paths",
+            "passed": true,
+            "artifact": "exploiter/outcome.json"
+          },
+          {
+            "check_name": "harness shim blocked by patched demo surface",
+            "vulnerable_signal": "/verify returned 200 with auth-shaped body for payload \"Bearer ' OR 1=1-- \"",
+            "patched_signal": "no auth-bypass response observed against probed paths",
+            "passed": true,
+            "artifact": "exploiter/outcome.json"
+          },
+          {
             "check_name": "candidate fix promoted",
             "vulnerable_signal": "fix/candidate.patch",
             "patched_signal": "fix/rationale.md",
@@ -1158,7 +1214,7 @@
         "judgement": {
           "status": "defensive_signal_observed",
           "confidence": 0.92,
-          "rationale": "Downloaded vulnerable and patched pypi releases, captured a real source diff, and generated an isolated harness scaffold. The strongest observed patch signal was: ? observed in litellm/proxy/guardrails/guardrail_hooks/litellm_content_filter/guardrail_benchmarks/results/insults_cf.json (3009 additions, 0 deletions). A localhost-scoped PoC and orchestration runner were emitted for the harness. A candidate fix was promoted from the upstream diff.",
+          "rationale": "Downloaded vulnerable and patched pypi releases, captured a real source diff, and generated an isolated harness scaffold. The strongest observed patch signal was: ? observed in litellm/proxy/guardrails/guardrail_hooks/litellm_content_filter/guardrail_benchmarks/results/insults_cf.json (3009 additions, 0 deletions). A localhost-scoped PoC and orchestration runner were emitted for the harness. A candidate fix was promoted from the upstream diff. The PoC ran but neither upstream container exhibited the vulnerability class through the probed paths. The harness shim demonstrated the vulnerability class deterministically (vulnerable variant triggered, patched variant blocked) on the dedicated demo surface.",
           "remediation_notes": [
             "Pin deployments to litellm 1.83.7 as a minimum floor.",
             "Review the generated source diff and carry the same guard conditions into downstream forks.",
@@ -1177,55 +1233,55 @@
           "message": "Collected metadata for CVE-2026-42208",
           "artifact": "cve.json",
           "status": "completed",
-          "timestamp": "2026-04-29T20:09:47+00:00"
+          "timestamp": "2026-05-07T07:21:50+00:00"
         },
         {
           "phase": "Researcher",
           "message": "Classified as sql injection; surface: authentication and proxy API key verification query construction",
           "artifact": "research/source_diff.patch",
           "status": "completed",
-          "timestamp": "2026-04-29T20:09:53+00:00"
+          "timestamp": "2026-05-07T07:22:00+00:00"
         },
         {
           "phase": "Harness Builder",
           "message": "built with 2 Dockerfile(s) and 4 validation check(s)",
           "artifact": "harness/README.md",
           "status": "completed",
-          "timestamp": "2026-04-29T20:09:53+00:00"
+          "timestamp": "2026-05-07T07:22:00+00:00"
         },
         {
           "phase": "Exploiter",
-          "message": "Generated a localhost-scoped PoC and orchestration runner for the sql injection class.",
+          "message": "Harness PoC was blocked by the patched container, but the vulnerable container did not exhibit the expected signal.",
           "artifact": "exploiter/README.md",
-          "status": "scaffolded",
-          "timestamp": "2026-04-29T20:09:53+00:00"
+          "status": "executed",
+          "timestamp": "2026-05-07T07:22:47+00:00"
         },
         {
           "phase": "Fix Developer",
           "message": "Candidate patch promoted from the upstream vulnerable\u2192patched diff.",
           "artifact": "fix/candidate.patch",
           "status": "generated",
-          "timestamp": "2026-04-29T20:09:53+00:00"
+          "timestamp": "2026-05-07T07:22:47+00:00"
         },
         {
           "phase": "Validator",
-          "message": "Collected 6 passing evidence item(s) out of 6",
+          "message": "Collected 9 passing evidence item(s) out of 10",
           "artifact": null,
           "status": "completed",
-          "timestamp": "2026-04-29T20:09:53+00:00"
+          "timestamp": "2026-05-07T07:22:47+00:00"
         },
         {
           "phase": "Judge",
           "message": "Assigned defensive_signal_observed with 0.92 confidence",
           "artifact": "report.json",
           "status": "completed",
-          "timestamp": "2026-04-29T20:09:53+00:00"
+          "timestamp": "2026-05-07T07:22:47+00:00"
         }
       ],
       "pipeline_status": {
         "cve_id": "CVE-2026-42208",
-        "run_id": "2026-04-29T20-09-53Z",
-        "model": "test-cyberclaude",
+        "run_id": "2026-05-07T07-22-47Z",
+        "model": "unspecified",
         "overall_status": "defensive_signal_observed",
         "confidence": 0.92,
         "furthest_completed_stage": "Judge",
@@ -1236,7 +1292,7 @@
         "notes": [
           "Downloaded the published vulnerable and patched package releases and captured a local diff.",
           "Generated Dockerfiles and helper scripts for offline vulnerable/patched harness builds.",
-          "Generated a localhost-scoped PoC and orchestration runner for the sql injection class.",
+          "Harness PoC was blocked by the patched container, but the vulnerable container did not exhibit the expected signal.",
           "Candidate patch promoted from the upstream vulnerable\u2192patched diff."
         ],
         "stages": [
@@ -1272,8 +1328,8 @@
             "goal": "Develop a harness-scoped proof-of-concept.",
             "implemented": true,
             "reached": true,
-            "status": "scaffolded",
-            "message": "Generated a localhost-scoped PoC and orchestration runner for the sql injection class.",
+            "status": "executed",
+            "message": "Harness PoC was blocked by the patched container, but the vulnerable container did not exhibit the expected signal.",
             "artifact": "exploiter/README.md"
           },
           {
@@ -1291,7 +1347,7 @@
             "implemented": true,
             "reached": true,
             "status": "completed",
-            "message": "Collected 6 passing evidence item(s) out of 6",
+            "message": "Collected 9 passing evidence item(s) out of 10",
             "artifact": null
           },
           {
@@ -1357,8 +1413,8 @@
             "goal": "Develop a harness-scoped proof-of-concept.",
             "implemented": true,
             "reached": true,
-            "status": "scaffolded",
-            "message": "Generated a localhost-scoped PoC and orchestration runner for the sql injection class.",
+            "status": "executed",
+            "message": "Harness PoC was blocked by the patched container, but the vulnerable container did not exhibit the expected signal.",
             "artifact": "exploiter/README.md"
           },
           {
@@ -1376,7 +1432,7 @@
             "implemented": true,
             "reached": true,
             "status": "completed",
-            "message": "Collected 6 passing evidence item(s) out of 6",
+            "message": "Collected 9 passing evidence item(s) out of 10",
             "artifact": null
           },
           {
@@ -1396,19 +1452,19 @@
       },
       "artifacts": {
         "workdir": "cves/CVE-2026-42208",
-        "latest_run": "cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z",
+        "latest_run": "cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z",
         "workdir_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208",
-        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z",
-        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z",
+        "latest_run_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z",
+        "artifact_blob_prefix": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z",
         "cve_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/cve.json",
-        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/trace.jsonl",
-        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/report.json",
-        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/report.md",
-        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/pipeline_status.json",
-        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/sources",
-        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/research/source_diff.patch",
-        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/harness/README.md",
-        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-04-29T20-09-53Z/exploiter/README.md",
+        "trace_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/trace.jsonl",
+        "report_json_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/report.json",
+        "report_md_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/report.md",
+        "pipeline_status_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/pipeline_status.json",
+        "sources_url": "https://github.com/pierce403/cvehunt/tree/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/sources",
+        "source_diff_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/research/source_diff.patch",
+        "harness_readme_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/harness/README.md",
+        "exploiter_stub_url": "https://github.com/pierce403/cvehunt/blob/main/cves/CVE-2026-42208/runs/2026-05-07T07-22-47Z/exploiter/README.md",
         "sources_exists": false,
         "trace_exists": true,
         "report_exists": true,
