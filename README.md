@@ -91,4 +91,4 @@ uv run cvehunt run CVE-2025-55182 --model codex:gpt-5.5
 
 The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, and explicit notes about unimplemented exploit and fix stages.
 
-For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, syncs missing project dependencies when prompted, runs a persisted CVEHunt workflow, and rebuilds the dashboard data.
+For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, syncs missing project dependencies when prompted, runs a persisted CVEHunt workflow, writes `contribution_audit.{json,md}` plus interaction/output logs into the run directory, and rebuilds the dashboard data.

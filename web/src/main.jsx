@@ -321,6 +321,7 @@ function InlineRunDetails({ item }) {
           <h2>Artifacts</h2>
           <div className="artifactGrid">
             <Artifact href={item.artifacts.report_md_url} label="report.md" disabled={!item.artifacts.report_md_exists} />
+            <Artifact href={item.artifacts.contribution_audit_md_url} label="contribution_audit.md" disabled={!item.artifacts.contribution_audit_md_exists} />
             <Artifact href={item.artifacts.pipeline_status_url} label="pipeline_status.json" disabled={!item.artifacts.pipeline_status_exists} />
             <Artifact href={item.artifacts.trace_url} label="trace.jsonl" disabled={!item.artifacts.trace_exists} />
             <Artifact href={item.artifacts.source_diff_url} label="source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
@@ -530,6 +531,8 @@ function Detail({ item }) {
           <Artifact href={item.artifacts.pipeline_status_url} label="pipeline_status.json" disabled={!item.artifacts.pipeline_status_exists} />
           <Artifact href={item.artifacts.report_json_url} label="report.json" disabled={!item.artifacts.report_exists} />
           <Artifact href={item.artifacts.report_md_url} label="report.md" disabled={!item.artifacts.report_md_exists} />
+          <Artifact href={item.artifacts.contribution_audit_md_url} label="contribution_audit.md" disabled={!item.artifacts.contribution_audit_md_exists} />
+          <Artifact href={item.artifacts.contribution_audit_json_url} label="contribution_audit.json" disabled={!item.artifacts.contribution_audit_json_exists} />
           <Artifact href={item.artifacts.sources_url} label="sources/" disabled={!item.artifacts.sources_exists} />
           <Artifact href={item.artifacts.source_diff_url} label="research/source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
           <Artifact href={item.artifacts.harness_readme_url} label="harness/README.md" disabled={!item.artifacts.harness_readme_exists} />

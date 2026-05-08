@@ -18,6 +18,7 @@ Environment overrides:
   CVEHUNT_SKIP_BUILD=1  Skip npm run build after the persisted run
   CVEHUNT_SKIP_GIT=1    Skip automatic git commit/push and PR recommendation
   CVEHUNT_DRY_RUN=1     Print commands without running them
+  CVEHUNT_EXECUTE_POC=1 Build/run the localhost harness PoC with --execute-poc
 USAGE
 }
 
@@ -293,6 +294,221 @@ github_owner_from_remote_url() {
   esac
 }
 
+extract_run_id() {
+  local output_file="$1"
+  local cve_id="$2"
+  local run_id
+
+  run_id="$(python3 - "$output_file" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.find("{")
+end = text.rfind("}")
+if start == -1 or end == -1 or end < start:
+    raise SystemExit(1)
+data = json.loads(text[start : end + 1])
+print(data["run"]["run_id"])
+PY
+)"
+
+  if [[ -z "$run_id" && -d "cves/$cve_id/runs" ]]; then
+    run_id="$(ls -1 "cves/$cve_id/runs" | sort | tail -n 1)"
+  fi
+
+  if [[ -z "$run_id" ]]; then
+    echo "Could not determine persisted run id for $cve_id" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$run_id"
+}
+
+write_contribution_audit() {
+  local cve_id="$1"
+  local run_id="$2"
+  local harness="$3"
+  local model="$4"
+  local model_label="$5"
+  local run_json_output="$6"
+  local contribution_log="$7"
+  local run_dir="cves/$cve_id/runs/$run_id"
+
+  if [[ ! -d "$run_dir" ]]; then
+    echo "Could not write contribution audit; run directory missing: $run_dir" >&2
+    return
+  fi
+
+  cp "$run_json_output" "$run_dir/contribute-output.log"
+  cp "$contribution_log" "$run_dir/contribution-interaction.log"
+
+  CVEHUNT_AUDIT_CVE_ID="$cve_id" \
+  CVEHUNT_AUDIT_RUN_ID="$run_id" \
+  CVEHUNT_AUDIT_HARNESS="$harness" \
+  CVEHUNT_AUDIT_MODEL="$model" \
+  CVEHUNT_AUDIT_MODEL_LABEL="$model_label" \
+  CVEHUNT_AUDIT_RUN_DIR="$run_dir" \
+  CVEHUNT_AUDIT_EXECUTE_POC="${CVEHUNT_EXECUTE_POC:-0}" \
+  python3 <<'PY'
+from __future__ import annotations
+
+import json
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+
+run_dir = Path(os.environ["CVEHUNT_AUDIT_RUN_DIR"])
+cve_id = os.environ["CVEHUNT_AUDIT_CVE_ID"]
+run_id = os.environ["CVEHUNT_AUDIT_RUN_ID"]
+harness = os.environ["CVEHUNT_AUDIT_HARNESS"]
+model = os.environ["CVEHUNT_AUDIT_MODEL"]
+model_label = os.environ["CVEHUNT_AUDIT_MODEL_LABEL"]
+execute_poc = os.environ.get("CVEHUNT_AUDIT_EXECUTE_POC") == "1"
+
+pipeline_status_path = run_dir / "pipeline_status.json"
+report_path = run_dir / "report.json"
+pipeline_status = json.loads(pipeline_status_path.read_text(encoding="utf-8")) if pipeline_status_path.exists() else {}
+report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+
+validation_source = {
+    "codex": "codex debug models",
+    "pi": "pi --list-models",
+}.get(harness, "user-supplied; no local model catalog validator is available for this harness")
+validation_state = "validated" if harness in {"codex", "pi"} else "accepted_unvalidated"
+
+stages = pipeline_status.get("stages", []) if isinstance(pipeline_status, dict) else []
+observed_stages = [
+    {
+        "phase": stage.get("phase"),
+        "status": stage.get("status"),
+        "message": stage.get("message"),
+        "artifact": stage.get("artifact"),
+    }
+    for stage in stages
+]
+
+exploiter = report.get("exploiter") if isinstance(report, dict) else None
+fix = report.get("fix") if isinstance(report, dict) else None
+
+audit = {
+    "schema_version": 1,
+    "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    "runner": "./contribute.sh",
+    "cve_id": cve_id,
+    "run_id": run_id,
+    "harness": harness,
+    "model": model,
+    "model_label": model_label,
+    "model_attribution": {
+        "state": validation_state,
+        "validation_source": validation_source,
+        "meaning": "This label records contributor attribution for the run. The current CVEHunt workflow is deterministic Python and does not call the named model as an internal decision-making API.",
+    },
+    "interaction_logging": {
+        "captured": [
+            "./contribute.sh terminal output and prompts in contribution-interaction.log",
+            "CVEHunt JSON stdout in contribute-output.log",
+            "selected harness, model label, and validation source in this audit file",
+            "pipeline phase events in trace.jsonl",
+        ],
+        "not_captured": [
+            "Private external agent transcripts, unless the harness CLI itself writes them outside this repository",
+            "Raw typed prompt answers beyond the selected harness/model values recorded here",
+        ],
+    },
+    "pipeline_boundaries": {
+        "will_do": [
+            "Collect CVE metadata available to the local workflow",
+            "Acquire supported vulnerable and patched package releases for offline inspection",
+            "Generate localhost-only vulnerable/patched harness scaffolding",
+            "Generate harness-scoped PoC artifacts for supported vulnerability classes",
+            "Promote the upstream vulnerable-to-patched diff as a candidate remediation artifact",
+            "Run the harness PoC only when explicitly invoked with CVEHUNT_EXECUTE_POC=1 / --execute-poc",
+        ],
+        "refuses": [
+            "Target real third-party systems",
+            "Generate non-localhost PoC targets or environment-overridable target hosts",
+            "Add reverse shells, bind shells, credential exfiltration, or weaponization guidance",
+            "Treat unsupported ecosystems as validated without local evidence",
+        ],
+        "not_yet_implemented": [
+            "Rebuild a locally patched source tree from fix/candidate.patch and re-run the PoC against it",
+            "Use the named model as an internal autonomous planner/evaluator inside the Python workflow",
+            "Guarantee full exploitability proof when the upstream package exposes no probeable local surface",
+        ],
+        "requested_execute_poc": execute_poc,
+    },
+    "observed_pipeline": {
+        "overall_status": pipeline_status.get("overall_status"),
+        "confidence": pipeline_status.get("confidence"),
+        "requested_full_pipeline_completed": pipeline_status.get("requested_full_pipeline_completed"),
+        "exploit_generated": pipeline_status.get("exploit_generated"),
+        "fix_generated": pipeline_status.get("fix_generated"),
+        "fix_validated": pipeline_status.get("fix_validated"),
+        "exploiter_status": exploiter.get("status") if isinstance(exploiter, dict) else None,
+        "fix_status": fix.get("status") if isinstance(fix, dict) else None,
+        "stages": observed_stages,
+    },
+    "artifacts": {
+        "interaction_log": "contribution-interaction.log",
+        "workflow_stdout": "contribute-output.log",
+        "trace": "trace.jsonl",
+        "pipeline_status": "pipeline_status.json",
+        "report": "report.json",
+        "human_report": "report.md",
+    },
+}
+
+(run_dir / "contribution_audit.json").write_text(json.dumps(audit, indent=2), encoding="utf-8")
+
+lines = [
+    f"# Contribution Audit: {cve_id}",
+    "",
+    f"Run ID: {run_id}",
+    f"Harness: {harness}",
+    f"Model label: {model_label}",
+    f"Model validation: {validation_state} via {validation_source}",
+    "",
+    "## Attribution Boundary",
+    "",
+    audit["model_attribution"]["meaning"],
+    "",
+    "## Interaction Logging",
+    "",
+]
+lines.extend(f"- Captured: {item}" for item in audit["interaction_logging"]["captured"])
+lines.extend(f"- Not captured: {item}" for item in audit["interaction_logging"]["not_captured"])
+lines.extend(["", "## Pipeline Will Do", ""])
+lines.extend(f"- {item}" for item in audit["pipeline_boundaries"]["will_do"])
+lines.extend(["", "## Pipeline Refuses", ""])
+lines.extend(f"- {item}" for item in audit["pipeline_boundaries"]["refuses"])
+lines.extend(["", "## Not Yet Implemented", ""])
+lines.extend(f"- {item}" for item in audit["pipeline_boundaries"]["not_yet_implemented"])
+lines.extend([
+    "",
+    "## Observed Outcome",
+    "",
+    f"- Overall status: {audit['observed_pipeline']['overall_status']}",
+    f"- Confidence: {audit['observed_pipeline']['confidence']}",
+    f"- Full pipeline completed: {audit['observed_pipeline']['requested_full_pipeline_completed']}",
+    f"- Exploit generated: {audit['observed_pipeline']['exploit_generated']}",
+    f"- Fix generated: {audit['observed_pipeline']['fix_generated']}",
+    f"- Fix validated: {audit['observed_pipeline']['fix_validated']}",
+    "",
+    "## Stage Outcomes",
+    "",
+])
+for stage in observed_stages:
+    lines.append(f"- {stage['phase']}: {stage['status']} - {stage['message']}")
+
+(run_dir / "contribution_audit.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+  echo "Wrote contribution audit artifacts to $run_dir/contribution_audit.{json,md}"
+}
+
 auto_commit_push_and_recommend_pr() {
   local cve_id="$1"
   local model_label="$2"
@@ -379,6 +595,11 @@ main() {
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   cd "$repo_root"
 
+  local contribution_log
+  contribution_log="$(mktemp "${TMPDIR:-/tmp}/cvehunt-contribute.XXXXXX.log")"
+  exec > >(tee -a "$contribution_log") 2>&1
+  echo "Contribution interaction log started at $contribution_log"
+
   local detected_harnesses
   detected_harnesses=()
   while IFS= read -r harness; do
@@ -419,7 +640,11 @@ main() {
     if [[ "${CVEHUNT_SKIP_INSTALL:-0}" != "1" ]]; then
       echo "Would check/install project dependencies"
     fi
-    printf 'Would run: uv run cvehunt run %q --persist --json --model %q\n' "$cve_id" "$model_label"
+    if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
+      printf 'Would run: uv run cvehunt run %q --persist --json --model %q --execute-poc\n' "$cve_id" "$model_label"
+    else
+      printf 'Would run: uv run cvehunt run %q --persist --json --model %q\n' "$cve_id" "$model_label"
+    fi
     if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
       echo "Would run: npm run build"
     fi
@@ -431,7 +656,21 @@ main() {
 
   ensure_project_dependencies
 
-  uv run cvehunt run "$cve_id" --persist --json --model "$model_label"
+  local run_json_output
+  local run_id
+  local run_command
+  run_json_output="$(mktemp "${TMPDIR:-/tmp}/cvehunt-run-json.XXXXXX.log")"
+  run_command=(uv run cvehunt run "$cve_id" --persist --json --model "$model_label")
+  if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
+    run_command=("${run_command[@]}" --execute-poc)
+  fi
+
+  printf 'Running command:'
+  printf ' %q' "${run_command[@]}"
+  printf '\n'
+  "${run_command[@]}" | tee "$run_json_output"
+  run_id="$(extract_run_id "$run_json_output" "$cve_id")"
+  write_contribution_audit "$cve_id" "$run_id" "$harness" "$model" "$model_label" "$run_json_output" "$contribution_log"
 
   if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
     echo "Regenerating dashboard data and docs"

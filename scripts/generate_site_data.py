@@ -119,6 +119,8 @@ def build() -> dict[str, object]:
         trace_path = artifact_dir / "trace.jsonl"
         report_md_path = artifact_dir / "report.md"
         pipeline_status_path = artifact_dir / "pipeline_status.json"
+        contribution_audit_md_path = artifact_dir / "contribution_audit.md"
+        contribution_audit_json_path = artifact_dir / "contribution_audit.json"
         report = read_json(report_path)
         pipeline_status = read_json(pipeline_status_path)
         trace = read_trace(trace_path)
@@ -142,6 +144,8 @@ def build() -> dict[str, object]:
                     "report_json_url": repo_url(report_path),
                     "report_md_url": repo_url(report_md_path),
                     "pipeline_status_url": repo_url(pipeline_status_path),
+                    "contribution_audit_md_url": repo_url(contribution_audit_md_path),
+                    "contribution_audit_json_url": repo_url(contribution_audit_json_path),
                     "sources_url": repo_url(artifact_dir / "sources", tree=True),
                     "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
                     "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
@@ -151,6 +155,8 @@ def build() -> dict[str, object]:
                     "report_exists": report_path.exists(),
                     "report_md_exists": report_md_path.exists(),
                     "pipeline_status_exists": pipeline_status_path.exists(),
+                    "contribution_audit_md_exists": contribution_audit_md_path.exists(),
+                    "contribution_audit_json_exists": contribution_audit_json_path.exists(),
                     "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
                     "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
                     "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),
