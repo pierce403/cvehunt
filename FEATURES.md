@@ -60,7 +60,7 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
   - Scores are written to `pipeline_status.json`, `report.md`, dashboard latest-CVE rows, and dashboard historical run rows.
   - Historical runs without embedded scores are scored during site-data generation from their report artifacts.
 - **Not Implemented**:
-  - A current deterministic run normally cannot earn candidate-fix-validation points because fix validation is not implemented.
+  - Run score does not yet include separately scored model-authored artifacts; only independently validated pipeline artifacts count.
 - **Test Criteria**:
   - [x] Persisted test run includes the expected partial score.
   - [x] Markdown reports include a run-score checklist.
@@ -109,6 +109,8 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 - **Description**: Build and run the generated localhost Docker/Compose harness and execute the generated PoC.
 - **Implemented**:
   - `uv run cvehunt run <CVE-ID> --persist --json --execute-poc` opts into harness execution for the raw CLI.
+  - `--base-port` / `CVEHUNT_BASE_PORT` selects the localhost vulnerable/patched port pair; patched uses base+1 and shim services use base+10/base+11.
+  - The runner falls back to direct `docker build`/`docker run` orchestration when Docker Compose is unavailable.
   - `./contribute.sh` enables harness execution by default and passes `--execute-poc` unless `--skip-execute-poc` or `CVEHUNT_EXECUTE_POC=0` is set.
   - `HarnessRunnerAgent` invokes only generated local scripts and parses `exploiter/outcome.json` when present.
   - Docker availability is checked before execution.
@@ -119,6 +121,7 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 - **Test Criteria**:
   - [x] CLI exposes `--execute-poc`.
   - [x] Contributor wrapper exposes default execution plus `--skip-execute-poc` and `CVEHUNT_EXECUTE_POC=0` opt-out.
+  - [x] Manual run built Docker images and executed the LiteLLM harness on base port 4100 in an environment without Docker Compose; upstream containers returned 401 while the shim pair produced the expected vulnerable/patched differential.
   - [ ] Automated tests build and run Docker harnesses in CI.
 
 ### Harness-Scoped PoC Generation
@@ -146,17 +149,17 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 - **Implemented**:
   - `FixDeveloperAgent` promotes the upstream vulnerable-to-patched source diff to `fix/candidate.patch`.
   - `fix/rationale.md` records why the observed patch signal is relevant.
-  - Fix generation status is reflected in reports, pipeline status, evidence, and run score.
+  - CVEHunt applies `fix/candidate.patch` to a copied vulnerable source tree using an in-process unified-diff applier.
+  - CVEHunt compares changed files in the applied tree to the upstream patched tree by SHA-256.
+  - `fix/validation.json`, `fix/validation.md`, and `fix/apply.log` preserve candidate-fix validation evidence.
+  - Fix generation and validation status are reflected in reports, pipeline status, evidence, and run score.
 - **Not Implemented**:
-  - Model-authored patch generation.
-  - Applying the candidate patch to a local vulnerable tree.
-  - Building a newly fixed target from the candidate patch.
-  - Re-running the PoC against that newly fixed target.
-  - Marking a fix as `validated` in the current deterministic workflow.
+  - Model-authored patch proposals are extracted under `model_attempt/` but are not automatically applied.
+  - Building a third candidate-fixed container image distinct from the upstream patched image.
 - **Test Criteria**:
   - [x] Candidate fix artifacts are generated when a source diff exists.
   - [x] Persisted test run writes `fix/candidate.patch`.
-  - [ ] Fix validation results are recorded after applying and testing a candidate fix.
+  - [x] Fix validation results are recorded after applying the candidate patch to a copied vulnerable tree.
 
 ### Validation and Judgement
 - **Stability**: in-progress
@@ -166,8 +169,8 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
   - Judge emits an overall status and confidence based on available evidence.
   - Unsupported ecosystems without fixture coverage end as insufficient evidence instead of silently passing.
 - **Not Implemented**:
-  - Independent semantic proof that the candidate fix is sufficient.
-  - Full end-to-end remediation validation in a patched-from-candidate environment.
+  - Independent semantic proof beyond source-equivalence with the upstream patched files and PoC behavior against the upstream patched harness.
+  - Full end-to-end remediation validation in a separately built patched-from-candidate container image.
   - Human review workflows.
 - **Test Criteria**:
   - [x] Tests verify unsupported ecosystem fallback behavior.

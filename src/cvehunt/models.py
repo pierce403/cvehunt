@@ -127,6 +127,7 @@ class ExploiterArtifact:
     next_step: str
     poc_path: str | None = None
     runner_path: str | None = None
+    target_urls: dict[str, str] = field(default_factory=dict)
     outcomes: list[ExploitOutcome] = field(default_factory=list)
 
 

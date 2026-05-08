@@ -19,6 +19,7 @@ from cvehunt.models import (
     ExploitOutcome,
     ExploiterArtifact,
     FixArtifact,
+    FixStatus,
     HarnessArtifact,
     Judgement,
     ResearchFinding,
@@ -432,6 +433,7 @@ class HarnessBuilderAgent:
         finding: ResearchFinding,
         sources: SourceBundle,
         artifact_root: Path,
+        base_port: int = 4000,
     ) -> tuple[HarnessArtifact, ValidationPlan]:
         if sources.status != "materialized" or not sources.package:
             plan = ValidationPlan(
@@ -551,6 +553,7 @@ class HarnessBuilderAgent:
                 package=sources.package,
                 ecosystem=cve.ecosystem,
                 include_shim=shim_emitted,
+                base_port=base_port,
             ),
             encoding="utf-8",
         )
@@ -616,7 +619,7 @@ class HarnessBuilderAgent:
             HarnessArtifact(
                 status="built",
                 runtime=plan.runtime,
-                isolation=plan.isolation,
+                isolation=f"{plan.isolation}; localhost ports {base_port}/{base_port + 1}",
                 workspace=".",
                 dockerfiles=[
                     _relpath(dockerfile_vulnerable, artifact_root),
@@ -647,6 +650,7 @@ class ExploiterAgent:
         finding: ResearchFinding,
         harness: HarnessArtifact | None,
         artifact_root: Path,
+        base_port: int = 4000,
     ) -> ExploiterArtifact:
         exploiter_dir = artifact_root / "exploiter"
         exploiter_dir.mkdir(parents=True, exist_ok=True)
@@ -683,8 +687,8 @@ class ExploiterAgent:
 
         poc_path = exploiter_dir / "poc.py"
         runner_path = exploiter_dir / "run-poc.sh"
-        poc_source = template(cve)
-        runner_source = _poc_runner_script(cve)
+        poc_source = template(cve, base_port=base_port)
+        runner_source = _poc_runner_script(cve, base_port=base_port)
 
         self.safety_policy.assert_safe_text(poc_source)
         self.safety_policy.assert_localhost_scoped(poc_source)
@@ -708,6 +712,12 @@ class ExploiterAgent:
             next_step="Run `bash exploiter/run-poc.sh` from the run directory to execute against the harness.",
             poc_path=_relpath(poc_path, artifact_root),
             runner_path=_relpath(runner_path, artifact_root),
+            target_urls={
+                "vulnerable": f"http://127.0.0.1:{base_port}",
+                "patched": f"http://127.0.0.1:{base_port + 1}",
+                "shim_vulnerable": f"http://127.0.0.1:{base_port + 10}",
+                "shim_patched": f"http://127.0.0.1:{base_port + 11}",
+            },
         )
 
 
@@ -858,9 +868,17 @@ class FixDeveloperAgent:
             "Promoted the upstream vulnerable→patched diff as the candidate fix.",
             f"Strongest observed patch signal: {finding.relevant_patch_signal}",
         ]
+        validated, validation_notes = _validate_candidate_patch(candidate, sources, artifact_root, fix_dir)
+        notes.extend(validation_notes)
+        status: FixStatus = "validated" if validated else "generated"
+        message = (
+            "Candidate patch promoted from the upstream diff and validated by applying it to the vulnerable source tree."
+            if validated
+            else "Candidate patch promoted from the upstream vulnerable→patched diff."
+        )
         return FixArtifact(
-            status="generated",
-            message="Candidate patch promoted from the upstream vulnerable→patched diff.",
+            status=status,
+            message=message,
             candidate_patch=_relpath(candidate, artifact_root),
             rationale=_relpath(rationale_path, artifact_root),
             notes=notes,
@@ -1042,8 +1060,17 @@ class ValidatorAgent:
                     check_name="candidate fix promoted",
                     vulnerable_signal=fix.candidate_patch or "no candidate patch",
                     patched_signal=fix.rationale or "no rationale recorded",
-                    passed=fix.status == "generated",
+                    passed=fix.status in {"generated", "validated"},
                     artifact=fix.candidate_patch,
+                )
+            )
+            evidence.append(
+                Evidence(
+                    check_name="candidate fix applied to vulnerable source tree",
+                    vulnerable_signal=fix.candidate_patch or "no candidate patch",
+                    patched_signal="fix/validation.json",
+                    passed=fix.status == "validated",
+                    artifact="fix/validation.json",
                 )
             )
         return evidence
@@ -1101,7 +1128,7 @@ class JudgeAgent:
 
         if sources and sources.status == "materialized" and harness and harness.status == "built":
             poc_scaffolded = bool(exploiter and exploiter.implemented)
-            fix_generated = bool(fix and fix.status == "generated")
+            fix_generated = bool(fix and fix.status in {"generated", "validated"})
             outcomes = list(exploiter.outcomes) if exploiter else []
             vulnerable_triggered = any(
                 item.variant == "vulnerable" and item.triggered for item in outcomes
@@ -1139,7 +1166,9 @@ class JudgeAgent:
                     " A localhost-scoped PoC and orchestration runner were emitted "
                     "for the harness."
                 )
-            if fix_generated:
+            if fix and fix.status == "validated":
+                rationale += " A candidate fix was promoted from the upstream diff and validated by applying it to the vulnerable source tree."
+            elif fix_generated:
                 rationale += " A candidate fix was promoted from the upstream diff."
             if outcomes:
                 if vulnerable_triggered and patched_blocked:
@@ -1200,6 +1229,235 @@ class JudgeAgent:
         )
 
 
+def _validate_candidate_patch(
+    candidate: Path,
+    sources: SourceBundle,
+    artifact_root: Path,
+    fix_dir: Path,
+) -> tuple[bool, list[str]]:
+    notes: list[str] = []
+    validation_json = fix_dir / "validation.json"
+    validation_md = fix_dir / "validation.md"
+    vulnerable_root = artifact_root / sources.vulnerable_root if sources.vulnerable_root else None
+    patched_root = artifact_root / sources.patched_root if sources.patched_root else None
+    if vulnerable_root is None or patched_root is None or not vulnerable_root.exists() or not patched_root.exists():
+        reason = "Candidate fix validation skipped: vulnerable or patched source root is missing."
+        validation_json.write_text(
+            json.dumps({"validated": False, "reason": reason}, indent=2),
+            encoding="utf-8",
+        )
+        validation_md.write_text(f"# Candidate Fix Validation\n\n- Validated: no\n- Reason: {reason}\n", encoding="utf-8")
+        return False, [reason]
+
+    applied_root = fix_dir / "applied"
+    if applied_root.exists():
+        _remove_tree(applied_root)
+    shutil.copytree(vulnerable_root, applied_root)
+    apply_log = fix_dir / "apply.log"
+    apply_method = "CVEHunt in-process unified-diff applier"
+    try:
+        applied_paths = _apply_unified_diff(candidate, applied_root)
+        apply_log.write_text(
+            "Applied candidate.patch with CVEHunt's in-process unified-diff applier.\n"
+            + "\n".join(applied_paths)
+            + "\n",
+            encoding="utf-8",
+        )
+    except ValueError as exc:
+        if applied_root.exists():
+            _remove_tree(applied_root)
+        shutil.copytree(vulnerable_root, applied_root)
+        fallback_ok, fallback_log = _apply_with_patch_command(candidate, applied_root)
+        apply_log.write_text(
+            f"In-process applier failed: {exc}\n\nFallback patch command output:\n{fallback_log}\n",
+            encoding="utf-8",
+        )
+        if not fallback_ok:
+            reason = f"Candidate fix validation failed: {exc}"
+            validation_json.write_text(
+                json.dumps(
+                    {
+                        "validated": False,
+                        "reason": reason,
+                        "apply_log": "fix/apply.log",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            validation_md.write_text(f"# Candidate Fix Validation\n\n- Validated: no\n- Reason: {reason}\n- Apply log: fix/apply.log\n", encoding="utf-8")
+            return False, [reason, "Validation artifact: fix/validation.json"]
+        apply_method = "GNU patch fallback after in-process applier reported a mismatch"
+
+    diff_paths = _paths_from_unified_diff(candidate)
+    mismatches: list[str] = []
+    for relative in diff_paths:
+        applied_path = applied_root / relative
+        patched_path = patched_root / relative
+        if applied_path.exists() != patched_path.exists():
+            if applied_path.exists() and not patched_path.exists() and applied_path.read_bytes() == b"":
+                # difflib represents deleted files as an empty patched side
+                # rather than /dev/null; an empty applied file is equivalent
+                # to absence for this generated candidate diff.
+                continue
+            mismatches.append(relative)
+            continue
+        if applied_path.exists() and patched_path.exists():
+            if not _files_equivalent(applied_path, patched_path):
+                mismatches.append(relative)
+    validated = not mismatches
+    result = {
+        "validated": validated,
+        "method": f"apply candidate.patch with {apply_method} to copied vulnerable source tree and compare patched files by normalized text content or SHA-256 for binary files",
+        "applied_root": "fix/applied",
+        "candidate_patch": "fix/candidate.patch",
+        "apply_log": "fix/apply.log",
+        "compared_files": diff_paths,
+        "mismatches": mismatches,
+    }
+    validation_json.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    validation_md.write_text(
+        "# Candidate Fix Validation\n\n"
+        f"- Validated: {'yes' if validated else 'no'}\n"
+        f"- Method: applied `fix/candidate.patch` with {apply_method} to a copied vulnerable source tree and compared changed files to the upstream patched source tree by normalized text content or SHA-256 for binary files.\n"
+        f"- Compared files: {len(diff_paths)}\n"
+        f"- Mismatches: {len(mismatches)}\n"
+        "- Machine-readable result: fix/validation.json\n",
+        encoding="utf-8",
+    )
+    if validated:
+        notes.append(
+            "Validated candidate fix by applying it to a copied vulnerable source tree and matching changed files against the upstream patched tree."
+        )
+    else:
+        notes.append(
+            "Candidate fix validation failed: applied tree did not match upstream patched files."
+        )
+    notes.append("Validation artifact: fix/validation.json")
+    return validated, notes
+
+
+def _apply_with_patch_command(candidate: Path, root: Path) -> tuple[bool, str]:
+    patch_bin = shutil.which("patch")
+    if patch_bin is None:
+        return False, "GNU patch command is not available."
+    try:
+        process = subprocess.Popen(
+            [patch_bin, "-p1", "--batch", "--forward", "-i", str(candidate.resolve())],
+            cwd=str(root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        stdout, stderr = process.communicate(timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+    return process.returncode == 0, f"exit_code={process.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+
+
+def _paths_from_unified_diff(diff_path: Path) -> list[str]:
+    paths: set[str] = set()
+    for line in diff_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("+++ b/"):
+            paths.add(line[len("+++ b/") :])
+        elif line.startswith("--- a/"):
+            paths.add(line[len("--- a/") :])
+    paths.discard("/dev/null")
+    return sorted(paths)
+
+
+def _apply_unified_diff(diff_path: Path, root: Path) -> list[str]:
+    lines = diff_path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    applied: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith("--- "):
+            index += 1
+            continue
+        old_header = line.strip()
+        index += 1
+        if index >= len(lines) or not lines[index].startswith("+++ "):
+            raise ValueError(f"malformed diff after {old_header}")
+        new_header = lines[index].strip()
+        index += 1
+        old_path = _diff_header_path(old_header, "--- ")
+        new_path = _diff_header_path(new_header, "+++ ")
+        relative = new_path if new_path != "/dev/null" else old_path
+        if relative == "/dev/null":
+            continue
+        target = root / relative
+        original = _read_lines(target)
+        result: list[str] = []
+        source_index = 0
+        while index < len(lines):
+            hunk_header = lines[index]
+            if hunk_header.startswith("--- "):
+                break
+            if not hunk_header.startswith("@@ "):
+                index += 1
+                continue
+            old_start = _parse_hunk_old_start(hunk_header)
+            copy_until = max(old_start - 1, 0)
+            if copy_until < source_index:
+                raise ValueError(f"overlapping hunk while applying {relative}")
+            result.extend(original[source_index:copy_until])
+            source_index = copy_until
+            index += 1
+            while index < len(lines):
+                hunk_line = lines[index]
+                if hunk_line.startswith("@@ ") or hunk_line.startswith("--- "):
+                    break
+                if hunk_line.startswith(" "):
+                    content = hunk_line[1:]
+                    if source_index >= len(original):
+                        raise ValueError(f"context extends past end of {relative}")
+                    if original[source_index] != content:
+                        raise ValueError(f"context mismatch while applying {relative}")
+                    result.append(content)
+                    source_index += 1
+                elif hunk_line.startswith("-"):
+                    content = hunk_line[1:]
+                    if source_index >= len(original):
+                        raise ValueError(f"deletion extends past end of {relative}")
+                    if original[source_index] != content:
+                        raise ValueError(f"deletion mismatch while applying {relative}")
+                    source_index += 1
+                elif hunk_line.startswith("+"):
+                    result.append(hunk_line[1:])
+                elif hunk_line.startswith("\\ No newline"):
+                    pass
+                elif hunk_line == "\n":
+                    # ResearcherAgent separates file diffs with a blank line; an
+                    # actual blank context line would be encoded as " \\n".
+                    index += 1
+                    break
+                else:
+                    raise ValueError(f"unexpected hunk line while applying {relative}: {hunk_line[:40]!r}")
+                index += 1
+        result.extend(original[source_index:])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("".join(result), encoding="utf-8")
+        applied.append(relative)
+    return applied
+
+
+def _diff_header_path(header: str, prefix: str) -> str:
+    value = header[len(prefix) :].split("\t", 1)[0]
+    if value.startswith("a/") or value.startswith("b/"):
+        return value[2:]
+    return value
+
+
+def _parse_hunk_old_start(header: str) -> int:
+    # Example: @@ -12,7 +12,8 @@
+    try:
+        old_range = header.split(" ", 3)[1]
+        return int(old_range[1:].split(",", 1)[0])
+    except (IndexError, ValueError) as exc:
+        raise ValueError(f"malformed hunk header: {header.strip()}") from exc
+
+
 def _docker_available() -> bool:
     if shutil.which("docker") is None:
         return False
@@ -1248,7 +1506,11 @@ def _parse_version_spec(spec: str) -> tuple[str, str] | None:
 def _read_lines(path: Path) -> list[str]:
     if not path.exists():
         return []
-    return path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    # Normalize text line endings for source diffs. Some package archives mix
+    # CRLF/LF across releases; CVEHunt cares whether the patched content is
+    # semantically reproduced, not whether archive line endings match exactly.
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return [line + "\n" for line in text.splitlines()]
 
 
 def _detect_patch_signal(diff_text: str) -> str | None:
@@ -1273,6 +1535,13 @@ def _detect_patch_signal(diff_text: str) -> str | None:
         if marker in diff_text:
             return marker
     return None
+
+
+def _files_equivalent(left: Path, right: Path) -> bool:
+    try:
+        return left.read_text(encoding="utf-8").splitlines() == right.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        return _sha256(left) == _sha256(right)
 
 
 def _sha256(path: Path) -> str:
@@ -1414,6 +1683,7 @@ def _compose_for_harness(
     package: str,
     ecosystem: str,
     include_shim: bool = False,
+    base_port: int = 4000,
 ) -> str:
     slug = cve_id.lower().replace("-", "_")
     package_slug = package.replace("/", "-")
@@ -1423,7 +1693,7 @@ def _compose_for_harness(
     image_shim_patched = f"cvehunt/{slug}-{package_slug}-shim:patched"
     if ecosystem == "pypi" and package == "litellm":
         body = _litellm_compose(
-            image_vuln=image_vuln, image_patched=image_patched
+            image_vuln=image_vuln, image_patched=image_patched, base_port=base_port
         )
     else:
         body = "\n".join(
@@ -1436,14 +1706,14 @@ def _compose_for_harness(
                 "      context: ..",
                 "      dockerfile: harness/Dockerfile.vulnerable",
                 "    ports:",
-                '      - "127.0.0.1:4000:4000"',
+                f'      - "127.0.0.1:{base_port}:4000"',
                 "  patched:",
                 f"    image: {image_patched}",
                 "    build:",
                 "      context: ..",
                 "      dockerfile: harness/Dockerfile.patched",
                 "    ports:",
-                '      - "127.0.0.1:4001:4000"',
+                f'      - "127.0.0.1:{base_port + 1}:4000"',
                 "",
             ]
         )
@@ -1457,21 +1727,21 @@ def _compose_for_harness(
             "      context: shim/vulnerable",
             "      dockerfile: Dockerfile",
             "    ports:",
-            '      - "127.0.0.1:4010:8000"',
+            f'      - "127.0.0.1:{base_port + 10}:8000"',
             "  shim-patched:",
             f"    image: {image_shim_patched}",
             "    build:",
             "      context: shim/patched",
             "      dockerfile: Dockerfile",
             "    ports:",
-            '      - "127.0.0.1:4011:8000"',
+            f'      - "127.0.0.1:{base_port + 11}:8000"',
             "",
         ]
     )
     return body.rstrip("\n") + "\n" + shim_block
 
 
-def _litellm_compose(*, image_vuln: str, image_patched: str) -> str:
+def _litellm_compose(*, image_vuln: str, image_patched: str, base_port: int = 4000) -> str:
     command = (
         '["litellm", "--host", "0.0.0.0", "--port", "4000", '
         '"--config", "/workspace/config.yaml"]'
@@ -1508,7 +1778,7 @@ def _litellm_compose(*, image_vuln: str, image_patched: str) -> str:
             "    volumes:",
             "      - ./config.yaml:/workspace/config.yaml:ro",
             "    ports:",
-            '      - "127.0.0.1:4000:4000"',
+            f'      - "127.0.0.1:{base_port}:4000"',
             f"    command: {command}",
             "  patched:",
             f"    image: {image_patched}",
@@ -1525,7 +1795,7 @@ def _litellm_compose(*, image_vuln: str, image_patched: str) -> str:
             "    volumes:",
             "      - ./config.yaml:/workspace/config.yaml:ro",
             "    ports:",
-            '      - "127.0.0.1:4001:4000"',
+            f'      - "127.0.0.1:{base_port + 1}:4000"',
             f"    command: {command}",
             "",
         ]
@@ -1770,7 +2040,7 @@ def _select_poc_template(vulnerability_class: str):
     }.get(vulnerability_class)
 
 
-def _poc_template_sql_injection(cve: CveRecord) -> str:
+def _poc_template_sql_injection(cve: CveRecord, base_port: int = 4000) -> str:
     return '''"""Harness-bound PoC for {cve_id} ({cve_name}).
 
 This script targets ONLY the local CVEHunt harness containers via 127.0.0.1.
@@ -1789,16 +2059,16 @@ import urllib.error
 import urllib.request
 
 
-VULNERABLE_BASE_URL = "http://127.0.0.1:4000"
-PATCHED_BASE_URL = "http://127.0.0.1:4001"
-SHIM_VULNERABLE_BASE_URL = "http://127.0.0.1:4010"
-SHIM_PATCHED_BASE_URL = "http://127.0.0.1:4011"
+VULNERABLE_BASE_URL = "http://127.0.0.1:{vulnerable_port}"
+PATCHED_BASE_URL = "http://127.0.0.1:{patched_port}"
+SHIM_VULNERABLE_BASE_URL = "http://127.0.0.1:{shim_vulnerable_port}"
+SHIM_PATCHED_BASE_URL = "http://127.0.0.1:{shim_patched_port}"
 
 
 PROBE_PAYLOADS = [
-    "Bearer ' OR 1=1-- ",
-    "Bearer ' UNION SELECT NULL-- ",
-    "Bearer x'\\'' OR ''=''",
+    "Bearer sk-' OR 1=1-- ",
+    "Bearer sk-' UNION SELECT NULL-- ",
+    "Bearer sk-x'\\'' OR ''=''",
 ]
 
 
@@ -1827,6 +2097,28 @@ AUTH_BYPASS_BODY_MARKERS = (
 )
 
 
+def ensure_seed_key(base_url: str) -> dict:
+    """Create one local harness virtual key so auth lookup has a row to query."""
+    request = urllib.request.Request(
+        f"{{base_url}}/key/generate",
+        data=json.dumps({{"models": ["fake-openai-endpoint"], "duration": "1h"}}).encode("utf-8"),
+        headers={{
+            "Authorization": "Bearer sk-harness-master",
+            "Content-Type": "application/json",
+        }},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = response.read(2048).decode("utf-8", errors="replace")
+            return {{"status": response.status, "body_prefix": body[:256]}}
+    except urllib.error.HTTPError as exc:
+        body = exc.read(512).decode("utf-8", errors="replace")
+        return {{"status": exc.code, "body_prefix": body[:256]}}
+    except Exception as exc:
+        return {{"status": None, "error": str(exc)}}
+
+
 def probe(base_url: str, paths: list[str] | None = None) -> dict:
     """Send each payload against each probe path and return per-call signals.
 
@@ -1836,6 +2128,7 @@ def probe(base_url: str, paths: list[str] | None = None) -> dict:
     the status code and a short response prefix so the validator can compare
     vulnerable vs. patched outcomes.
     """
+    seed = ensure_seed_key(base_url) if paths is None else None
     results = []
     for path in (paths if paths is not None else PROBE_PATHS):
         for payload in PROBE_PAYLOADS:
@@ -1871,7 +2164,7 @@ def probe(base_url: str, paths: list[str] | None = None) -> dict:
                     "status": None,
                     "error": str(exc),
                 }})
-    return {{"base_url": base_url, "results": results}}
+    return {{"base_url": base_url, "seed": seed, "results": results}}
 
 
 def summarize(record: dict) -> dict:
@@ -1927,10 +2220,17 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-'''.format(cve_id=cve.cve_id, cve_name=cve.name)
+'''.format(
+        cve_id=cve.cve_id,
+        cve_name=cve.name,
+        vulnerable_port=base_port,
+        patched_port=base_port + 1,
+        shim_vulnerable_port=base_port + 10,
+        shim_patched_port=base_port + 11,
+    )
 
 
-def _poc_template_unsafe_deserialization(cve: CveRecord) -> str:
+def _poc_template_unsafe_deserialization(cve: CveRecord, base_port: int = 4000) -> str:
     return '''"""Harness-bound PoC for {cve_id} ({cve_name}).
 
 This script targets ONLY the local CVEHunt harness containers via 127.0.0.1.
@@ -1945,8 +2245,8 @@ import urllib.error
 import urllib.request
 
 
-VULNERABLE_BASE_URL = "http://127.0.0.1:4000"
-PATCHED_BASE_URL = "http://127.0.0.1:4001"
+VULNERABLE_BASE_URL = "http://127.0.0.1:{vulnerable_port}"
+PATCHED_BASE_URL = "http://127.0.0.1:{patched_port}"
 
 
 PROBE_BODY = json.dumps([
@@ -2011,10 +2311,15 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-'''.format(cve_id=cve.cve_id, cve_name=cve.name)
+'''.format(
+        cve_id=cve.cve_id,
+        cve_name=cve.name,
+        vulnerable_port=base_port,
+        patched_port=base_port + 1,
+    )
 
 
-def _poc_template_unsafe_interpolation(cve: CveRecord) -> str:
+def _poc_template_unsafe_interpolation(cve: CveRecord, base_port: int = 4000) -> str:
     return '''"""Harness-bound PoC for {cve_id} ({cve_name}).
 
 This script targets ONLY the local CVEHunt harness containers via 127.0.0.1.
@@ -2028,8 +2333,8 @@ import sys
 import urllib.request
 
 
-VULNERABLE_BASE_URL = "http://127.0.0.1:4000"
-PATCHED_BASE_URL = "http://127.0.0.1:4001"
+VULNERABLE_BASE_URL = "http://127.0.0.1:{vulnerable_port}"
+PATCHED_BASE_URL = "http://127.0.0.1:{patched_port}"
 
 
 PROBE_BODY = "${{script:javascript:1+1}}".encode("utf-8")
@@ -2084,10 +2389,15 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-'''.format(cve_id=cve.cve_id, cve_name=cve.name)
+'''.format(
+        cve_id=cve.cve_id,
+        cve_name=cve.name,
+        vulnerable_port=base_port,
+        patched_port=base_port + 1,
+    )
 
 
-def _poc_runner_script(cve: CveRecord) -> str:
+def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
     return "\n".join(
         [
             "#!/usr/bin/env bash",
@@ -2098,23 +2408,59 @@ def _poc_runner_script(cve: CveRecord) -> str:
             'pushd "$(dirname "$0")/.." >/dev/null',
             "mkdir -p exploiter/logs",
             'exec > >(tee exploiter/logs/run-poc.log) 2>&1',
+            "compose_available() { docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; }",
+            "compose_cmd() {",
+            "  if docker compose version >/dev/null 2>&1; then docker compose \"$@\"; else docker-compose \"$@\"; fi",
+            "}",
+            "image_for() {",
+            "  awk -v svc=\"$1:\" '$1 == svc {inside=1; next} inside && $1 == \"image:\" {print $2; exit} /^[^[:space:]]/ {inside=0}' harness/docker-compose.yml",
+            "}",
+            "manual_names() {",
+            f'  PROJECT="cvehunt_{cve.cve_id.lower().replace("-", "_")}_$$"',
+            '  NET="${PROJECT}_net"; DB="${PROJECT}_db"; VULN="${PROJECT}_vulnerable"; PATCHED="${PROJECT}_patched"; SHIM_VULN="${PROJECT}_shim_vulnerable"; SHIM_PATCHED="${PROJECT}_shim_patched"',
+            "}",
+            "manual_build() {",
+            "  manual_names",
+            "  VULN_IMAGE=$(image_for vulnerable); PATCHED_IMAGE=$(image_for patched); SHIM_VULN_IMAGE=$(image_for shim-vulnerable || true); SHIM_PATCHED_IMAGE=$(image_for shim-patched || true)",
+            "  docker build -t \"$VULN_IMAGE\" -f harness/Dockerfile.vulnerable .",
+            "  docker build -t \"$PATCHED_IMAGE\" -f harness/Dockerfile.patched .",
+            "  if [ -n \"${SHIM_VULN_IMAGE:-}\" ] && [ -f harness/shim/vulnerable/Dockerfile ]; then docker build -t \"$SHIM_VULN_IMAGE\" harness/shim/vulnerable; fi",
+            "  if [ -n \"${SHIM_PATCHED_IMAGE:-}\" ] && [ -f harness/shim/patched/Dockerfile ]; then docker build -t \"$SHIM_PATCHED_IMAGE\" harness/shim/patched; fi",
+            "}",
+            "manual_up() {",
+            "  manual_names",
+            "  VULN_IMAGE=$(image_for vulnerable); PATCHED_IMAGE=$(image_for patched); SHIM_VULN_IMAGE=$(image_for shim-vulnerable || true); SHIM_PATCHED_IMAGE=$(image_for shim-patched || true)",
+            "  docker network create \"$NET\" >/dev/null",
+            "  if [ -f harness/db-init.sql ]; then",
+            "    docker run -d --name \"$DB\" --network \"$NET\" --network-alias db -e POSTGRES_USER=litellm -e POSTGRES_PASSWORD=litellm -e POSTGRES_DB=litellm -v \"$PWD/harness/db-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro\" postgres:16-alpine >/dev/null",
+            "    for _ in $(seq 1 60); do docker exec \"$DB\" pg_isready -U litellm -d litellm >/dev/null 2>&1 && break; sleep 2; done",
+            "  fi",
+            "  if [ -f harness/config.yaml ]; then",
+            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_vuln -e LITELLM_MASTER_KEY=sk-harness-master -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$VULN_IMAGE\" litellm --host 0.0.0.0 --port 4000 --config /workspace/config.yaml >/dev/null",
+            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_patched -e LITELLM_MASTER_KEY=sk-harness-master -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$PATCHED_IMAGE\" litellm --host 0.0.0.0 --port 4000 --config /workspace/config.yaml >/dev/null",
+            "  else",
+            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 \"$VULN_IMAGE\" >/dev/null",
+            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 \"$PATCHED_IMAGE\" >/dev/null",
+            "  fi",
+            f"  if [ -n \"${{SHIM_VULN_IMAGE:-}}\" ]; then docker run -d --name \"$SHIM_VULN\" --network \"$NET\" -p 127.0.0.1:{base_port + 10}:8000 \"$SHIM_VULN_IMAGE\" >/dev/null; fi",
+            f"  if [ -n \"${{SHIM_PATCHED_IMAGE:-}}\" ]; then docker run -d --name \"$SHIM_PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 11}:8000 \"$SHIM_PATCHED_IMAGE\" >/dev/null; fi",
+            "}",
+            "manual_logs() { manual_names; for name in \"$DB\" \"$VULN\" \"$PATCHED\" \"$SHIM_VULN\" \"$SHIM_PATCHED\"; do echo \"===== $name =====\"; docker logs --tail 200 \"$name\" 2>&1 || true; done; }",
+            "manual_down() { manual_names; docker rm -f \"$DB\" \"$VULN\" \"$PATCHED\" \"$SHIM_VULN\" \"$SHIM_PATCHED\" >/dev/null 2>&1 || true; docker network rm \"$NET\" >/dev/null 2>&1 || true; }",
             "capture_logs() {",
-            '  docker compose -f harness/docker-compose.yml logs --no-color --tail 200 \\',
-            '    >exploiter/logs/compose.log 2>&1 || true',
+            "  if compose_available; then compose_cmd -f harness/docker-compose.yml logs --no-color --tail 200 >exploiter/logs/compose.log 2>&1 || true; else manual_logs >exploiter/logs/compose.log 2>&1 || true; fi",
             "}",
             "cleanup() {",
             "  capture_logs",
-            '  docker compose -f harness/docker-compose.yml down --remove-orphans \\',
-            '    >/dev/null 2>&1 || true',
+            "  if compose_available; then compose_cmd -f harness/docker-compose.yml down --remove-orphans >/dev/null 2>&1 || true; else manual_down; fi",
             "}",
             "trap cleanup EXIT",
-            "docker compose -f harness/docker-compose.yml build",
-            "docker compose -f harness/docker-compose.yml up -d",
-            'echo "[cvehunt] waiting for harness services on 127.0.0.1:4000 and :4001"',
+            "if compose_available; then compose_cmd -f harness/docker-compose.yml build; compose_cmd -f harness/docker-compose.yml up -d; else echo '[cvehunt] docker compose unavailable; using direct docker fallback'; manual_build; manual_up; fi",
+            f'echo "[cvehunt] waiting for harness services on 127.0.0.1:{base_port} and :{base_port + 1}"',
             "ready=0",
             "for _ in $(seq 1 90); do",
-            '  if curl --silent --fail http://127.0.0.1:4000/health/readiness >/dev/null 2>&1 \\',
-            '    && curl --silent --fail http://127.0.0.1:4001/health/readiness >/dev/null 2>&1; then',
+            f'  if curl --silent --fail http://127.0.0.1:{base_port}/health/readiness >/dev/null 2>&1 \\',
+            f'    && curl --silent --fail http://127.0.0.1:{base_port + 1}/health/readiness >/dev/null 2>&1; then',
             "    ready=1",
             "    break",
             "  fi",
@@ -2125,10 +2471,10 @@ def _poc_runner_script(cve: CveRecord) -> str:
             "  capture_logs",
             "  exit 2",
             "fi",
-            'echo "[cvehunt] waiting for shim services on 127.0.0.1:4010 and :4011 (best-effort)"',
+            f'echo "[cvehunt] waiting for shim services on 127.0.0.1:{base_port + 10} and :{base_port + 11} (best-effort)"',
             "for _ in $(seq 1 30); do",
-            '  if curl --silent --fail http://127.0.0.1:4010/health/readiness >/dev/null 2>&1 \\',
-            '    && curl --silent --fail http://127.0.0.1:4011/health/readiness >/dev/null 2>&1; then',
+            f'  if curl --silent --fail http://127.0.0.1:{base_port + 10}/health/readiness >/dev/null 2>&1 \\',
+            f'    && curl --silent --fail http://127.0.0.1:{base_port + 11}/health/readiness >/dev/null 2>&1; then',
             "    break",
             "  fi",
             "  sleep 2",

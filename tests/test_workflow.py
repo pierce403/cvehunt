@@ -41,7 +41,12 @@ def _patch_researcher(monkeypatch) -> None:
             encoding="utf-8",
         )
         (research_dir / "source_diff.patch").write_text(
-            "--- a/index.js\n+++ b/index.js\n+const hasOwnProperty = Object.prototype.hasOwnProperty;\n",
+            "--- a/index.js\n"
+            "+++ b/index.js\n"
+            "@@ -1 +1,2 @@\n"
+            "-dangerousLookup(metadata[2])\n"
+            "+const hasOwnProperty = Object.prototype.hasOwnProperty;\n"
+            "+if (hasOwnProperty.call(moduleExports, metadata[2])) {}\n",
             encoding="utf-8",
         )
         finding = ResearchFinding(
@@ -97,7 +102,7 @@ def test_known_cve_produces_defensive_signal(monkeypatch, tmp_path) -> None:
     assert report.exploiter.implemented is True
     assert report.exploiter.poc_path is not None
     assert report.fix is not None
-    assert report.fix.status == "generated"
+    assert report.fix.status == "validated"
     assert report.judgement.status == "defensive_signal_observed"
     assert report.evidence[0].passed is True
     assert any("127.0.0.1" in note for note in report.judgement.safety_notes)
@@ -165,13 +170,13 @@ def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:
     assert '"status": "scaffolded"' in pipeline_status
     assert '"exploit_generated": true' in pipeline_status
     assert '"fix_generated": true' in pipeline_status
-    assert pipeline_status_json["run_score"]["score"] == 55
+    assert pipeline_status_json["run_score"]["score"] == 70
     assert (run_dir / "exploiter" / "poc.py").exists()
     assert (run_dir / "exploiter" / "run-poc.sh").exists()
     assert (run_dir / "fix" / "candidate.patch").exists()
     report_md = (run_dir / "report.md").read_text(encoding="utf-8")
     assert "Model: unspecified" in report_md
-    assert "Run score: 55/100" in report_md
+    assert "Run score: 70/100" in report_md
     assert "## Target Environment" in report_md
     assert "Vulnerable versions: react-server-dom-webpack 19.0.0" in report_md
     assert "PoC vulnerable target: http://127.0.0.1:4000" in report_md
@@ -253,7 +258,15 @@ def _patch_pypi_researcher(monkeypatch) -> None:
             encoding="utf-8",
         )
         (research_dir / "source_diff.patch").write_text(
-            "--- a/auth.py\n+++ b/auth.py\n+    return db.execute(\"SELECT ?\", (key,))\n",
+            "--- a/auth.py\n"
+            "+++ b/auth.py\n"
+            "@@ -1,5 +1,4 @@\n"
+            " def verify_key(key):\n"
+            "     return db.execute(\n"
+            "-        f\"SELECT * FROM keys WHERE key_value = '{key}'\"\n"
+            "-    )\n"
+            "+        \"SELECT * FROM keys WHERE key_value = ?\", (key,)\n"
+            "+    )\n",
             encoding="utf-8",
         )
         finding = ResearchFinding(
@@ -313,7 +326,7 @@ def test_litellm_pipeline_scaffolds_poc_and_fix(monkeypatch, tmp_path) -> None:
     assert report.exploiter.implemented is True
     assert report.exploiter.poc_path == "exploiter/poc.py"
     assert report.fix is not None
-    assert report.fix.status == "generated"
+    assert report.fix.status == "validated"
     assert report.fix.candidate_patch == "fix/candidate.patch"
     poc_text = (
         tmp_path / "artifacts" / "exploiter" / "poc.py"
@@ -321,6 +334,24 @@ def test_litellm_pipeline_scaffolds_poc_and_fix(monkeypatch, tmp_path) -> None:
     assert "127.0.0.1" in poc_text
     assert "openai.com" not in poc_text
     assert "anthropic.com" not in poc_text
+
+
+def test_workflow_base_port_updates_harness_and_poc(monkeypatch, tmp_path) -> None:
+    _patch_pypi_researcher(monkeypatch)
+    workflow = CveHuntWorkflow(model="test-model", base_port=4100)
+    report, _events = workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert report.exploiter is not None
+    assert report.exploiter.target_urls["vulnerable"] == "http://127.0.0.1:4100"
+    compose = (tmp_path / "artifacts" / "harness" / "docker-compose.yml").read_text(encoding="utf-8")
+    poc = (tmp_path / "artifacts" / "exploiter" / "poc.py").read_text(encoding="utf-8")
+    assert "127.0.0.1:4100:4000" in compose
+    assert "127.0.0.1:4101:4000" in compose
+    assert "http://127.0.0.1:4100" in poc
+    assert "http://127.0.0.1:4101" in poc
 
 
 def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path) -> None:

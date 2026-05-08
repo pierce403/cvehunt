@@ -208,6 +208,7 @@ def render_markdown(report: WorkflowReport) -> str:
             lines.extend(f"  - {note}" for note in sources["notes"])
 
     lines.extend(["", "## Target Environment", ""])
+    target_urls = exploiter.get("target_urls", {}) if exploiter else {}
     target_lines = [
         f"- CVE: {cve['cve_id']} ({cve['name']})",
         f"- Ecosystem: {cve['ecosystem']}",
@@ -220,8 +221,10 @@ def render_markdown(report: WorkflowReport) -> str:
         f"- Patched source root: {sources['patched_root'] if sources else 'n/a'}",
         f"- Vulnerable tarball SHA-256: {sources['vulnerable_tarball_sha256'] if sources else 'n/a'}",
         f"- Patched tarball SHA-256: {sources['patched_tarball_sha256'] if sources else 'n/a'}",
-        f"- PoC vulnerable target: http://127.0.0.1:4000",
-        f"- PoC patched target: http://127.0.0.1:4001",
+        f"- PoC vulnerable target: {target_urls.get('vulnerable', 'http://127.0.0.1:4000')}",
+        f"- PoC patched target: {target_urls.get('patched', 'http://127.0.0.1:4001')}",
+        f"- PoC shim vulnerable target: {target_urls.get('shim_vulnerable', 'n/a')}",
+        f"- PoC shim patched target: {target_urls.get('shim_patched', 'n/a')}",
     ]
     if exploiter and exploiter.get("outcomes"):
         target_lines.append("- Captured PoC outcomes:")
@@ -320,7 +323,7 @@ def render_markdown(report: WorkflowReport) -> str:
             f"- Real package sources acquired: {'yes' if sources and sources['status'] == 'materialized' else 'no'}",
             f"- Harness scaffold generated: {'yes' if harness and harness['status'] == 'built' else 'no'}",
             f"- Full exploit generated: {'yes' if exploiter and exploiter['implemented'] else 'no'}",
-            f"- Source patch generated: {'yes' if fix and fix.get('status') == 'generated' else 'no'}",
+            f"- Source patch generated: {'yes' if fix and fix.get('status') in {'generated', 'validated'} else 'no'}",
             f"- Fix validation complete: {'yes' if fix and fix.get('status') == 'validated' else 'no'}",
             "",
             "## Judgement",
@@ -383,11 +386,10 @@ def render_pipeline_status(
         notes.append(report.fix.message)
 
     exploit_generated = bool(report.exploiter and report.exploiter.implemented)
-    fix_generated = bool(report.fix and report.fix.status == "generated")
+    fix_generated = bool(report.fix and report.fix.status in {"generated", "validated"})
     fix_validated = bool(report.fix and report.fix.status == "validated")
-    requested_full_pipeline_completed = exploit_generated and fix_generated and fix_validated
-
     run_score = calculate_run_score(report)
+    requested_full_pipeline_completed = run_score["score"] == run_score["max_score"]
 
     return {
         "cve_id": report.cve.cve_id,

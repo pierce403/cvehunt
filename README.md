@@ -42,7 +42,7 @@ The PoC validates the harness, not real services. See `ISOLATION.md` for the tar
 - `ResearcherAgent`: extracts defensive hypotheses, downloads supported package releases (npm and pypi), and writes a real source diff.
 - `HarnessBuilderAgent`: generates Dockerfiles plus a localhost-only `docker-compose.yml` for the vulnerable and patched variants.
 - `ExploiterAgent`: emits a localhost-scoped PoC (`exploiter/poc.py`) and orchestration runner (`exploiter/run-poc.sh`) keyed on the inferred vulnerability class.
-- `FixDeveloperAgent`: promotes the upstream vulnerable→patched diff as `fix/candidate.patch` with a rationale.
+- `FixDeveloperAgent`: promotes the upstream vulnerable→patched diff as `fix/candidate.patch`, applies it to a copied vulnerable source tree, and validates the result against upstream patched files.
 - `ValidatorAgent`: records evidence for source acquisition, diff capture, harness generation, PoC scaffolding, and candidate fix.
 - `JudgeAgent`: assigns a status, confidence, and remediation notes.
 
@@ -92,6 +92,6 @@ The build reads `cves/`, emits `web/public/data/cves.json`, and exposes both the
 uv run cvehunt run CVE-2025-55182 --model codex:gpt-5.5
 ```
 
-The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, generated localhost PoC artifacts, and explicit notes about any unimplemented validation stages.
+The command prints a markdown report with the pipeline outcome, real source/harness artifacts for supported ecosystems, generated localhost PoC artifacts, and explicit notes about any unimplemented validation stages. Use `--base-port <port>` if the default local ports 4000/4001 are already occupied.
 
 For an interactive contributor run, use `./contribute.sh`. It detects installed agent harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs an isolation preflight (`CVEHUNT_ISOLATION_BACKEND=docker` by default), syncs missing project dependencies when prompted, runs a persisted CVEHunt workflow with local harness execution enabled by default, invokes supported model CLIs afterward, extracts safety-checked model-authored artifacts into `model_attempt/`, writes `contribution_audit.{json,md}` plus interaction/output/isolation logs into the run directory, and rebuilds the dashboard data. Environment overrides are also available as flags, for example `./contribute.sh --cve CVE-2025-55182 --harness codex --model gpt-5.5 --dry-run`.

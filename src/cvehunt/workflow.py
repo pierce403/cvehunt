@@ -18,8 +18,9 @@ from cvehunt.models import CveRecord, RunMetadata, TraceEvent
 
 
 class CveHuntWorkflow:
-    def __init__(self, model: str = "unspecified") -> None:
+    def __init__(self, model: str = "unspecified", base_port: int = 4000) -> None:
         self.model = model
+        self.base_port = base_port
         self.collector = CollectorAgent()
         self.researcher = ResearcherAgent()
         self.builder = HarnessBuilderAgent()
@@ -68,7 +69,7 @@ class CveHuntWorkflow:
                 artifact=sources.diff_path or None,
             )
         )
-        harness, plan = self.builder.build(cve, finding, sources, self.last_artifact_root)
+        harness, plan = self.builder.build(cve, finding, sources, self.last_artifact_root, base_port=self.base_port)
         events.append(
             TraceEvent(
                 phase="Harness Builder",
@@ -79,7 +80,7 @@ class CveHuntWorkflow:
                 artifact=(harness.helper_scripts[-1] if harness.helper_scripts else None),
             )
         )
-        exploiter = self.exploiter.run(cve, finding, harness, self.last_artifact_root)
+        exploiter = self.exploiter.run(cve, finding, harness, self.last_artifact_root, base_port=self.base_port)
         if execute_poc:
             exploiter = self.harness_runner.run(
                 cve, harness, exploiter, self.last_artifact_root

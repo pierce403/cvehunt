@@ -22,6 +22,7 @@ Options:
   --skip-execute-poc       Generate artifacts without building/running the target harness
   --skip-model             Skip the external model evaluation stage
   --model-timeout SECONDS  External model evaluation timeout
+  --base-port PORT         Base localhost port for harness targets
   --isolation-backend NAME Target isolation preflight backend
   -h, --help               Show this help
 
@@ -36,6 +37,7 @@ Environment overrides:
   CVEHUNT_EXECUTE_POC=0 Generate artifacts without building/running the target harness
   CVEHUNT_SKIP_MODEL=1  Skip the external model evaluation stage
   CVEHUNT_MODEL_TIMEOUT=600  Timeout in seconds for external model evaluation
+  CVEHUNT_BASE_PORT=4000  Base localhost port; patched uses base+1 and shims use base+10/base+11
   CVEHUNT_ISOLATION_BACKEND=docker|external-vm|firecracker|qemu
                          Target isolation preflight backend (docker is current execution backend)
 USAGE
@@ -114,6 +116,14 @@ parse_cli_args() {
         ;;
       --model-timeout=*)
         CVEHUNT_MODEL_TIMEOUT="${1#*=}"
+        ;;
+      --base-port)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_BASE_PORT="$1"
+        ;;
+      --base-port=*)
+        CVEHUNT_BASE_PORT="${1#*=}"
         ;;
       --isolation-backend)
         [[ "$#" -ge 2 ]] || missing_flag_value "$1"
@@ -1336,9 +1346,9 @@ main() {
       echo "Would check/install project dependencies"
     fi
     if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
-      printf 'Would run: uv run cvehunt run %q --persist --json --model %q --execute-poc\n' "$cve_id" "$model_label"
+      printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q --execute-poc\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
     else
-      printf 'Would run: uv run cvehunt run %q --persist --json --model %q\n' "$cve_id" "$model_label"
+      printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
     fi
     if [[ "${CVEHUNT_SKIP_MODEL:-0}" != "1" ]]; then
       printf 'Would invoke external model evaluation via %q using model %q\n' "$harness" "$model"
@@ -1358,7 +1368,7 @@ main() {
   local run_id
   local run_command
   run_json_output="$(mktemp "${TMPDIR:-/tmp}/cvehunt-run-json.XXXXXX.log")"
-  run_command=(uv run cvehunt run "$cve_id" --persist --json --model "$model_label")
+  run_command=(uv run cvehunt run "$cve_id" --persist --json --model "$model_label" --base-port "${CVEHUNT_BASE_PORT:-4000}")
   if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
     run_command=("${run_command[@]}" --execute-poc)
   fi

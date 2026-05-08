@@ -27,6 +27,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model label for this run, defaults to CVEHUNT_MODEL or unspecified",
     )
     run.add_argument(
+        "--base-port",
+        type=int,
+        default=int(os.environ.get("CVEHUNT_BASE_PORT", "4000")),
+        help="Base localhost port for vulnerable/patched harness targets; patched uses base+1 and shims use base+10/base+11.",
+    )
+    run.add_argument(
         "--execute-poc",
         action="store_true",
         help=(
@@ -73,7 +79,7 @@ def main() -> None:
     store.ensure()
     if args.command == "run":
         cve = store.read_cve(args.cve_id)
-        workflow = CveHuntWorkflow(model=_model_label(args.model))
+        workflow = CveHuntWorkflow(model=_model_label(args.model), base_port=args.base_port)
         report, events = workflow.run_with_trace(
             args.cve_id, cve, execute_poc=args.execute_poc
         )
