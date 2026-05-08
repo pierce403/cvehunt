@@ -163,6 +163,11 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     model_attempt_metadata_path = artifact_dir / "model_attempt" / "metadata.json"
     model_attempt_response_path = artifact_dir / "model_attempt" / "response.md"
     model_attempt_prompt_path = artifact_dir / "model_attempt" / "prompt.md"
+    model_attempt_extracted_path = artifact_dir / "model_attempt" / "extracted.json"
+    model_attempt_notes_path = artifact_dir / "model_attempt" / "notes.md"
+    model_attempt_fix_path = artifact_dir / "model_attempt" / "fix.patch"
+    model_attempt_poc_path = artifact_dir / "model_attempt" / "poc.py"
+    model_attempt_refusal_path = artifact_dir / "model_attempt" / "refusal.md"
     report = read_json(report_path)
     pipeline_status = read_json(pipeline_status_path)
     trace = read_trace(trace_path)
@@ -202,6 +207,11 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_metadata_url": repo_url(model_attempt_metadata_path),
             "model_attempt_response_url": repo_url(model_attempt_response_path),
             "model_attempt_prompt_url": repo_url(model_attempt_prompt_path),
+            "model_attempt_extracted_url": repo_url(model_attempt_extracted_path),
+            "model_attempt_notes_url": repo_url(model_attempt_notes_path),
+            "model_attempt_fix_url": repo_url(model_attempt_fix_path),
+            "model_attempt_poc_url": repo_url(model_attempt_poc_path),
+            "model_attempt_refusal_url": repo_url(model_attempt_refusal_path),
             "sources_url": repo_url(artifact_dir / "sources", tree=True),
             "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
             "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
@@ -217,6 +227,11 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_metadata_exists": model_attempt_metadata_path.exists(),
             "model_attempt_response_exists": model_attempt_response_path.exists(),
             "model_attempt_prompt_exists": model_attempt_prompt_path.exists(),
+            "model_attempt_extracted_exists": model_attempt_extracted_path.exists(),
+            "model_attempt_notes_exists": model_attempt_notes_path.exists(),
+            "model_attempt_fix_exists": model_attempt_fix_path.exists(),
+            "model_attempt_poc_exists": model_attempt_poc_path.exists(),
+            "model_attempt_refusal_exists": model_attempt_refusal_path.exists(),
             "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
             "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
             "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),

@@ -4,7 +4,7 @@ This file follows the `FEATURES.md` format described at [features.md](https://fe
 
 ## Current Implementation Boundary
 
-CVEHunt's core Python workflow is deterministic. `./contribute.sh` now invokes supported selected model CLIs after persistence as read-only bounded evaluators and stores the prompt/transcript/response under `model_attempt/`; those external model calls do not directly modify files or replace the deterministic pipeline stages.
+CVEHunt's core Python workflow is deterministic. `./contribute.sh` now invokes supported selected model CLIs after persistence and asks them to produce bounded model-authored artifacts. The wrapper extracts only allowlisted files under `model_attempt/` (`notes.md`, `refusal.md`, `fix.patch`, `poc.py`, `validation_plan.md`, `safety.md`), safety-checks them, and records prompt/transcript/response/metadata; those external model calls do not directly modify pipeline-owned files or replace deterministic stages.
 
 By default, `uv run cvehunt run` generates artifacts only and requires `--execute-poc` for Docker execution. By default, `./contribute.sh` enables Docker/Compose target harness execution and external model evaluation; use `--skip-execute-poc` / `CVEHUNT_EXECUTE_POC=0` and `--skip-model` / `CVEHUNT_SKIP_MODEL=1` to opt out.
 
@@ -199,7 +199,7 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
   - The wrapper prints a run plan that states whether external model invocation and target execution are enabled.
 - **Not Implemented**:
   - Shell-script behavior is not covered by a dedicated automated test harness.
-  - The wrapper invokes supported models as read-only reviewers, but does not let them directly author or modify repository files.
+  - The wrapper extracts allowlisted model-authored artifacts, but does not let the model directly modify pipeline-owned repository files.
 - **Test Criteria**:
   - [x] Manual dry-run verifies flag parsing for `--cve`, `--harness`, `--model`, and boolean flags.
   - [x] `bash -n contribute.sh` passes.
@@ -211,19 +211,22 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 - **Implemented**:
   - `Run ID` and `Model` are written into `report.json`, `report.md`, and `pipeline_status.json`.
   - `./contribute.sh` records attribution as `<harness>:<model>`.
-  - Supported external evaluation harnesses currently include `pi`, `codex`, `gemini`, and best-effort `claude`.
-  - External model evaluation stores `model_attempt/prompt.md`, `transcript.txt`, `stderr.txt`, `response.md`, `command.txt`, and `metadata.json`.
+  - Supported external model harnesses currently include `pi`, `codex`, `gemini`, and best-effort `claude`.
+  - External model invocation stores `model_attempt/prompt.md`, `transcript.txt`, `stderr.txt`, `response.md`, `command.txt`, `metadata.json`, and `extracted.json`.
+  - The wrapper extracts allowlisted model-authored files such as `model_attempt/notes.md`, `model_attempt/refusal.md`, `model_attempt/fix.patch`, `model_attempt/poc.py`, `model_attempt/validation_plan.md`, and `model_attempt/safety.md`.
+  - Extracted PoC proposals must hardcode loopback targets and must not read target hosts from args, env vars, or input.
   - `contribution_audit.md` records external model invocation status and artifacts.
   - The dashboard shows model metadata for latest CVE rows and historical run rows.
 - **Not Implemented**:
   - Model-authored exploit or patch files that are automatically applied to the run.
-  - Direct file modifications by the external model invocation.
+  - Direct file modifications by the external model invocation outside `model_attempt/`.
   - Scoring of model response quality beyond persisted metadata.
 - **Test Criteria**:
   - [x] Automated tests verify the report includes the model label.
   - [x] The dashboard shows model metadata for analyzed CVEs.
   - [x] Manual smoke run verified `model_attempt/` artifacts are written for Pi invocation, including timeout metadata.
-  - [ ] Model-authored attempt artifacts are parsed and scored.
+  - [x] Model-authored attempt artifacts are parsed into allowlisted `model_attempt/` files.
+  - [ ] Model-authored attempt artifacts affect the run score after independent validation.
 
 ### Repository-Backed Dashboard
 - **Stability**: stable
@@ -262,17 +265,18 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 
 ## Planned Work
 
-### Model-Authored Artifact Stage
+### Model-Authored Artifact Application
 - **Stability**: planned
-- **Description**: Allow the selected model/harness to propose bounded, harness-scoped artifacts that CVEHunt can safety-check, persist, and optionally apply in a controlled workspace.
+- **Description**: Apply safe model-proposed artifacts in a controlled workspace and validate them against the generated harness.
 - **Planned Properties**:
-  - Parse model responses into structured states such as `refused`, `unsafe_blocked`, `partial`, `poc_generated`, `patch_generated`, and `validated`.
-  - Store proposed model-authored files under paths such as `model_attempt/poc.py`, `model_attempt/fix.patch`, `model_attempt/notes.md`, or `model_attempt/refusal.md`.
-  - Safety-check model-authored artifacts before they can affect the run or score.
+  - Apply model-proposed `fix.patch` to a copy of the vulnerable source tree.
+  - Run model-proposed `poc.py` only after safety checks and only against the localhost harness.
+  - Score model-authored `poc_generated`, `patch_generated`, and `validated` states only after independent execution evidence exists.
 - **Test Criteria**:
-  - [x] Selected supported model harnesses are invoked read-only by `./contribute.sh`.
-  - [ ] Model-authored artifacts are safety-checked and persisted as structured files.
-  - [ ] Refusals and unsafe outputs are explicitly classified.
+  - [x] Selected supported model harnesses are invoked by `./contribute.sh`.
+  - [x] Model-authored artifacts are safety-checked and persisted as structured files.
+  - [ ] Safe model-authored patches are applied and rebuilt in an isolated workspace.
+  - [ ] Safe model-authored PoCs are executed only against localhost harness targets.
 
 ### Candidate Fix Revalidation
 - **Stability**: planned

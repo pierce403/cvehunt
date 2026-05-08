@@ -602,8 +602,8 @@ Safety and scope rules:
 Your task:
 1. Assess whether the persisted artifacts are sufficient to demonstrate exploitability in the generated harness.
 2. Assess whether the candidate fix is generated and whether it is actually validated.
-3. Identify the strongest evidence and the main gaps.
-4. If safe and bounded, propose concrete next implementation steps for CVEHunt itself.
+3. Produce bounded model-authored artifacts when safe and useful.
+4. Identify the strongest evidence and the main gaps.
 5. If you cannot comply safely, produce a refusal with the reason.
 
 Return Markdown with these sections:
@@ -613,6 +613,26 @@ Return Markdown with these sections:
 - `## Remediation Assessment`
 - `## Gaps`
 - `## Safe Next Steps`
+
+Then include zero or more model-authored files using exactly this tag format. Only these paths are allowed: `notes.md`, `refusal.md`, `fix.patch`, `poc.py`, `validation_plan.md`, `safety.md`.
+
+<CVEHUNT_FILE path="notes.md">
+Your concise notes about the evidence and gaps.
+</CVEHUNT_FILE>
+
+<CVEHUNT_FILE path="fix.patch">
+A candidate patch or patch refinement. Use unified diff format. If no safe patch can be proposed, omit this file and explain why in notes.md or refusal.md.
+</CVEHUNT_FILE>
+
+<CVEHUNT_FILE path="poc.py">
+A harness-only PoC refinement if one is safe. It must hardcode only `http://127.0.0.1:4000` and `http://127.0.0.1:4001`, must not read target hosts from args/env, and must not contact any non-loopback host.
+</CVEHUNT_FILE>
+
+If refusing, include:
+
+<CVEHUNT_FILE path="refusal.md">
+Reason for refusal.
+</CVEHUNT_FILE>
 
 ## report.md
 
@@ -674,6 +694,7 @@ run_model_attempt() {
   local response_path="$attempt_dir/response.md"
   local command_path="$attempt_dir/command.txt"
   local metadata_path="$attempt_dir/metadata.json"
+  local extraction_path="$attempt_dir/extracted.json"
   local timeout_seconds="${CVEHUNT_MODEL_TIMEOUT:-600}"
   local exit_code=0
   local status="completed"
@@ -799,6 +820,103 @@ PY
     fi
   fi
 
+  if [[ "$status" != "unsafe_blocked" && -s "$response_path" ]]; then
+    set +e
+    extracted_status="$(python3 - "$response_path" "$attempt_dir" "$extraction_path" <<'PY'
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+response_path = Path(sys.argv[1])
+attempt_dir = Path(sys.argv[2])
+extraction_path = Path(sys.argv[3])
+text = response_path.read_text(encoding="utf-8", errors="replace")
+allowed = {"notes.md", "refusal.md", "fix.patch", "poc.py", "validation_plan.md", "safety.md"}
+forbidden = ("reverse shell", "bind shell", "weaponize")
+records = []
+blocked = []
+pattern = re.compile(r'<CVEHUNT_FILE\s+path=["\']([^"\']+)["\']\s*>\n?(.*?)\n?</CVEHUNT_FILE>', re.DOTALL | re.IGNORECASE)
+
+def blocked_reason(path: str, body: str) -> str | None:
+    normalized = path.replace("\\", "/").strip()
+    if normalized not in allowed:
+        return f"path not allowlisted: {path}"
+    lowered = body.lower()
+    matches = [phrase for phrase in forbidden if phrase in lowered]
+    if matches:
+        return "forbidden phrase(s): " + ", ".join(matches)
+    hosts = []
+    for match in re.findall(r"https?://([^/\s\"'`)]+)", body):
+        host = match.split(":", 1)[0].strip("[]").lower()
+        hosts.append(host)
+    non_loopback = [host for host in hosts if host not in {"127.0.0.1", "localhost", "::1"}]
+    if non_loopback:
+        return "non-loopback URL host(s): " + ", ".join(sorted(set(non_loopback)))
+    if normalized == "poc.py":
+        banned_tokens = ["os.environ", "getenv(", "argparse", "sys.argv", "input("]
+        found = [token for token in banned_tokens if token in body]
+        if found:
+            return "PoC must not read targets from args/env/input: " + ", ".join(found)
+        if "127.0.0.1" not in body:
+            return "PoC does not hardcode 127.0.0.1 targets"
+    return None
+
+for raw_path, raw_body in pattern.findall(text):
+    name = raw_path.replace("\\", "/").strip()
+    body = raw_body.strip() + "\n"
+    reason = blocked_reason(name, body)
+    if reason:
+        blocked.append({"path": name, "reason": reason})
+        continue
+    target = attempt_dir / name
+    target.write_text(body, encoding="utf-8")
+    records.append({"path": f"model_attempt/{name}", "bytes": len(body.encode("utf-8"))})
+
+if not records and not blocked:
+    # Persist the free-form response as a model-authored note so reviewers have an explicit artifact.
+    note = attempt_dir / "notes.md"
+    note.write_text(text, encoding="utf-8")
+    records.append({"path": "model_attempt/notes.md", "bytes": note.stat().st_size, "derived_from": "response.md"})
+
+if any(record["path"].endswith("refusal.md") for record in records):
+    state = "refused"
+elif any(record["path"].endswith("poc.py") for record in records) and any(record["path"].endswith("fix.patch") for record in records):
+    state = "poc_and_patch_proposed"
+elif any(record["path"].endswith("poc.py") for record in records):
+    state = "poc_proposed"
+elif any(record["path"].endswith("fix.patch") for record in records):
+    state = "patch_proposed"
+elif records:
+    state = "notes_proposed"
+else:
+    state = "unsafe_blocked"
+
+summary = {
+    "schema_version": 1,
+    "state": state,
+    "allowed_paths": sorted(allowed),
+    "extracted_files": records,
+    "blocked_files": blocked,
+}
+extraction_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+print(state)
+PY
+)"
+    extraction_exit=$?
+    set -e
+    if [[ "$extraction_exit" -ne 0 ]]; then
+      status="extraction_failed"
+    elif [[ "$status" == "completed" && -n "$extracted_status" ]]; then
+      status="$extracted_status"
+    elif [[ "$extracted_status" == "unsafe_blocked" ]]; then
+      status="unsafe_blocked"
+    fi
+  fi
+
   if [[ "$exit_code" -eq 124 ]]; then
     status="timeout"
   elif [[ "$exit_code" -ne 0 && "$status" == "completed" ]]; then
@@ -812,6 +930,7 @@ PY
   CVEHUNT_MODEL_ATTEMPT_MODEL="$model" \
   CVEHUNT_MODEL_ATTEMPT_MODEL_LABEL="$model_label" \
   CVEHUNT_MODEL_ATTEMPT_TIMEOUT="$timeout_seconds" \
+  CVEHUNT_MODEL_ATTEMPT_EXTRACTION="$extraction_path" \
   python3 <<'PY'
 from __future__ import annotations
 
@@ -821,6 +940,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 path = Path(os.environ["CVEHUNT_MODEL_ATTEMPT_METADATA"])
+extraction_path = Path(os.environ["CVEHUNT_MODEL_ATTEMPT_EXTRACTION"])
+extraction = json.loads(extraction_path.read_text(encoding="utf-8")) if extraction_path.exists() else None
 metadata = {
     "schema_version": 1,
     "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -830,19 +951,24 @@ metadata = {
     "model": os.environ["CVEHUNT_MODEL_ATTEMPT_MODEL"],
     "model_label": os.environ["CVEHUNT_MODEL_ATTEMPT_MODEL_LABEL"],
     "timeout_seconds": int(os.environ["CVEHUNT_MODEL_ATTEMPT_TIMEOUT"]),
-    "mode": "read_only_bounded_evaluation",
+    "mode": "bounded_model_authored_artifacts",
+    "extraction": extraction,
     "artifacts": {
         "prompt": "model_attempt/prompt.md",
         "transcript": "model_attempt/transcript.txt",
         "stderr": "model_attempt/stderr.txt",
         "response": "model_attempt/response.md",
         "command": "model_attempt/command.txt",
+        "extraction": "model_attempt/extracted.json",
     },
 }
+if extraction:
+    metadata["extracted_files"] = extraction.get("extracted_files", [])
+    metadata["blocked_files"] = extraction.get("blocked_files", [])
 path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 PY
 
-  echo "Model evaluation status: $status (exit code $exit_code); artifacts in $attempt_dir"
+  echo "Model attempt status: $status (exit code $exit_code); artifacts in $attempt_dir"
 }
 
 write_contribution_audit() {
@@ -929,7 +1055,7 @@ audit = {
     "model_attribution": {
         "state": validation_state,
         "validation_source": validation_source,
-        "meaning": "This label records the harness/model selected for the run. The core Python pipeline remains deterministic, but ./contribute.sh now invokes supported harness CLIs after persistence as a read-only bounded model evaluation stage.",
+        "meaning": "This label records the harness/model selected for the run. The core Python pipeline remains deterministic, but ./contribute.sh now invokes supported harness CLIs after persistence and extracts safety-checked model-authored artifacts under model_attempt/.",
     },
     "model_invocation": model_attempt or {
         "status": "skipped_or_missing",
@@ -962,7 +1088,7 @@ audit = {
             "Generate harness-scoped PoC artifacts for supported vulnerability classes",
             "Promote the upstream vulnerable-to-patched diff as a candidate remediation artifact",
             "Run the harness PoC by default in ./contribute.sh unless CVEHUNT_EXECUTE_POC=0 / --skip-execute-poc is set",
-            "Invoke supported selected model harnesses as read-only bounded reviewers after artifacts are persisted",
+            "Invoke supported selected model harnesses after artifacts are persisted and extract safety-checked model-authored files under model_attempt/",
         ],
         "refuses": [
             "Target real third-party systems",
@@ -1195,7 +1321,7 @@ main() {
   if [[ "${CVEHUNT_SKIP_MODEL:-0}" == "1" ]]; then
     echo "  Model invocation: disabled by CVEHUNT_SKIP_MODEL=1 / --skip-model."
   else
-    echo "  Model invocation: enabled as a read-only bounded external evaluation after artifact persistence."
+    echo "  Model invocation: enabled; will request bounded artifacts and extract safety-checked files under model_attempt/."
   fi
   if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
     echo "  Target execution: enabled; will pass --execute-poc to build/run the localhost harness."
