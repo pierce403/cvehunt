@@ -180,6 +180,9 @@ def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:
     assert (run_dir / "pipeline_status.json").exists()
     assert (run_dir / "research" / "source_diff.patch").exists()
     assert (run_dir / "harness" / "README.md").exists()
+    assert (run_dir / "harness" / "SETUP.md").exists()
+    assert (run_dir / "harness" / "run-targets.sh").exists()
+    assert (run_dir / "harness" / "target-environment.json").exists()
     assert (run_dir / "exploiter" / "README.md").exists()
     assert not (cve_dir / "report.json").exists()
     trace = (run_dir / "trace.jsonl").read_text(encoding="utf-8")
@@ -388,6 +391,9 @@ def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path
     db_init = (harness_dir / "db-init.sql").read_text(encoding="utf-8")
     target_py = (harness_dir / "instrumented" / "litellm_target.py").read_text(encoding="utf-8")
     compose = (harness_dir / "docker-compose.yml").read_text(encoding="utf-8")
+    deploy_script = (harness_dir / "run-targets.sh").read_text(encoding="utf-8")
+    setup_md = (harness_dir / "SETUP.md").read_text(encoding="utf-8")
+    target_env = json.loads((harness_dir / "target-environment.json").read_text(encoding="utf-8"))
     assert "COPY sources/vulnerable/litellm /workspace/package" in vulnerable_dockerfile
     assert '"/workspace/package[proxy]"' in vulnerable_dockerfile
     assert "COPY harness/instrumented/litellm_target.py" in vulnerable_dockerfile
@@ -403,10 +409,26 @@ def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path
     assert "CVEHUNT_VARIANT: vulnerable" in compose
     assert 'command: ["python", "/workspace/instrumented/litellm_target.py"]' in compose
     assert "condition: service_healthy" in compose
+    assert target_env["agent_phase_contract"][0]["phase"] == "Collector"
+    assert target_env["deployment"]["commands"]["up"] == "bash harness/run-targets.sh up"
+    assert target_env["deployment"]["commands"]["down"] == "bash harness/run-targets.sh down"
+    assert {target["name"] for target in target_env["targets"]} == {
+        "vulnerable",
+        "patched",
+        "shim-vulnerable",
+        "shim-patched",
+    }
+    assert "## Agent Contract" in setup_md
+    assert "not servable unless `/health/readiness` answers" in setup_md
+    assert "case \"${1:-up}\" in" in deploy_script
+    assert "build|up|probe|logs|down" in deploy_script
+    assert "/__cvehunt/probe" in deploy_script
+    assert "provision/provision.json" in deploy_script
+    assert "exploiter/logs/compose.log" in deploy_script
     runner = (tmp_path / "artifacts" / "exploiter" / "run-poc.sh").read_text(encoding="utf-8")
-    assert "seq 1 90" in runner
-    assert "/__cvehunt/probe" in runner
-    assert "exploiter/logs/compose.log" in runner
+    assert "bash harness/run-targets.sh up" in runner
+    assert "bash harness/run-targets.sh logs" in runner
+    assert "bash harness/run-targets.sh down" in runner
 
 
 def _build_exploiter_state(tmp_path: Path) -> tuple[CveRecord, HarnessArtifact, ExploiterArtifact]:
@@ -680,6 +702,9 @@ def test_react2shell_harness_emits_instrumented_node_target(monkeypatch, tmp_pat
     patched_dockerfile = (harness_dir / "Dockerfile.patched").read_text(encoding="utf-8")
     target_js = (harness_dir / "instrumented" / "react2shell-server.js").read_text(encoding="utf-8")
     compose = (harness_dir / "docker-compose.yml").read_text(encoding="utf-8")
+    deploy_script = (harness_dir / "run-targets.sh").read_text(encoding="utf-8")
+    setup_md = (harness_dir / "SETUP.md").read_text(encoding="utf-8")
+    target_env = json.loads((harness_dir / "target-environment.json").read_text(encoding="utf-8"))
     runner = (tmp_path / "artifacts" / "exploiter" / "run-poc.sh").read_text(encoding="utf-8")
 
     assert "COPY sources/vulnerable/package /workspace/package" in vulnerable_dockerfile
@@ -693,7 +718,12 @@ def test_react2shell_harness_emits_instrumented_node_target(monkeypatch, tmp_pat
     assert "Object.prototype.hasOwnProperty.call" in target_js
     assert "harness-canary" in target_js
     assert "127.0.0.1:4000:4000" in compose
-    assert "/__cvehunt/probe" in runner
+    assert {target["name"] for target in target_env["targets"]} == {"vulnerable", "patched"}
+    assert target_env["deployment"]["commands"]["up"] == "bash harness/run-targets.sh up"
+    assert target_env["agent_phase_contract"][2]["phase"] == "Harness Builder"
+    assert "## Agent Contract" in setup_md
+    assert "/__cvehunt/probe" in deploy_script
+    assert "bash harness/run-targets.sh up" in runner
 
 
 def test_provision_gate_requires_instrumented_probe(monkeypatch, tmp_path) -> None:

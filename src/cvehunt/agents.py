@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -506,6 +507,9 @@ class HarnessBuilderAgent:
         )
         build_script.chmod(0o755)
         compose_path = harness_dir / "docker-compose.yml"
+        deploy_script = harness_dir / "run-targets.sh"
+        target_env_path = harness_dir / "target-environment.json"
+        setup_md_path = harness_dir / "SETUP.md"
         extra_helper_paths: list[Path] = []
         instrumented_dir = harness_dir / "instrumented"
         if cve.ecosystem == "npm" and sources.package == "react-server-dom-webpack":
@@ -565,6 +569,31 @@ class HarnessBuilderAgent:
             ),
             encoding="utf-8",
         )
+        target_environment = _target_environment_spec(
+            cve=cve,
+            finding=finding,
+            sources=sources,
+            include_shim=shim_emitted,
+            base_port=base_port,
+        )
+        target_env_path.write_text(
+            json.dumps(target_environment, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        setup_md_path.write_text(
+            _target_environment_setup_markdown(target_environment),
+            encoding="utf-8",
+        )
+        deploy_script.write_text(
+            _target_deploy_script(
+                cve_id=cve.cve_id,
+                package=sources.package,
+                include_shim=shim_emitted,
+                base_port=base_port,
+            ),
+            encoding="utf-8",
+        )
+        deploy_script.chmod(0o755)
         readme.write_text(
             _harness_readme(
                 cve=cve,
@@ -635,6 +664,9 @@ class HarnessBuilderAgent:
                 helper_scripts=[
                     _relpath(build_script, artifact_root),
                     _relpath(compose_path, artifact_root),
+                    _relpath(deploy_script, artifact_root),
+                    _relpath(target_env_path, artifact_root),
+                    _relpath(setup_md_path, artifact_root),
                     *[_relpath(path, artifact_root) for path in extra_helper_paths],
                     _relpath(readme, artifact_root),
                 ],
@@ -2709,6 +2741,471 @@ def _remove_tree(path: Path) -> None:
     path.rmdir()
 
 
+def _image_names(cve_id: str, package: str) -> dict[str, str]:
+    slug = cve_id.lower().replace("-", "_")
+    package_slug = re.sub(r"[^a-z0-9_.-]+", "-", package.lower()).strip("-") or "package"
+    return {
+        "vulnerable": f"cvehunt/{slug}-{package_slug}:vulnerable",
+        "patched": f"cvehunt/{slug}-{package_slug}:patched",
+        "shim_vulnerable": f"cvehunt/{slug}-{package_slug}-shim:vulnerable",
+        "shim_patched": f"cvehunt/{slug}-{package_slug}-shim:patched",
+    }
+
+
+def _target_environment_spec(
+    *,
+    cve: CveRecord,
+    finding: ResearchFinding,
+    sources: SourceBundle,
+    include_shim: bool,
+    base_port: int,
+) -> dict[str, object]:
+    package = sources.package or "unknown-package"
+    images = _image_names(cve.cve_id, package)
+    targets: list[dict[str, object]] = [
+        _target_spec_entry(
+            name="vulnerable",
+            role="vulnerable upstream target",
+            variant="vulnerable",
+            image=images["vulnerable"],
+            dockerfile="harness/Dockerfile.vulnerable",
+            source_root=sources.vulnerable_root,
+            host_port=base_port,
+            container_port=4000,
+            vulnerability_class=finding.vulnerability_class,
+            ecosystem=cve.ecosystem,
+        ),
+        _target_spec_entry(
+            name="patched",
+            role="patched upstream target",
+            variant="patched",
+            image=images["patched"],
+            dockerfile="harness/Dockerfile.patched",
+            source_root=sources.patched_root,
+            host_port=base_port + 1,
+            container_port=4000,
+            vulnerability_class=finding.vulnerability_class,
+            ecosystem=cve.ecosystem,
+        ),
+    ]
+    if include_shim:
+        targets.extend(
+            [
+                _target_spec_entry(
+                    name="shim-vulnerable",
+                    role="vulnerable class-demonstration shim",
+                    variant="shim_vulnerable",
+                    image=images["shim_vulnerable"],
+                    dockerfile="harness/shim/vulnerable/Dockerfile",
+                    source_root="harness/shim/vulnerable",
+                    host_port=base_port + 10,
+                    container_port=8000,
+                    vulnerability_class=finding.vulnerability_class,
+                    ecosystem="shim",
+                ),
+                _target_spec_entry(
+                    name="shim-patched",
+                    role="patched class-demonstration shim",
+                    variant="shim_patched",
+                    image=images["shim_patched"],
+                    dockerfile="harness/shim/patched/Dockerfile",
+                    source_root="harness/shim/patched",
+                    host_port=base_port + 11,
+                    container_port=8000,
+                    vulnerability_class=finding.vulnerability_class,
+                    ecosystem="shim",
+                ),
+            ]
+        )
+    sidecars: list[dict[str, object]] = []
+    if cve.ecosystem == "pypi" and package == "litellm":
+        sidecars.append(
+            {
+                "name": "db",
+                "image": "postgres:16-alpine",
+                "purpose": "Per-run Postgres backing store for LiteLLM proxy auth state.",
+                "environment": {
+                    "POSTGRES_USER": "litellm",
+                    "POSTGRES_PASSWORD": "litellm",
+                    "POSTGRES_DB": "litellm",
+                },
+                "init_sql": "harness/db-init.sql",
+                "healthcheck": "pg_isready -U litellm -d litellm",
+            }
+        )
+    return {
+        "schema_version": 1,
+        "cve_id": cve.cve_id,
+        "package": {
+            "ecosystem": cve.ecosystem,
+            "name": package,
+            "vulnerable_version": sources.vulnerable_version,
+            "patched_version": sources.patched_version,
+            "vulnerable_source_root": sources.vulnerable_root,
+            "patched_source_root": sources.patched_root,
+            "source_diff": sources.diff_path,
+        },
+        "finding": {
+            "vulnerability_class": finding.vulnerability_class,
+            "impacted_surface": finding.impacted_surface,
+            "patch_signal": finding.relevant_patch_signal,
+            "changed_files": finding.changed_files,
+        },
+        "agent_phase_contract": [
+            {
+                "phase": "Collector",
+                "must_provide": [
+                    "exact CVE id",
+                    "ecosystem",
+                    "one vulnerable package coordinate",
+                    "one patched package coordinate",
+                ],
+                "failure_mode": "If coordinates are missing or ambiguous, return not_supported/failed instead of inventing setup steps.",
+            },
+            {
+                "phase": "Researcher",
+                "must_provide": [
+                    "materialized vulnerable source tree",
+                    "materialized patched source tree",
+                    "unified source diff",
+                    "patch signal tied to real changed source when possible",
+                ],
+                "failure_mode": "If source acquisition fails, do not emit a runnable target environment.",
+            },
+            {
+                "phase": "Harness Builder",
+                "must_provide": [
+                    "vulnerable and patched Dockerfiles that copy the acquired source roots",
+                    "localhost-only compose file",
+                    "instrumented target endpoint at /__cvehunt/probe",
+                    "deployment script that can build, start, probe, log, and stop the target stack",
+                ],
+                "failure_mode": "Readiness without /__cvehunt/probe is not a servable target.",
+            },
+        ],
+        "deployment": {
+            "isolation_backend": "docker",
+            "loopback_only": True,
+            "host": "127.0.0.1",
+            "base_port": base_port,
+            "requirements": [
+                "docker",
+                "curl",
+                "python3",
+                "docker compose or the generated direct-docker fallback",
+            ],
+            "commands": {
+                "build": "bash harness/run-targets.sh build",
+                "up": "bash harness/run-targets.sh up",
+                "probe": "bash harness/run-targets.sh probe",
+                "logs": "bash harness/run-targets.sh logs",
+                "down": "bash harness/run-targets.sh down",
+                "execute_poc_after_exploiter_phase": "bash exploiter/run-poc.sh",
+            },
+            "provision_output": "provision/provision.json",
+            "logs": "harness/logs/target-stack.log",
+        },
+        "targets": targets,
+        "sidecars": sidecars,
+        "artifacts": [
+            "harness/Dockerfile.vulnerable",
+            "harness/Dockerfile.patched",
+            "harness/docker-compose.yml",
+            "harness/run-targets.sh",
+            "harness/target-environment.json",
+            "harness/SETUP.md",
+        ],
+        "safety_boundaries": [
+            "all published ports bind to 127.0.0.1",
+            "target probes use only localhost URLs",
+            "no provider credentials or external service calls are required for setup",
+            "instrumentation uses harness-local synthetic seed data only",
+        ],
+    }
+
+
+def _target_spec_entry(
+    *,
+    name: str,
+    role: str,
+    variant: str,
+    image: str,
+    dockerfile: str,
+    source_root: str | None,
+    host_port: int,
+    container_port: int,
+    vulnerability_class: str,
+    ecosystem: str,
+) -> dict[str, object]:
+    base_url = f"http://127.0.0.1:{host_port}"
+    functional_probe: dict[str, object]
+    if vulnerability_class == "unsafe deserialization" and ecosystem == "npm":
+        functional_probe = {
+            "method": "POST",
+            "path": "/server-function",
+            "body": '["$$ref",{"id":"harness-canary","value":"harness-only-marker"}]',
+            "expected_vulnerable": "HTTP 200 JSON with triggered=true and marker=harness-canary",
+            "expected_patched": "HTTP 403 JSON with blocked=true",
+        }
+    elif vulnerability_class == "sql injection" and ecosystem == "shim":
+        functional_probe = {
+            "method": "GET",
+            "path": "/verify",
+            "headers": {"Authorization": "Bearer sk-' OR 1=1-- "},
+            "expected_vulnerable": "HTTP 200 JSON containing keys/key_alias/user_id",
+            "expected_patched": "HTTP 401/403 or no auth-shaped body",
+        }
+    elif vulnerability_class == "sql injection":
+        functional_probe = {
+            "method": "GET",
+            "path": "/__cvehunt/probe",
+            "expected": "HTTP 200 JSON after child LiteLLM readiness and /key/generate seed",
+            "follow_up_paths": ["/key/info", "/v1/models"],
+        }
+    else:
+        functional_probe = {
+            "method": "GET",
+            "path": "/__cvehunt/probe",
+            "expected": "HTTP 200 JSON with instrumented=true",
+        }
+    return {
+        "name": name,
+        "role": role,
+        "variant": variant,
+        "image": image,
+        "dockerfile": dockerfile,
+        "source_root": source_root,
+        "host": "127.0.0.1",
+        "host_port": host_port,
+        "container_port": container_port,
+        "base_url": base_url,
+        "readiness_probe": {
+            "method": "GET",
+            "url": f"{base_url}/health/readiness",
+            "expected": "HTTP 200",
+        },
+        "instrumented_probe": {
+            "method": "GET",
+            "url": f"{base_url}/__cvehunt/probe",
+            "expected_json": {"instrumented": True},
+        },
+        "functional_probe": functional_probe,
+    }
+
+
+def _target_environment_setup_markdown(spec: dict[str, object]) -> str:
+    package = dict(spec["package"])
+    finding = dict(spec["finding"])
+    deployment = dict(spec["deployment"])
+    commands = dict(deployment["commands"])
+    targets = list(spec["targets"])
+    lines = [
+        f"# Target Environment: {spec['cve_id']}",
+        "",
+        "This runbook is generated by the first three CVEHunt phases. It is the",
+        "contract later agents use to deploy the vulnerable and patched targets",
+        "without guessing at package setup.",
+        "",
+        "## Package",
+        "",
+        f"- Ecosystem: {package.get('ecosystem')}",
+        f"- Package: {package.get('name')}",
+        f"- Vulnerable version: {package.get('vulnerable_version')}",
+        f"- Patched version: {package.get('patched_version')}",
+        f"- Vulnerable source: `{package.get('vulnerable_source_root')}`",
+        f"- Patched source: `{package.get('patched_source_root')}`",
+        f"- Source diff: `{package.get('source_diff')}`",
+        "",
+        "## Vulnerability Surface",
+        "",
+        f"- Class: {finding.get('vulnerability_class')}",
+        f"- Surface: {finding.get('impacted_surface')}",
+        f"- Patch signal: {finding.get('patch_signal')}",
+        "",
+        "## Commands",
+        "",
+        f"- Build: `{commands.get('build')}`",
+        f"- Start and probe: `{commands.get('up')}`",
+        f"- Re-probe running targets: `{commands.get('probe')}`",
+        f"- Logs: `{commands.get('logs')}`",
+        f"- Stop: `{commands.get('down')}`",
+        "",
+        "## Targets",
+        "",
+    ]
+    for target in targets:
+        target_map = dict(target)
+        lines.extend(
+            [
+                f"### {target_map.get('name')}",
+                "",
+                f"- Role: {target_map.get('role')}",
+                f"- Image: `{target_map.get('image')}`",
+                f"- Dockerfile: `{target_map.get('dockerfile')}`",
+                f"- Source root: `{target_map.get('source_root')}`",
+                f"- Base URL: `{target_map.get('base_url')}`",
+                f"- Readiness: `{dict(target_map.get('readiness_probe', {})).get('url')}`",
+                f"- Instrumented probe: `{dict(target_map.get('instrumented_probe', {})).get('url')}`",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Agent Contract",
+            "",
+            "A target is not servable unless `/health/readiness` answers and",
+            "`/__cvehunt/probe` returns JSON containing `instrumented: true`.",
+            "If source roots, Dockerfiles, compose, or this runbook are missing,",
+            "later agents should stop and report the harness as incomplete rather",
+            "than inventing deployment steps.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _target_deploy_script(
+    *,
+    cve_id: str,
+    package: str,
+    include_shim: bool,
+    base_port: int,
+) -> str:
+    project_slug = f"cvehunt_{cve_id.lower().replace('-', '_')}_{base_port}"
+    has_shim = "1" if include_shim else "0"
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "# Generated by HarnessBuilderAgent. Builds, starts, probes, logs, and",
+            "# stops the target environment described in harness/target-environment.json.",
+            "set -euo pipefail",
+            f'PROJECT="{project_slug}"',
+            f'HAS_SHIM="{has_shim}"',
+            'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
+            'cd "$ROOT"',
+            "mkdir -p harness/logs provision",
+            'if [ -d exploiter ]; then mkdir -p exploiter/logs; fi',
+            "compose_available() { docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; }",
+            "compose_cmd() {",
+            '  if docker compose version >/dev/null 2>&1; then docker compose "$@"; else docker-compose "$@"; fi',
+            "}",
+            "image_for() {",
+            "  awk -v svc=\"$1:\" '$1 == svc {inside=1; next} inside && $1 == \"image:\" {print $2; exit} /^[^[:space:]]/ {inside=0}' harness/docker-compose.yml",
+            "}",
+            "has_shim() { [ \"$HAS_SHIM\" = \"1\" ]; }",
+            "manual_names() {",
+            '  NET="${PROJECT}_net"; DB="${PROJECT}_db"; VULN="${PROJECT}_vulnerable"; PATCHED="${PROJECT}_patched"; SHIM_VULN="${PROJECT}_shim_vulnerable"; SHIM_PATCHED="${PROJECT}_shim_patched"',
+            "}",
+            "manual_build() {",
+            "  VULN_IMAGE=$(image_for vulnerable); PATCHED_IMAGE=$(image_for patched); SHIM_VULN_IMAGE=$(image_for shim-vulnerable || true); SHIM_PATCHED_IMAGE=$(image_for shim-patched || true)",
+            "  docker build -t \"$VULN_IMAGE\" -f harness/Dockerfile.vulnerable .",
+            "  docker build -t \"$PATCHED_IMAGE\" -f harness/Dockerfile.patched .",
+            "  if has_shim && [ -n \"${SHIM_VULN_IMAGE:-}\" ] && [ -f harness/shim/vulnerable/Dockerfile ]; then docker build -t \"$SHIM_VULN_IMAGE\" harness/shim/vulnerable; fi",
+            "  if has_shim && [ -n \"${SHIM_PATCHED_IMAGE:-}\" ] && [ -f harness/shim/patched/Dockerfile ]; then docker build -t \"$SHIM_PATCHED_IMAGE\" harness/shim/patched; fi",
+            "}",
+            "manual_up() {",
+            "  manual_names",
+            "  VULN_IMAGE=$(image_for vulnerable); PATCHED_IMAGE=$(image_for patched); SHIM_VULN_IMAGE=$(image_for shim-vulnerable || true); SHIM_PATCHED_IMAGE=$(image_for shim-patched || true)",
+            "  docker network create \"$NET\" >/dev/null 2>&1 || true",
+            "  if [ -f harness/db-init.sql ]; then",
+            "    docker rm -f \"$DB\" >/dev/null 2>&1 || true",
+            "    docker run -d --name \"$DB\" --network \"$NET\" --network-alias db -e POSTGRES_USER=litellm -e POSTGRES_PASSWORD=litellm -e POSTGRES_DB=litellm -v \"$PWD/harness/db-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro\" postgres:16-alpine >/dev/null",
+            "    for _ in $(seq 1 60); do docker exec \"$DB\" pg_isready -U litellm -d litellm >/dev/null 2>&1 && break; sleep 2; done",
+            "  fi",
+            "  docker rm -f \"$VULN\" \"$PATCHED\" >/dev/null 2>&1 || true",
+            "  if [ -f harness/config.yaml ]; then",
+            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_vuln -e LITELLM_MASTER_KEY=sk-harness-master -e CVEHUNT_VARIANT=vulnerable -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$VULN_IMAGE\" python /workspace/instrumented/litellm_target.py >/dev/null",
+            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_patched -e LITELLM_MASTER_KEY=sk-harness-master -e CVEHUNT_VARIANT=patched -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$PATCHED_IMAGE\" python /workspace/instrumented/litellm_target.py >/dev/null",
+            "  else",
+            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 \"$VULN_IMAGE\" >/dev/null",
+            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 \"$PATCHED_IMAGE\" >/dev/null",
+            "  fi",
+            "  if has_shim; then",
+            "    docker rm -f \"$SHIM_VULN\" \"$SHIM_PATCHED\" >/dev/null 2>&1 || true",
+            f"    if [ -n \"${{SHIM_VULN_IMAGE:-}}\" ]; then docker run -d --name \"$SHIM_VULN\" --network \"$NET\" -p 127.0.0.1:{base_port + 10}:8000 \"$SHIM_VULN_IMAGE\" >/dev/null; fi",
+            f"    if [ -n \"${{SHIM_PATCHED_IMAGE:-}}\" ]; then docker run -d --name \"$SHIM_PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 11}:8000 \"$SHIM_PATCHED_IMAGE\" >/dev/null; fi",
+            "  fi",
+            "}",
+            "manual_logs() { manual_names; for name in \"$DB\" \"$VULN\" \"$PATCHED\" \"$SHIM_VULN\" \"$SHIM_PATCHED\"; do echo \"===== $name =====\"; docker logs --tail 200 \"$name\" 2>&1 || true; done; }",
+            "manual_down() { manual_names; docker rm -f \"$DB\" \"$VULN\" \"$PATCHED\" \"$SHIM_VULN\" \"$SHIM_PATCHED\" >/dev/null 2>&1 || true; docker network rm \"$NET\" >/dev/null 2>&1 || true; }",
+            "build_targets() {",
+            "  if compose_available; then compose_cmd -p \"$PROJECT\" -f harness/docker-compose.yml build; else manual_build; fi",
+            "}",
+            "start_targets() {",
+            "  if compose_available; then compose_cmd -p \"$PROJECT\" -f harness/docker-compose.yml up -d; else manual_up; fi",
+            "}",
+            "capture_logs() {",
+            "  if compose_available; then compose_cmd -p \"$PROJECT\" -f harness/docker-compose.yml logs --no-color --tail 200 >harness/logs/target-stack.log 2>&1 || true; else manual_logs >harness/logs/target-stack.log 2>&1 || true; fi",
+            "  if [ -d exploiter/logs ]; then cp harness/logs/target-stack.log exploiter/logs/compose.log 2>/dev/null || true; fi",
+            "}",
+            "stop_targets() {",
+            "  if compose_available; then compose_cmd -p \"$PROJECT\" -f harness/docker-compose.yml down --remove-orphans >/dev/null 2>&1 || true; else manual_down; fi",
+            "}",
+            "wait_for_targets() {",
+            f'  echo "[cvehunt] waiting for upstream probes on 127.0.0.1:{base_port} and :{base_port + 1}"',
+            "  for _ in $(seq 1 90); do",
+            f'    if curl --silent --fail http://127.0.0.1:{base_port}/__cvehunt/probe >/dev/null 2>&1 \\',
+            f'      && curl --silent --fail http://127.0.0.1:{base_port + 1}/__cvehunt/probe >/dev/null 2>&1; then',
+            "      break",
+            "    fi",
+            "    sleep 2",
+            "  done",
+            "  if has_shim; then",
+            f'    echo "[cvehunt] waiting for shim probes on 127.0.0.1:{base_port + 10} and :{base_port + 11}"',
+            "    for _ in $(seq 1 30); do",
+            f'      if curl --silent --fail http://127.0.0.1:{base_port + 10}/__cvehunt/probe >/dev/null 2>&1 \\',
+            f'        && curl --silent --fail http://127.0.0.1:{base_port + 11}/__cvehunt/probe >/dev/null 2>&1; then',
+            "        break",
+            "      fi",
+            "      sleep 2",
+            "    done",
+            "  fi",
+            "}",
+            "probe_target() {",
+            '  name="$1"; port="$2"',
+            "  ready=0; servable=0; detail='no readiness response'",
+            '  if curl --silent --fail --max-time 3 "http://127.0.0.1:${port}/health/readiness" >/dev/null 2>&1; then',
+            "    ready=1; detail='readiness HTTP 200; instrumented probe missing'",
+            '    probe_body=$(curl --silent --show-error --max-time 5 "http://127.0.0.1:${port}/__cvehunt/probe" 2>&1 || true)',
+            "    if printf '%s' \"$probe_body\" | grep -q '\"instrumented\"[[:space:]]*:[[:space:]]*true'; then",
+            "      servable=1; detail='readiness HTTP 200; instrumented probe ok'",
+            "    fi",
+            "  fi",
+            '  printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$name" "$port" "$ready" "$servable" "$detail" >> provision/provision.tsv',
+            "}",
+            "probe_all() {",
+            "  : > provision/provision.tsv",
+            f"  probe_target vulnerable {base_port}",
+            f"  probe_target patched {base_port + 1}",
+            "  if has_shim; then",
+            f"    probe_target shim-vulnerable {base_port + 10}",
+            f"    probe_target shim-patched {base_port + 11}",
+            "  fi",
+            "  python3 - <<'PROVISIONPY'",
+            "import csv, json",
+            "rows=[r for r in csv.reader(open('provision/provision.tsv'), delimiter='\\t') if len(r)>=5]",
+            "targets=[{'name':r[0],'url':f'http://127.0.0.1:{r[1]}','ready':r[2]=='1','servable':r[3]=='1','detail':r[4]} for r in rows]",
+            "servable=sum(1 for t in targets if t['servable'])",
+            "status='servable' if targets and servable==len(targets) else ('partially_servable' if servable else 'not_servable')",
+            "note=f'{servable}/{len(targets)} targets servable'",
+            "open('provision/provision.json','w').write(json.dumps({'status':status,'note':note,'targets':targets}, indent=2)+'\\n')",
+            "open('provision/provision.log','w').write(f'[provision] {status}: {note}\\n')",
+            "print(f'provision: {status} ({note})')",
+            "PROVISIONPY",
+            "}",
+            "case \"${1:-up}\" in",
+            "  build) build_targets ;;",
+            "  up) build_targets; start_targets; wait_for_targets; probe_all ;;",
+            "  probe) probe_all ;;",
+            "  logs) capture_logs ;;",
+            "  down) stop_targets ;;",
+            "  *) echo 'usage: bash harness/run-targets.sh [build|up|probe|logs|down]' >&2; exit 2 ;;",
+            "esac",
+            "",
+        ]
+    )
+
+
 def _react2shell_instrumented_server_source() -> str:
     return r'''"use strict";
 
@@ -3978,112 +4475,19 @@ def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
     return "\n".join(
         [
             "#!/usr/bin/env bash",
-            "# Harness orchestration: build images, start vulnerable and patched",
-            "# services on 127.0.0.1 only, run the PoC, capture evidence, tear down.",
+            "# Harness orchestration: delegate target setup to the runbook emitted",
+            "# by the first three pipeline phases, then run the deterministic PoC.",
             "set -euo pipefail",
             f'echo "[cvehunt] orchestrating harness for {cve.cve_id}"',
             'pushd "$(dirname "$0")/.." >/dev/null',
             "mkdir -p exploiter/logs",
             'exec > exploiter/logs/run-poc.log 2>&1',
-            "compose_available() { docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; }",
-            "compose_cmd() {",
-            "  if docker compose version >/dev/null 2>&1; then docker compose \"$@\"; else docker-compose \"$@\"; fi",
-            "}",
-            "image_for() {",
-            "  awk -v svc=\"$1:\" '$1 == svc {inside=1; next} inside && $1 == \"image:\" {print $2; exit} /^[^[:space:]]/ {inside=0}' harness/docker-compose.yml",
-            "}",
-            "manual_names() {",
-            f'  PROJECT="cvehunt_{cve.cve_id.lower().replace("-", "_")}_$$"',
-            '  NET="${PROJECT}_net"; DB="${PROJECT}_db"; VULN="${PROJECT}_vulnerable"; PATCHED="${PROJECT}_patched"; SHIM_VULN="${PROJECT}_shim_vulnerable"; SHIM_PATCHED="${PROJECT}_shim_patched"',
-            "}",
-            "manual_build() {",
-            "  manual_names",
-            "  VULN_IMAGE=$(image_for vulnerable); PATCHED_IMAGE=$(image_for patched); SHIM_VULN_IMAGE=$(image_for shim-vulnerable || true); SHIM_PATCHED_IMAGE=$(image_for shim-patched || true)",
-            "  docker build -t \"$VULN_IMAGE\" -f harness/Dockerfile.vulnerable .",
-            "  docker build -t \"$PATCHED_IMAGE\" -f harness/Dockerfile.patched .",
-            "  if [ -n \"${SHIM_VULN_IMAGE:-}\" ] && [ -f harness/shim/vulnerable/Dockerfile ]; then docker build -t \"$SHIM_VULN_IMAGE\" harness/shim/vulnerable; fi",
-            "  if [ -n \"${SHIM_PATCHED_IMAGE:-}\" ] && [ -f harness/shim/patched/Dockerfile ]; then docker build -t \"$SHIM_PATCHED_IMAGE\" harness/shim/patched; fi",
-            "}",
-            "manual_up() {",
-            "  manual_names",
-            "  VULN_IMAGE=$(image_for vulnerable); PATCHED_IMAGE=$(image_for patched); SHIM_VULN_IMAGE=$(image_for shim-vulnerable || true); SHIM_PATCHED_IMAGE=$(image_for shim-patched || true)",
-            "  docker network create \"$NET\" >/dev/null",
-            "  if [ -f harness/db-init.sql ]; then",
-            "    docker run -d --name \"$DB\" --network \"$NET\" --network-alias db -e POSTGRES_USER=litellm -e POSTGRES_PASSWORD=litellm -e POSTGRES_DB=litellm -v \"$PWD/harness/db-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro\" postgres:16-alpine >/dev/null",
-            "    for _ in $(seq 1 60); do docker exec \"$DB\" pg_isready -U litellm -d litellm >/dev/null 2>&1 && break; sleep 2; done",
-            "  fi",
-            "  if [ -f harness/config.yaml ]; then",
-            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_vuln -e LITELLM_MASTER_KEY=sk-harness-master -e CVEHUNT_VARIANT=vulnerable -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$VULN_IMAGE\" python /workspace/instrumented/litellm_target.py >/dev/null",
-            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_patched -e LITELLM_MASTER_KEY=sk-harness-master -e CVEHUNT_VARIANT=patched -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$PATCHED_IMAGE\" python /workspace/instrumented/litellm_target.py >/dev/null",
-            "  else",
-            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 \"$VULN_IMAGE\" >/dev/null",
-            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 \"$PATCHED_IMAGE\" >/dev/null",
-            "  fi",
-            f"  if [ -n \"${{SHIM_VULN_IMAGE:-}}\" ]; then docker run -d --name \"$SHIM_VULN\" --network \"$NET\" -p 127.0.0.1:{base_port + 10}:8000 \"$SHIM_VULN_IMAGE\" >/dev/null; fi",
-            f"  if [ -n \"${{SHIM_PATCHED_IMAGE:-}}\" ]; then docker run -d --name \"$SHIM_PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 11}:8000 \"$SHIM_PATCHED_IMAGE\" >/dev/null; fi",
-            "}",
-            "manual_logs() { manual_names; for name in \"$DB\" \"$VULN\" \"$PATCHED\" \"$SHIM_VULN\" \"$SHIM_PATCHED\"; do echo \"===== $name =====\"; docker logs --tail 200 \"$name\" 2>&1 || true; done; }",
-            "manual_down() { manual_names; docker rm -f \"$DB\" \"$VULN\" \"$PATCHED\" \"$SHIM_VULN\" \"$SHIM_PATCHED\" >/dev/null 2>&1 || true; docker network rm \"$NET\" >/dev/null 2>&1 || true; }",
-            "capture_logs() {",
-            "  if compose_available; then compose_cmd -f harness/docker-compose.yml logs --no-color --tail 200 >exploiter/logs/compose.log 2>&1 || true; else manual_logs >exploiter/logs/compose.log 2>&1 || true; fi",
-            "}",
             "cleanup() {",
-            "  capture_logs",
-            "  if compose_available; then compose_cmd -f harness/docker-compose.yml down --remove-orphans >/dev/null 2>&1 || true; else manual_down; fi",
+            "  bash harness/run-targets.sh logs || true",
+            "  bash harness/run-targets.sh down || true",
             "}",
             "trap cleanup EXIT",
-            "if compose_available; then compose_cmd -f harness/docker-compose.yml build; compose_cmd -f harness/docker-compose.yml up -d; else echo '[cvehunt] docker compose unavailable; using direct docker fallback'; manual_build; manual_up; fi",
-            "mkdir -p provision",
-            ": > provision/provision.tsv",
-            "probe_target() {",
-            '  name="$1"; port="$2"',
-            "  ready=0; servable=0; detail='no readiness response'",
-            f'  if curl --silent --fail --max-time 3 http://127.0.0.1:${{port}}/health/readiness >/dev/null 2>&1; then',
-            "    ready=1; detail='readiness HTTP 200; instrumented probe missing'",
-            "    probe_body=$(curl --silent --show-error --max-time 5 http://127.0.0.1:${port}/__cvehunt/probe 2>&1 || true)",
-            "    if printf '%s' \"$probe_body\" | grep -q '\"instrumented\"[[:space:]]*:[[:space:]]*true'; then",
-            "      servable=1; detail='readiness HTTP 200; instrumented probe ok'",
-            "    fi",
-            "  fi",
-            '  printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$port" "$ready" "$servable" "$detail" >> provision/provision.tsv',
-            "  return 0",
-            "}",
-            "has_shim() { grep -q '^  shim-vulnerable:' harness/docker-compose.yml; }",
-            f'echo "[cvehunt] best-effort readiness: upstream 127.0.0.1:{base_port} and :{base_port + 1}"',
-            "for _ in $(seq 1 90); do",
-            f'  if curl --silent --fail http://127.0.0.1:{base_port}/__cvehunt/probe >/dev/null 2>&1 \\',
-            f'    && curl --silent --fail http://127.0.0.1:{base_port + 1}/__cvehunt/probe >/dev/null 2>&1; then',
-            "    break",
-            "  fi",
-            "  sleep 2",
-            "done",
-            "if has_shim; then",
-            f'  echo "[cvehunt] best-effort readiness: shim 127.0.0.1:{base_port + 10} and :{base_port + 11}"',
-            "  for _ in $(seq 1 30); do",
-            f'    if curl --silent --fail http://127.0.0.1:{base_port + 10}/__cvehunt/probe >/dev/null 2>&1 \\',
-            f'      && curl --silent --fail http://127.0.0.1:{base_port + 11}/__cvehunt/probe >/dev/null 2>&1; then',
-            "      break",
-            "    fi",
-            "    sleep 2",
-            "  done",
-            "fi",
-            f'probe_target vulnerable {base_port}',
-            f'probe_target patched {base_port + 1}',
-            "if has_shim; then",
-            f'  probe_target shim-vulnerable {base_port + 10}',
-            f'  probe_target shim-patched {base_port + 11}',
-            "  fi",
-            "python3 - <<'PROVISIONPY'",
-            "import csv, json",
-            "rows=[r for r in csv.reader(open('provision/provision.tsv'), delimiter='\t') if len(r)>=5]",
-            "targets=[{'name':r[0],'url':f'http://127.0.0.1:{r[1]}','ready':r[2]=='1','servable':r[3]=='1','detail':r[4]} for r in rows]",
-            "servable=sum(1 for t in targets if t['servable'])",
-            "status='servable' if targets and servable==len(targets) else ('partially_servable' if servable else 'not_servable')",
-            "note=f'{servable}/{len(targets)} targets servable'",
-            "open('provision/provision.json','w').write(json.dumps({'status':status,'note':note,'targets':targets}, indent=2)+'\\n')",
-            "open('provision/provision.log','w').write(f'[provision] {status}: {note}\\n')",
-            "print(f'provision: {status} ({note})')",
-            "PROVISIONPY",
+            "bash harness/run-targets.sh up",
             "if [[ \"${CVEHUNT_NO_DETERMINISTIC_POC:-0}\" != \"1\" ]]; then",
             "  python3 exploiter/poc.py | tee exploiter/outcome.json || true",
             "else",
