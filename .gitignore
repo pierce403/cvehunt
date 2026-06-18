@@ -21,6 +21,7 @@ moak_site_notes/
 cves/*/runs/*/sources/
 cves/*/runs/*/research/source_diff.patch
 cves/*/runs/*/fix/candidate.patch
+cves/*/runs/*/fix/applied/
 # Raw pi NDJSON event stream can be hundreds of MB of streaming-thinking deltas;
 # the human-readable transcript.txt + truncated reasoning.md + distillation.jsonl
 # are the persisted distillation corpus instead.

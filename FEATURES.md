@@ -200,6 +200,23 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
   - [x] `test_workflow_execute_poc_flag_threads_outcomes_into_judge` asserts `report.negotiation.escalation_achieved`/`patch_effective` are threaded into the judgement.
   - [x] `test_workflow_default_does_not_invoke_runner` confirms no Docker/loop execution occurs without `--execute-poc`.
 
+### Model Attempt Instrumentation & Comparison
+- **Stability**: in-progress
+- **Description**: When `./contribute.sh` invokes an external model (pi, codex), capture per-stage timing, token counts, refusal moments, and a distillation-grade corpus record; surface a per-CVE model comparison on the dashboard.
+- **Implemented**:
+  - `cvehunt run` records `started_at`/`completed_at`/`duration_ms` per pipeline stage in `trace.jsonl` and `pipeline_status.json`.
+  - `contribute.sh` pi branch switches to `--mode json`, parses the NDJSON event stream for assistant text + the final `message_end` usage block, and writes `model_attempt/usage.json` (input/output/cacheRead/cacheWrite/totalTokens), `reasoning.md` (truncated thinking), `timing.json`, `refusal.json` (timestamped), and `distillation.jsonl` (one structured prompt/response record for fine-tuning). Codex branch parses `tokens used N` from its transcript.
+  - Safety scan preserves the model's raw output as `raw_response.md` + a `redaction_notice.md` instead of destroying `response.md` (so refusing/flagged responses are auditable and corpus-usable).
+  - Refusal detection records BOTH hard phrases (`i cannot`, …) AND **soft decline** (model produced notes/plans but declined to author `poc.py`/`fix.patch`), with `detected_at` timestamps.
+  - Dashboard: `generate_site_data.py` exposes `model_title` (prettified: `GLM 5.2 (pi)`, `GPT-5.5 (codex)`), a `model_attempt` summary, and URLs/exists for all the new artifacts. `web/src/main.jsx` renders a `ModelAttemptPanel` (tokens, timing, refusal callout, distillation log links) and a `ModelComparisonPanel` (all persisted runs of a CVE, one row per model, comparing verdict/score/loop/escalation/patched-block/residual/tokens/duration/refusal).
+- **Not Implemented**:
+  - Token capture for gemini/claude/opencode harnesses (pi and codex covered).
+  - Model-driven generate-attack → generate-fix iteration (the loop replays captured outcomes + a fixed residual budget).
+- **Test Criteria**:
+  - [x] 20 existing tests stay green.
+  - [x] Real GLM 5.2 run (pi) and GPT-5.5 run (codex) on CVE-2026-42208 persist usage.json/timing.json/refusal.json/distillation.jsonl and appear side-by-side in the dashboard comparison panel.
+  - [ ] Automated test asserting the comparison view data shape.
+
 ### Target Environment Reporting
 - **Stability**: stable
 - **Description**: Include detailed target setup/version information in final reports.

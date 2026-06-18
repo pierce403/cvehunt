@@ -22,7 +22,12 @@ def pretty_model_label(model: str | None) -> str:
     `pi:venice/zai-org-glm-5-2` -> 'GLM 5.2 (pi)'
     `codex:gpt-5.5`            -> 'GPT-5.5 (codex)'
     `unspecified`              -> 'unspecified'
+
+    Drops provider/org noise (zai, org, aion, labs, e2ee, uncensored, …) so the
+    dashboard shows the model's *family* and *version*, which is what people
+    actually compare across models.
     """
+    import re as _re
     if not model or model == "unspecified":
         return "unspecified"
     harness = None
@@ -30,23 +35,53 @@ def pretty_model_label(model: str | None) -> str:
     if ":" in model:
         left, _, slug = model.partition(":")
         harness = left
-    base = slug.rsplit("/", 1)[-1]
-    base = base.replace("-", " ")
-    # glm 5 2 -> GLM 5.2 ; gpt 5.5 -> GPT-5.5 ; keep other tokens tidy
-    parts = base.split()
-    out = []
-    for i, tok in enumerate(parts):
-        if tok.upper() in {"GLM", "GPT", "GEMMA", "LLAMA", "DEEPSEEK", "CLAUDE", "ZAI", "NVFP4", "IT"}:
-            out.append(tok.upper())
-        else:
-            out.append(tok)
-    base = " ".join(out)
-    # collapse 'GLM 5 2' -> 'GLM 5.2' for glm-style dotted trailing numbers
-    import re as _re
-    base = _re.sub(r"(\b[A-Z]+)\s+(\d+)\s+(\d+)\b", r"\1 \2.\3", base)
+    base = slug.rsplit("/", 1)[-1].lower()
+    # Strip leading provider/org/vendor prefixes.
+    for prefix in ("zai-org-", "z-ai-", "aion-labs-", "aion-", "e2ee-", "openai-", "openai/", "venice/"):
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+    families = {
+        "glm": "GLM",
+        "gpt": "GPT",
+        "claude": "Claude",
+        "gemma": "Gemma",
+        "deepseek": "DeepSeek",
+        "llama": "Llama",
+        "qwen": "Qwen",
+        "mistral": "Mistral",
+    }
+    fam_key = next((f for f in families if base.startswith(f)), None)
+    rest = base
+    fam = families.get(fam_key, "") if fam_key else ""
+    if fam_key:
+        rest = base[len(fam_key):].lstrip("- ")
+    # Version: leading number-and-dot/number tokens. Normalize dashes to
+    # spaces first so '5-2' collapses to '5.2' (glm-style versioning uses
+    # dashes in the slug).
+    ver = ""
+    if rest:
+        rest_ver = rest.replace("-", " ")
+        vm = _re.match(r"(v?[\d][\d. ]*)", rest_ver)
+        if vm:
+            ver = vm.group(1).replace("v", "", 1).strip().replace(" ", ".")
+            ver = _re.sub(r"\.+", ".", ver).rstrip(".")
+            ver = _re.sub(r"\b(\d+)\.(\d+)\..*", r"\1.\2", ver)  # keep major.minor
+    # Put the family back as a readable dotted/space label per convention.
+    if fam_key == "gpt":
+        name = f"GPT-{ver}" if ver else "GPT"
+    elif fam:
+        name = f"{fam} {ver}".strip()
+    else:
+        # Fallback: tidy raw slug tokens, drop known noise.
+        parts = [
+            t for t in base.replace("-", " ").split()
+            if t not in {"zai", "org", "aion", "labs", "e2ee", "uncensored",
+                         "heretic", "deckard", "nvfp4", "it", "p", "pro", "turbo"}
+        ]
+        name = " ".join(parts).title() or base
     if harness:
-        return f"{base} ({harness})"
-    return base
+        return f"{name} ({harness})"
+    return name
 
 
 def read_json(path: Path) -> dict[str, object] | None:
