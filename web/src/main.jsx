@@ -101,7 +101,7 @@ function App() {
     const item = data.runs?.find((entry) => entry.cve.cve_id.toUpperCase() === cveId && entry.run_id === runId);
     return (
       <Shell repoUrl={data.repo_url}>
-        <Detail item={item} />
+        <Detail item={item} data={data} />
       </Shell>
     );
   }
@@ -112,7 +112,7 @@ function App() {
     const item = data.cves.find((entry) => entry.cve.cve_id.toUpperCase() === cveId);
     return (
       <Shell repoUrl={data.repo_url}>
-        <Detail item={item} />
+        <Detail item={item} data={data} />
       </Shell>
     );
   }
@@ -419,7 +419,7 @@ function InlineRunDetails({ item }) {
   );
 }
 
-function Detail({ item }) {
+function Detail({ item, data }) {
   if (!item) {
     return (
       <section className="detail">
@@ -458,8 +458,12 @@ function Detail({ item }) {
         <Info label="Known exploited" value={item.cve.kev ? 'yes' : 'no'} />
         <Info label="Latest run" value={item.report?.run?.run_id || item.pipeline_status?.run_id || item.run_id || 'none'} />
         <Info label="Run score" value={`${runScore(item).score}/${runScore(item).max_score} (${Number(runScore(item).percent).toFixed(2)}%)`} />
-        <Info label="Model" value={item.report?.run?.model || item.pipeline_status?.model || 'none'} />
+        <Info label="Model" value={item.model_title || item.report?.run?.model || item.pipeline_status?.model || 'none'} />
+        <Info label="Model label" value={item.model_label || item.report?.run?.model || 'none'} />
       </section>
+
+      <ModelAttemptPanel item={item} />
+      <ModelComparisonPanel data={data} cveId={item.cve.cve_id} currentRunId={item.run_id} />
 
       <section className="panel">
         <div className="panelTitle">
@@ -472,6 +476,7 @@ function Detail({ item }) {
             <div className={`phase ${phaseClass(stage.status)}`} key={stage.phase}>
               <strong>{stage.phase}</strong>
               <span>{stage.message}</span>
+              <span className="mutedText">{stage.duration_ms ? `${stage.duration_ms} ms` : ''}{stage.started_at ? ` · start ${stage.started_at}` : ''}</span>
               {stage.artifact && <a href={artifactFor(item, stage.artifact)}>{stage.artifact}</a>}
             </div>
           ))}
@@ -649,6 +654,12 @@ function Detail({ item }) {
           <Artifact href={item.artifacts.model_attempt_fix_url} label="model_attempt/fix.patch" disabled={!item.artifacts.model_attempt_fix_exists} />
           <Artifact href={item.artifacts.model_attempt_poc_url} label="model_attempt/poc.py" disabled={!item.artifacts.model_attempt_poc_exists} />
           <Artifact href={item.artifacts.model_attempt_refusal_url} label="model_attempt/refusal.md" disabled={!item.artifacts.model_attempt_refusal_exists} />
+          <Artifact href={item.artifacts.model_attempt_refusal_json_url} label="model_attempt/refusal.json" disabled={!item.artifacts.model_attempt_refusal_json_exists} />
+          <Artifact href={item.artifacts.model_attempt_usage_url} label="model_attempt/usage.json" disabled={!item.artifacts.model_attempt_usage_exists} />
+          <Artifact href={item.artifacts.model_attempt_timing_url} label="model_attempt/timing.json" disabled={!item.artifacts.model_attempt_timing_exists} />
+          <Artifact href={item.artifacts.model_attempt_distillation_url} label="model_attempt/distillation.jsonl" disabled={!item.artifacts.model_attempt_distillation_exists} />
+          <Artifact href={item.artifacts.model_attempt_ndjson_url} label="model_attempt/transcript.ndjson" disabled={!item.artifacts.model_attempt_ndjson_exists} />
+          <Artifact href={item.artifacts.model_attempt_stderr_url} label="model_attempt/stderr.txt" disabled={!item.artifacts.model_attempt_stderr_exists} />
           <Artifact href={item.artifacts.isolation_preflight_url} label="isolation-preflight.log" disabled={!item.artifacts.isolation_preflight_exists} />
           <Artifact href={item.artifacts.sources_url} label="sources/" disabled={!item.artifacts.sources_exists} />
           <Artifact href={item.artifacts.source_diff_url} label="research/source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
@@ -739,6 +750,124 @@ function phaseClass(status) {
   if (status === 'completed') return 'complete';
   if (status === 'stubbed') return 'stubbed';
   if (status === 'not_implemented') return 'blocked';
+  return '';
+}
+
+function ModelAttemptPanel({ item }) {
+  const ma = item.model_attempt;
+  const a = item.artifacts || {};
+  if (!ma && !a.model_attempt_metadata_exists) return null;
+  const title = ma?.model_title || item.model_title || item.model_label || 'Model attempt';
+  const tokens = ma?.tokens_used;
+  const refusal = ma?.refusal;
+  return (
+    <section className="panel">
+      <h2>Model attempt — {title}</h2>
+      <p className="mutedText">
+        External model evaluation invoked after the deterministic pipeline. Token counts,
+        timings, and any refusal are recorded so the model's contribution (or refusal) is
+        auditable and usable for a fine-tuning distillation corpus.
+      </p>
+      <dl className="definitionList">
+        <Info label="Model" value={title} />
+        <Info label="Status" value={ma?.status || (a.model_attempt_metadata_exists ? 'present' : 'not attempted')} />
+        <Info label="Exit code" value={ma?.exit_code != null ? String(ma.exit_code) : 'n/a'} />
+        <Info label="Tokens used" value={tokens != null ? String(tokens) : 'n/a'} />
+        <Info label="Input tokens" value={ma?.token_usage?.input != null ? String(ma.token_usage.input) : 'n/a'} />
+        <Info label="Output tokens" value={ma?.token_usage?.output != null ? String(ma.token_usage.output) : 'n/a'} />
+        <Info label="Invoked at" value={ma?.invoked_at || 'n/a'} />
+        <Info label="Completed at" value={ma?.completed_at || 'n/a'} />
+        <Info label="Duration" value={ma?.duration_seconds != null ? `${ma.duration_seconds}s` : 'n/a'} />
+        <Info label="Refusal detected" value={ma?.refusal_detected ? 'yes' : 'no'} />
+      </dl>
+      {refusal && (
+        <div className="evidence">
+          <strong>Refusal</strong>
+          <p>Detected at: {refusal.detected_at || 'n/a'}</p>
+          <p>Refused task(s): {(refusal.refused_task || []).join(', ') || 'unspecified'}</p>
+          <p>Matched phrase: <code>{refusal.phrase_matched || ''}</code></p>
+          {refusal.excerpt && <pre className="mutedText">{refusal.excerpt}</pre>}
+        </div>
+      )}
+      <h3>Distillation & logs</h3>
+      <div className="artifactGrid">
+        <Artifact href={a.model_attempt_distillation_url} label="model_attempt/distillation.jsonl" disabled={!a.model_attempt_distillation_exists} />
+        <Artifact href={a.model_attempt_metadata_url} label="model_attempt/metadata.json" disabled={!a.model_attempt_metadata_exists} />
+        <Artifact href={a.model_attempt_usage_url} label="model_attempt/usage.json" disabled={!a.model_attempt_usage_exists} />
+        <Artifact href={a.model_attempt_timing_url} label="model_attempt/timing.json" disabled={!a.model_attempt_timing_exists} />
+        <Artifact href={a.model_attempt_prompt_url} label="model_attempt/prompt.md" disabled={!a.model_attempt_prompt_exists} />
+        <Artifact href={a.model_attempt_response_url} label="model_attempt/response.md" disabled={!a.model_attempt_response_exists} />
+        <Artifact href={a.model_attempt_ndjson_url} label="model_attempt/transcript.ndjson" disabled={!a.model_attempt_ndjson_exists} />
+        <Artifact href={a.model_attempt_stderr_url} label="model_attempt/stderr.txt" disabled={!a.model_attempt_stderr_exists} />
+        <Artifact href={a.model_attempt_refusal_json_url} label="model_attempt/refusal.json" disabled={!a.model_attempt_refusal_json_exists} />
+        <Artifact href={a.model_attempt_extracted_url} label="model_attempt/extracted.json" disabled={!a.model_attempt_extracted_exists} />
+        <Artifact href={a.model_attempt_poc_url} label="model_attempt/poc.py" disabled={!a.model_attempt_poc_exists} />
+        <Artifact href={a.model_attempt_fix_url} label="model_attempt/fix.patch" disabled={!a.model_attempt_fix_exists} />
+      </div>
+    </section>
+  );
+}
+
+function ModelComparisonPanel({ data, cveId, currentRunId }) {
+  const runs = (data?.runs || []).filter((r) => r.cve?.cve_id === cveId && r.report);
+  if (runs.length < 2) return null;
+  const sorted = [...runs].sort((x, y) => (y.run_score?.score || 0) - (x.run_score?.score || 0));
+  return (
+    <section className="panel">
+      <h2>Model comparison — {cveId}</h2>
+      <p className="mutedText">
+        All persisted runs of this CVE, one row per model attempt. Compare verdicts, run scores,
+        adversarial loop outcome, tokens consumed, refusals, and per-stage timing side by side.
+      </p>
+      <table className="compTable">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Model</th>
+            <th>Verdict</th>
+            <th>Conf.</th>
+            <th>Score</th>
+            <th>Loop</th>
+            <th>Escalated</th>
+            <th>Patched block</th>
+            <th>Residual</th>
+            <th>Tokens</th>
+            <th>Duration</th>
+            <th>Refusal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r) => {
+            const n = r.progress?.negotiation || {};
+            const ma = r.model_attempt || {};
+            const isCurrent = r.run_id === currentRunId;
+            return (
+              <tr key={r.run_id} className={isCurrent ? 'currentRow' : ''}>
+                <td><a href={`#/run/${encodeURIComponent(cveId)}/${encodeURIComponent(r.run_id)}`}>{r.run_id?.slice(-13)}</a>{isCurrent && <span className="mutedText"> (current)</span>}</td>
+                <td>{r.model_title || r.model_label || 'unknown'}</td>
+                <td><span className={badgeClass(r.report?.judgement?.status)}>{r.report?.judgement?.status || '-'}</span></td>
+                <td>{r.report?.judgement?.confidence != null ? Number(r.report.judgement.confidence).toFixed(2) : '-'}</td>
+                <td>{r.run_score?.score != null ? `${r.run_score.score}/${r.run_score.max_score}` : '-'}</td>
+                <td>{n.verdict || '-'}</td>
+                <td className={n.escalation_achieved ? 'ok' : 'no'}>{n.escalation_achieved ? 'yes' : 'no'}</td>
+                <td className={n.patch_effective ? 'ok' : 'no'}>{n.patch_effective ? 'yes' : 'no'}</td>
+                <td className={n.residual_bypass ? 'no' : 'ok'}>{n.residual_bypass ? 'bypass' : 'none'}</td>
+                <td>{ma.tokens_used != null ? ma.tokens_used : '-'}</td>
+                <td>{ma.duration_seconds != null ? `${ma.duration_seconds}s` : '-'}</td>
+                <td className={ma.refusal_detected ? 'no' : 'ok'}>{ma.refusal_detected ? 'yes' : 'no'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function badgeClass(status) {
+  if (status === 'defensive_signal_observed') return 'status analyzed';
+  if (status === 'residual_bypass_found') return 'status pending';
+  if (status === 'not_supported') return 'status pending';
   return '';
 }
 

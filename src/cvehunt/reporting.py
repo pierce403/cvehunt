@@ -405,10 +405,16 @@ def render_pipeline_status(
             status = event.status
             message = event.message
             artifact = event.artifact
+            started_at = getattr(event, "started_at", "") or ""
+            completed_at = getattr(event, "completed_at", "") or ""
+            duration_ms = getattr(event, "duration_ms", 0) or 0
         else:
             status = _not_reached_status(phase)
             message = _not_reached_message(phase)
             artifact = None
+            started_at = ""
+            completed_at = ""
+            duration_ms = 0
         stages.append(
             {
                 **phase,
@@ -416,6 +422,9 @@ def render_pipeline_status(
                 "status": status,
                 "message": message,
                 "artifact": artifact,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "duration_ms": duration_ms,
             }
         )
 

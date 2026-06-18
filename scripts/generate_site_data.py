@@ -16,6 +16,39 @@ def repo_url(path: Path, *, tree: bool = False) -> str:
     return f"{REPO_URL}/{kind}/main/{rel}"
 
 
+def pretty_model_label(model: str | None) -> str:
+    """Human-readable model name from a CVEHUNT model label.
+
+    `pi:venice/zai-org-glm-5-2` -> 'GLM 5.2 (pi)'
+    `codex:gpt-5.5`            -> 'GPT-5.5 (codex)'
+    `unspecified`              -> 'unspecified'
+    """
+    if not model or model == "unspecified":
+        return "unspecified"
+    harness = None
+    slug = model
+    if ":" in model:
+        left, _, slug = model.partition(":")
+        harness = left
+    base = slug.rsplit("/", 1)[-1]
+    base = base.replace("-", " ")
+    # glm 5 2 -> GLM 5.2 ; gpt 5.5 -> GPT-5.5 ; keep other tokens tidy
+    parts = base.split()
+    out = []
+    for i, tok in enumerate(parts):
+        if tok.upper() in {"GLM", "GPT", "GEMMA", "LLAMA", "DEEPSEEK", "CLAUDE", "ZAI", "NVFP4", "IT"}:
+            out.append(tok.upper())
+        else:
+            out.append(tok)
+    base = " ".join(out)
+    # collapse 'GLM 5 2' -> 'GLM 5.2' for glm-style dotted trailing numbers
+    import re as _re
+    base = _re.sub(r"(\b[A-Z]+)\s+(\d+)\s+(\d+)\b", r"\1 \2.\3", base)
+    if harness:
+        return f"{base} ({harness})"
+    return base
+
+
 def read_json(path: Path) -> dict[str, object] | None:
     if not path.exists():
         return None
@@ -172,12 +205,20 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     model_attempt_fix_path = artifact_dir / "model_attempt" / "fix.patch"
     model_attempt_poc_path = artifact_dir / "model_attempt" / "poc.py"
     model_attempt_refusal_path = artifact_dir / "model_attempt" / "refusal.md"
+    model_attempt_refusal_json_path = artifact_dir / "model_attempt" / "refusal.json"
+    model_attempt_usage_path = artifact_dir / "model_attempt" / "usage.json"
+    model_attempt_timing_path = artifact_dir / "model_attempt" / "timing.json"
+    model_attempt_distillation_path = artifact_dir / "model_attempt" / "distillation.jsonl"
+    model_attempt_ndjson_path = artifact_dir / "model_attempt" / "transcript.ndjson"
+    model_attempt_stderr_path = artifact_dir / "model_attempt" / "stderr.txt"
     exploiter_investigation_path = artifact_dir / "exploiter" / "investigation.md"
     exploiter_investigation_json_path = artifact_dir / "exploiter" / "investigation.json"
     report = read_json(report_path)
     pipeline_status = read_json(pipeline_status_path)
     trace = read_trace(trace_path)
     progress = summarize_progress(report, trace, pipeline_status)
+    model_attempt_meta = read_json(model_attempt_metadata_path)
+    model_attempt_summary = _model_attempt_summary(model_attempt_meta, artifact_dir)
     artifact_dir_rel = artifact_dir.relative_to(ROOT).as_posix()
     latest_run_rel = run_directory.relative_to(ROOT).as_posix() if run_directory else None
     run_id = None
@@ -196,6 +237,9 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
         "pipeline_status": pipeline_status,
         "progress": progress,
         "run_score": progress["run_score"],
+        "model_label": (report or {}).get("run", {}).get("model") if isinstance(report, dict) else None,
+        "model_title": pretty_model_label((report or {}).get("run", {}).get("model") if isinstance(report, dict) else None),
+        "model_attempt": model_attempt_summary,
         "artifacts": {
             "workdir": directory.relative_to(ROOT).as_posix(),
             "latest_run": latest_run_rel,
@@ -218,6 +262,12 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_fix_url": repo_url(model_attempt_fix_path),
             "model_attempt_poc_url": repo_url(model_attempt_poc_path),
             "model_attempt_refusal_url": repo_url(model_attempt_refusal_path),
+            "model_attempt_refusal_json_url": repo_url(model_attempt_refusal_json_path),
+            "model_attempt_usage_url": repo_url(model_attempt_usage_path),
+            "model_attempt_timing_url": repo_url(model_attempt_timing_path),
+            "model_attempt_distillation_url": repo_url(model_attempt_distillation_path),
+            "model_attempt_ndjson_url": repo_url(model_attempt_ndjson_path),
+            "model_attempt_stderr_url": repo_url(model_attempt_stderr_path),
             "sources_url": repo_url(artifact_dir / "sources", tree=True),
             "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
             "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
@@ -247,6 +297,12 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_fix_exists": model_attempt_fix_path.exists(),
             "model_attempt_poc_exists": model_attempt_poc_path.exists(),
             "model_attempt_refusal_exists": model_attempt_refusal_path.exists(),
+            "model_attempt_refusal_json_exists": model_attempt_refusal_json_path.exists(),
+            "model_attempt_usage_exists": model_attempt_usage_path.exists(),
+            "model_attempt_timing_exists": model_attempt_timing_path.exists(),
+            "model_attempt_distillation_exists": model_attempt_distillation_path.exists(),
+            "model_attempt_ndjson_exists": model_attempt_ndjson_path.exists(),
+            "model_attempt_stderr_exists": model_attempt_stderr_path.exists(),
             "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
             "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
             "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),
@@ -318,6 +374,39 @@ def _summary_from_report(
     if isinstance(notes, list) and notes:
         return str(notes[0])
     return "The workflow captured a repository-backed autonomous run."
+
+
+def _model_attempt_summary(meta: dict[str, object] | None, artifact_dir: Path) -> dict[str, object] | None:
+    """Compact, UI-ready view of the model-authored attempt.
+
+    Pulls from metadata.json plus the side files written by contribute.sh's
+    finalizer: usage.json, timing.json, refusal.json, extracted.json.
+    """
+    usage = read_json(artifact_dir / "model_attempt" / "usage.json")
+    timing = read_json(artifact_dir / "model_attempt" / "timing.json")
+    refusal = read_json(artifact_dir / "model_attempt" / "refusal.json")
+    if not isinstance(meta, dict) and not isinstance(usage, dict) and not isinstance(timing, dict):
+        return None
+    meta = meta or {}
+    usage = usage or {}
+    timing = timing or {}
+    return {
+        "harness": meta.get("harness"),
+        "model": meta.get("model"),
+        "model_label": meta.get("model_label"),
+        "model_title": pretty_model_label(meta.get("model_label") or meta.get("model")),
+        "status": meta.get("status"),
+        "exit_code": meta.get("exit_code"),
+        "invoked_at": timing.get("invoked_at"),
+        "completed_at": timing.get("completed_at"),
+        "duration_seconds": timing.get("duration_seconds"),
+        "tokens_used": (usage.get("totalTokens") or meta.get("tokens_used") or 0),
+        "token_usage": usage or meta.get("token_usage"),
+        "refusal": refusal,
+        "refusal_detected": bool(refusal),
+        "extracted_files": meta.get("extracted_files") or [],
+        "blocked_files": meta.get("blocked_files") or [],
+    }
 
 
 def _negotiation_summary(negotiation: object) -> dict[str, object] | None:

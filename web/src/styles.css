@@ -527,3 +527,46 @@ td span {
     justify-content: flex-start;
   }
 }
+
+/* Model comparison + model attempt panels */
+.compTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+.compTable th,
+.compTable td {
+  border: 1px solid var(--border, #2a2f3a);
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.compTable th {
+  background: var(--surface-2, #161a22);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.compTable tr.currentRow {
+  background: color-mix(in srgb, var(--accent, #5b8cff) 16%, transparent);
+}
+.compTable td.ok {
+  color: #46d18b;
+  font-weight: 600;
+}
+.compTable td.no {
+  color: #ff6b6b;
+  font-weight: 600;
+}
+.compTable code {
+  background: transparent;
+}
+.evidence pre.mutedText {
+  white-space: pre-wrap;
+  background: var(--surface-2, #161a22);
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  max-height: 16rem;
+  overflow: auto;
+}
