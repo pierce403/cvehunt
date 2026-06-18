@@ -751,19 +751,29 @@ run_model_attempt() {
         echo "pi command missing" > "$stderr_path"
       else
         local ndjson_path="$attempt_dir/transcript.ndjson"
-        printf 'pi -p --no-tools --no-session --mode json --model %q < prompt.md\n' "$model" > "$command_path"
+        local pi_thinking="${CVEHUNT_PI_THINKING:-minimal}"
+        local pi_thinking_args=()
+        if [[ -n "$pi_thinking" ]]; then
+          pi_thinking_args=(--thinking "$pi_thinking")
+        fi
+        printf 'pi -p --no-tools --no-session --mode json %s --model %q < prompt.md\n' "${pi_thinking_args[*]:-}" "$model" > "$command_path"
         set +e
-        run_with_optional_timeout "$timeout_seconds" pi -p --no-tools --no-session --mode json --model "$model" "$prompt_text" > "$ndjson_path" 2> "$stderr_path"
+        run_with_optional_timeout "$timeout_seconds" pi -p --no-tools --no-session --mode json "${pi_thinking_args[@]}" --model "$model" "$prompt_text" > "$ndjson_path" 2> "$stderr_path"
         exit_code=$?
         set -e
         # Parse the NDJSON event stream into a human-readable transcript + response
         # (assistant text) so the CVEHUNT_FILE extractor still works unchanged, and
         # capture the final per-message usage block as usage.json for token accounting.
-        python3 - "$ndjson_path" "$transcript_path" "$response_path" "$attempt_dir/usage.json" <<'PIPY' || true
+        # message_update events carry partial content under
+        # assistantMessageEvent.partial.content; message_end carries it under
+        # message.content. Also persist truncated reasoning (thinking chunks) as
+        # reasoning.md for the distillation corpus.
+        python3 - "$ndjson_path" "$transcript_path" "$response_path" "$attempt_dir/usage.json" "$attempt_dir/reasoning.md" <<'PIPY' || true
 import json, sys
 from pathlib import Path
-ndjson_path, transcript_path, response_path, usage_path = (Path(p) for p in sys.argv[1:5])
+ndjson_path, transcript_path, response_path, usage_path, reasoning_path = (Path(p) for p in sys.argv[1:6])
 assistant_text_parts = []
+thinking_parts = []
 final_usage = None
 if ndjson_path.exists():
     for line in ndjson_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -774,34 +784,51 @@ if ndjson_path.exists():
             ev = json.loads(line)
         except Exception:
             continue
-        t = ev.get("type")
-        if t in ("message_update", "assistantMessageEvent"):
-            ev = ev.get("assistantMessageEvent") or ev
-        msg = ev.get("message") if isinstance(ev, dict) else None
-        if not isinstance(msg, dict):
-            continue
-        if msg.get("role") != "assistant":
+        etype = ev.get("type")
+        msg = None
+        if etype == "message_end":
+            msg = ev.get("message")
+        elif etype == "message_update":
+            # pi wraps the streaming delta in assistantMessageEvent.partial
+            am = ev.get("assistantMessageEvent") or {}
+            msg = am.get("partial") or am.get("message")
+        elif etype == "assistantMessageEvent":
+            msg = ev.get("partial") or ev.get("message")
+        if not isinstance(msg, dict) or msg.get("role") != "assistant":
             continue
         usage = msg.get("usage")
         if isinstance(usage, dict) and (usage.get("totalTokens") or 0) > 0:
             final_usage = usage
         for chunk in msg.get("content", []) or []:
-            if isinstance(chunk, dict) and chunk.get("type") == "text" and chunk.get("text"):
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("type") == "text" and chunk.get("text"):
                 txt = chunk["text"]
-                if txt not in assistant_text_parts:
-                    assistant_text_parts.append(txt)
-assistant_text = "\n\n".join(assistant_text_parts)
+                if not assistant_text_parts or not assistant_text_parts[-1].endswith(txt):
+                    if txt not in assistant_text_parts:
+                        assistant_text_parts.append(txt)
+            elif chunk.get("type") == "thinking" and chunk.get("thinking"):
+                th = chunk["thinking"]
+                if not thinking_parts or thinking_parts[-1] != th:
+                    thinking_parts.append(th)
+assistant_text = "".join(assistant_text_parts)
 transcript_path.write_text(assistant_text, encoding="utf-8")
 response_path.write_text(assistant_text, encoding="utf-8")
+reasoning = "".join(thinking_parts)
+# Truncate reasoning to keep the corpus tractable; the raw NDJSON is gitignored.
+if len(reasoning) > 256_000:
+    reasoning = reasoning[:256_000] + "\n... [truncated]\n"
+reasoning_path.write_text(reasoning, encoding="utf-8")
 usage_out = final_usage or {}
 usage_path.write_text(json.dumps({
     "harness": "pi",
-    "source": final_usage is not None and "pi_ndjson_message_usage" or "none_reported",
+    "source": "pi_ndjson_message_usage" if final_usage is not None else "interrupted_before_usage_reported",
     "input": usage_out.get("input", 0),
     "output": usage_out.get("output", 0),
     "cacheRead": usage_out.get("cacheRead", 0),
     "cacheWrite": usage_out.get("cacheWrite", 0),
     "totalTokens": usage_out.get("totalTokens", 0),
+    "stream_completed": final_usage is not None,
 }, indent=2), encoding="utf-8")
 PIPY
       fi
@@ -863,33 +890,46 @@ PIPY
 
   if [[ -s "$response_path" ]]; then
     set +e
-    python3 - "$response_path" "$transcript_path" <<'PY'
+    python3 - "$response_path" "$transcript_path" "$attempt_dir/raw_response.md" "$attempt_dir/redaction_notice.md" <<'SAFETYPY'
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
-paths = [Path(arg) for arg in sys.argv[1:]]
+paths = [Path(arg) for arg in sys.argv[1:5]]
+# arguments: response_path, transcript_path, raw_response_path, redaction_notice_path
+raw_response_path = paths[2]
+redaction_notice_path = paths[3]
 forbidden = ["reverse shell", "bind shell", "weaponize"]
-found: set[str] = set()
-for path in paths:
+present: dict[str, set[str]] = {}
+for path in paths[:2]:
     if not path.exists():
         continue
     text = path.read_text(encoding="utf-8", errors="replace")
-    found.update(item for item in forbidden if item in text.lower())
-if found:
-    notice = (
-        "# Model response blocked\n\n"
-        "The external model output contained content outside CVEHunt's safety boundary "
-        "and was redacted before persistence. Matched phrase(s): "
-        + ", ".join(sorted(found))
-        + "\n"
-    )
-    for path in paths:
-        if path.exists():
-            path.write_text(notice, encoding="utf-8")
-    raise SystemExit(10)
-PY
+    hits = {item for item in forbidden if item in text.lower()}
+    if hits:
+        present[str(path)] = hits
+if not present:
+    raise SystemExit(0)
+# Preserve the model's actual outputs verbatim for the distillation corpus and
+# for auditability. Earlier versions overwrote response.md/transcript.txt with
+# the redaction notice, which destroyed the model's actual output; we now keep
+# raw_response.md and leave the original response.md intact, surfacing a
+# separate redaction_notice.md so the safety flag is explicit without erasing
+# evidence.
+shutil.copyfile(paths[0], raw_response_path)
+notice = (
+    "# Model response flagged unsafe\n\n"
+    "The external model output contained security-vocabulary phrases that fall "
+    "outside CVEHunt's harness safety boundary. The original output is retained "
+    "verbatim at model_attempt/raw_response.md for auditability and distillation; "
+    "this notice only records the flag.\n\n"
+    "Matched phrase(s): " + ", ".join(sorted({p for hits in present.values() for p in hits})) + "\n"
+)
+redaction_notice_path.write_text(notice, encoding="utf-8")
+raise SystemExit(10)
+SAFETYPY
     safety_status=$?
     set -e
     if [[ "$safety_status" -eq 10 ]]; then

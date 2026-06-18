@@ -211,6 +211,9 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     model_attempt_distillation_path = artifact_dir / "model_attempt" / "distillation.jsonl"
     model_attempt_ndjson_path = artifact_dir / "model_attempt" / "transcript.ndjson"
     model_attempt_stderr_path = artifact_dir / "model_attempt" / "stderr.txt"
+    model_attempt_reasoning_path = artifact_dir / "model_attempt" / "reasoning.md"
+    model_attempt_raw_response_path = artifact_dir / "model_attempt" / "raw_response.md"
+    model_attempt_redaction_path = artifact_dir / "model_attempt" / "redaction_notice.md"
     exploiter_investigation_path = artifact_dir / "exploiter" / "investigation.md"
     exploiter_investigation_json_path = artifact_dir / "exploiter" / "investigation.json"
     report = read_json(report_path)
@@ -268,6 +271,9 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_distillation_url": repo_url(model_attempt_distillation_path),
             "model_attempt_ndjson_url": repo_url(model_attempt_ndjson_path),
             "model_attempt_stderr_url": repo_url(model_attempt_stderr_path),
+            "model_attempt_reasoning_url": repo_url(model_attempt_reasoning_path),
+            "model_attempt_raw_response_url": repo_url(model_attempt_raw_response_path),
+            "model_attempt_redaction_url": repo_url(model_attempt_redaction_path),
             "sources_url": repo_url(artifact_dir / "sources", tree=True),
             "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
             "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
@@ -303,6 +309,9 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_distillation_exists": model_attempt_distillation_path.exists(),
             "model_attempt_ndjson_exists": model_attempt_ndjson_path.exists(),
             "model_attempt_stderr_exists": model_attempt_stderr_path.exists(),
+            "model_attempt_reasoning_exists": model_attempt_reasoning_path.exists(),
+            "model_attempt_raw_response_exists": model_attempt_raw_response_path.exists(),
+            "model_attempt_redaction_exists": model_attempt_redaction_path.exists(),
             "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
             "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
             "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),

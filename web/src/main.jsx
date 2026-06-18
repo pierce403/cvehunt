@@ -659,6 +659,9 @@ function Detail({ item, data }) {
           <Artifact href={item.artifacts.model_attempt_timing_url} label="model_attempt/timing.json" disabled={!item.artifacts.model_attempt_timing_exists} />
           <Artifact href={item.artifacts.model_attempt_distillation_url} label="model_attempt/distillation.jsonl" disabled={!item.artifacts.model_attempt_distillation_exists} />
           <Artifact href={item.artifacts.model_attempt_ndjson_url} label="model_attempt/transcript.ndjson" disabled={!item.artifacts.model_attempt_ndjson_exists} />
+          <Artifact href={item.artifacts.model_attempt_reasoning_url} label="model_attempt/reasoning.md" disabled={!item.artifacts.model_attempt_reasoning_exists} />
+          <Artifact href={item.artifacts.model_attempt_raw_response_url} label="model_attempt/raw_response.md" disabled={!item.artifacts.model_attempt_raw_response_exists} />
+          <Artifact href={item.artifacts.model_attempt_redaction_url} label="model_attempt/redaction_notice.md" disabled={!item.artifacts.model_attempt_redaction_exists} />
           <Artifact href={item.artifacts.model_attempt_stderr_url} label="model_attempt/stderr.txt" disabled={!item.artifacts.model_attempt_stderr_exists} />
           <Artifact href={item.artifacts.isolation_preflight_url} label="isolation-preflight.log" disabled={!item.artifacts.isolation_preflight_exists} />
           <Artifact href={item.artifacts.sources_url} label="sources/" disabled={!item.artifacts.sources_exists} />
@@ -798,6 +801,7 @@ function ModelAttemptPanel({ item }) {
         <Artifact href={a.model_attempt_prompt_url} label="model_attempt/prompt.md" disabled={!a.model_attempt_prompt_exists} />
         <Artifact href={a.model_attempt_response_url} label="model_attempt/response.md" disabled={!a.model_attempt_response_exists} />
         <Artifact href={a.model_attempt_ndjson_url} label="model_attempt/transcript.ndjson" disabled={!a.model_attempt_ndjson_exists} />
+        <Artifact href={a.model_attempt_reasoning_url} label="model_attempt/reasoning.md" disabled={!a.model_attempt_reasoning_exists} />
         <Artifact href={a.model_attempt_stderr_url} label="model_attempt/stderr.txt" disabled={!a.model_attempt_stderr_exists} />
         <Artifact href={a.model_attempt_refusal_json_url} label="model_attempt/refusal.json" disabled={!a.model_attempt_refusal_json_exists} />
         <Artifact href={a.model_attempt_extracted_url} label="model_attempt/extracted.json" disabled={!a.model_attempt_extracted_exists} />
