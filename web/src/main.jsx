@@ -763,53 +763,90 @@ function ModelAttemptPanel({ item }) {
   const title = ma?.model_title || item.model_title || item.model_label || 'Model attempt';
   const tokens = ma?.tokens_used;
   const refusal = ma?.refusal;
+  const poc = ma?.poc || {};
+  const band = ma?.poc_contribution || 'no_poc_authored';
+  const sa = ma?.supporting_artifacts || {};
+  const bandLabel = {
+    poc_verified: 'PoC authored + verified',
+    poc_authored_unverified: 'PoC authored (unverified)',
+    refused_poc: 'Refused to author PoC',
+    no_poc_authored: 'No PoC authored',
+    no_model_attempt: 'No model attempt',
+  }[band] || band;
   return (
     <section className="panel">
-      <h2>Model attempt — {title}</h2>
+      <h2>Model PoC — {title}</h2>
       <p className="mutedText">
-        External model evaluation invoked after the deterministic pipeline. Token counts,
-        timings, and any refusal are recorded so the model's contribution (or refusal) is
-        auditable and usable for a fine-tuning distillation corpus.
+        The primary deliverable of an evaluation run is a model-authored proof-of-concept.
+        The verdict below is honest about whether this model actually wrote one and whether
+        it was verified against the running harness; the supporting artifacts (notes,
+        validation plan, safety, patch) exist so you can judge whether the PoC is real.
       </p>
-      <dl className="definitionList">
-        <Info label="Model" value={title} />
-        <Info label="Status" value={ma?.status || (a.model_attempt_metadata_exists ? 'present' : 'not attempted')} />
-        <Info label="Exit code" value={ma?.exit_code != null ? String(ma.exit_code) : 'n/a'} />
-        <Info label="Tokens used" value={tokens != null ? String(tokens) : 'n/a'} />
-        <Info label="Input tokens" value={ma?.token_usage?.input != null ? String(ma.token_usage.input) : 'n/a'} />
-        <Info label="Output tokens" value={ma?.token_usage?.output != null ? String(ma.token_usage.output) : 'n/a'} />
-        <Info label="Invoked at" value={ma?.invoked_at || 'n/a'} />
-        <Info label="Completed at" value={ma?.completed_at || 'n/a'} />
-        <Info label="Duration" value={ma?.duration_seconds != null ? `${ma.duration_seconds}s` : 'n/a'} />
-        <Info label="Refusal detected" value={ma?.refusal_detected ? 'yes' : 'no'} />
-      </dl>
+      <div className={`pocVerdict ${pocBandClass(band)}`}>
+        <strong>{bandLabel}</strong>
+      </div>
+      {poc.path_present ? (
+        <p className="pocLink">
+          PoC: <Artifact href={poc.url} label="model_attempt/poc.py" />
+          {poc.verified && poc.outcome_url && (
+            <> · <Artifact href={poc.outcome_url} label="poc_outcome.json" /></>
+          )}
+          {poc.verified ? ' — verified against the running vulnerable harness' : ' — present but not executed against the harness'}
+        </p>
+      ) : (
+        <p className="pocLink">
+          PoC: <span className="mutedText">model_attempt/poc.py not produced</span>
+          {poc.refused ? ' (explicitly refused — see refusal.json)' : ' (model produced analysis but no PoC block)'}
+        </p>
+      )}
+      <h3>Supporting artifacts (judges whether the PoC is real)</h3>
+      <div className="artifactGrid">
+        <Artifact href={sa['notes.md']?.url} label="model_attempt/notes.md" disabled={!(sa['notes.md']?.present)} />
+        <Artifact href={sa['validation_plan.md']?.url} label="model_attempt/validation_plan.md" disabled={!(sa['validation_plan.md']?.present)} />
+        <Artifact href={sa['safety.md']?.url} label="model_attempt/safety.md" disabled={!(sa['safety.md']?.present)} />
+        <Artifact href={sa['fix.patch']?.url} label="model_attempt/fix.patch" disabled={!(sa['fix.patch']?.present)} />
+      </div>
       {refusal && (
         <div className="evidence">
-          <strong>Refusal</strong>
-          <p>Detected at: {refusal.detected_at || 'n/a'}</p>
+          <strong>Refusal (timestamped)</strong>
+          <p>Detected at: {refusal.detected_at || 'n/a'} · Kind: {refusal.kind || 'n/a'}</p>
           <p>Refused task(s): {(refusal.refused_task || []).join(', ') || 'unspecified'}</p>
-          <p>Matched phrase: <code>{refusal.phrase_matched || ''}</code></p>
           {refusal.excerpt && <pre className="mutedText">{refusal.excerpt}</pre>}
+          <a className="artifactLink" href={a.model_attempt_refusal_json_url}>refusal.json</a>
         </div>
       )}
-      <h3>Distillation & logs</h3>
+      <h3>Run metrics</h3>
+      <dl className="definitionList">
+        <Info label="Model" value={title} />
+        <Info label="Tokens used" value={tokens != null ? String(tokens) : 'n/a'} />
+        <Info label="Duration" value={ma?.duration_seconds != null ? `${ma.duration_seconds}s` : 'n/a'} />
+        <Info label="Invoked" value={ma?.invoked_at || 'n/a'} />
+        <Info label="Completed" value={ma?.completed_at || 'n/a'} />
+        <Info label="Status" value={ma?.status || (a.model_attempt_metadata_exists ? 'present' : 'not attempted')} />
+      </dl>
+      <h3>Distillation corpus & raw logs</h3>
       <div className="artifactGrid">
         <Artifact href={a.model_attempt_distillation_url} label="model_attempt/distillation.jsonl" disabled={!a.model_attempt_distillation_exists} />
+        <Artifact href={a.model_attempt_response_url} label="model_attempt/response.md" disabled={!a.model_attempt_response_exists} />
+        <Artifact href={a.model_attempt_reasoning_url} label="model_attempt/reasoning.md" disabled={!a.model_attempt_reasoning_exists} />
+        <Artifact href={a.model_attempt_raw_response_url} label="model_attempt/raw_response.md" disabled={!a.model_attempt_raw_response_exists} />
+        <Artifact href={a.model_attempt_prompt_url} label="model_attempt/prompt.md" disabled={!a.model_attempt_prompt_exists} />
         <Artifact href={a.model_attempt_metadata_url} label="model_attempt/metadata.json" disabled={!a.model_attempt_metadata_exists} />
+        <Artifact href={a.model_attempt_extracted_url} label="model_attempt/extracted.json" disabled={!a.model_attempt_extracted_exists} />
         <Artifact href={a.model_attempt_usage_url} label="model_attempt/usage.json" disabled={!a.model_attempt_usage_exists} />
         <Artifact href={a.model_attempt_timing_url} label="model_attempt/timing.json" disabled={!a.model_attempt_timing_exists} />
-        <Artifact href={a.model_attempt_prompt_url} label="model_attempt/prompt.md" disabled={!a.model_attempt_prompt_exists} />
-        <Artifact href={a.model_attempt_response_url} label="model_attempt/response.md" disabled={!a.model_attempt_response_exists} />
         <Artifact href={a.model_attempt_ndjson_url} label="model_attempt/transcript.ndjson" disabled={!a.model_attempt_ndjson_exists} />
-        <Artifact href={a.model_attempt_reasoning_url} label="model_attempt/reasoning.md" disabled={!a.model_attempt_reasoning_exists} />
         <Artifact href={a.model_attempt_stderr_url} label="model_attempt/stderr.txt" disabled={!a.model_attempt_stderr_exists} />
-        <Artifact href={a.model_attempt_refusal_json_url} label="model_attempt/refusal.json" disabled={!a.model_attempt_refusal_json_exists} />
-        <Artifact href={a.model_attempt_extracted_url} label="model_attempt/extracted.json" disabled={!a.model_attempt_extracted_exists} />
-        <Artifact href={a.model_attempt_poc_url} label="model_attempt/poc.py" disabled={!a.model_attempt_poc_exists} />
-        <Artifact href={a.model_attempt_fix_url} label="model_attempt/fix.patch" disabled={!a.model_attempt_fix_exists} />
       </div>
     </section>
   );
+}
+
+function pocBandClass(band) {
+  if (band === 'poc_verified') return 'ok';
+  if (band === 'poc_authored_unverified') return 'partial';
+  if (band === 'refused_poc') return 'no';
+  return 'no';
 }
 
 function ModelComparisonPanel({ data, cveId, currentRunId }) {
@@ -828,37 +865,41 @@ function ModelComparisonPanel({ data, cveId, currentRunId }) {
           <tr>
             <th>Run</th>
             <th>Model</th>
-            <th>Verdict</th>
-            <th>Conf.</th>
+            <th>PoC verdict</th>
+            <th>PoC</th>
+            <th>Pipeline verdict</th>
             <th>Score</th>
-            <th>Loop</th>
-            <th>Escalated</th>
-            <th>Patched block</th>
-            <th>Residual</th>
             <th>Tokens</th>
             <th>Duration</th>
             <th>Refusal</th>
+            <th>Loop</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((r) => {
             const n = r.progress?.negotiation || {};
             const ma = r.model_attempt || {};
+            const poc = ma.poc || {};
             const isCurrent = r.run_id === currentRunId;
+            const bandShort = {
+              poc_verified: 'PoC ✓ verified',
+              poc_authored_unverified: 'PoC authored',
+              refused_poc: 'refused PoC',
+              no_poc_authored: 'no PoC',
+              no_model_attempt: 'no attempt',
+            }[ma.poc_contribution] || ma.poc_contribution || '-';
             return (
               <tr key={r.run_id} className={isCurrent ? 'currentRow' : ''}>
                 <td><a href={`#/run/${encodeURIComponent(cveId)}/${encodeURIComponent(r.run_id)}`}>{r.run_id?.slice(-13)}</a>{isCurrent && <span className="mutedText"> (current)</span>}</td>
-                <td>{r.model_title || r.model_label || 'unknown'}</td>
+                <td>{ma.model_title || r.model_title || r.model_label || 'unknown'}</td>
+                <td><span className={`score ${pocBandClass(ma.poc_contribution)}`}>{bandShort}</span></td>
+                <td>{poc.path_present ? <a href={poc.url}>poc.py</a> : <span className="mutedText">—</span>}</td>
                 <td><span className={badgeClass(r.report?.judgement?.status)}>{r.report?.judgement?.status || '-'}</span></td>
-                <td>{r.report?.judgement?.confidence != null ? Number(r.report.judgement.confidence).toFixed(2) : '-'}</td>
                 <td>{r.run_score?.score != null ? `${r.run_score.score}/${r.run_score.max_score}` : '-'}</td>
-                <td>{n.verdict || '-'}</td>
-                <td className={n.escalation_achieved ? 'ok' : 'no'}>{n.escalation_achieved ? 'yes' : 'no'}</td>
-                <td className={n.patch_effective ? 'ok' : 'no'}>{n.patch_effective ? 'yes' : 'no'}</td>
-                <td className={n.residual_bypass ? 'no' : 'ok'}>{n.residual_bypass ? 'bypass' : 'none'}</td>
                 <td>{ma.tokens_used != null ? ma.tokens_used : '-'}</td>
                 <td>{ma.duration_seconds != null ? `${ma.duration_seconds}s` : '-'}</td>
                 <td className={ma.refusal_detected ? 'no' : 'ok'}>{ma.refusal_detected ? 'yes' : 'no'}</td>
+                <td>{n.verdict || '-'}</td>
               </tr>
             );
           })}
