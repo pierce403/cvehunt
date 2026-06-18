@@ -772,11 +772,21 @@ class HarnessRunnerAgent:
         log_dir = artifact_root / "exploiter" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         try:
+            # Capture the orchestrator's stdout/stderr so docker/build logs never
+            # leak into the caller's stream (e.g. the --json report). The
+            # orchestrator already tees them into exploiter/logs/run-poc.log.
             completed = subprocess.run(
                 ["bash", str(runner_path)],
                 cwd=str(artifact_root),
                 timeout=self.runner_timeout_seconds,
                 check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            stdout_bytes = completed.stdout if completed.stdout is not None else b""
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "runner-stdout.log").write_text(
+                stdout_bytes.decode("utf-8", errors="replace"), encoding="utf-8"
             )
         except subprocess.TimeoutExpired:
             return dataclasses.replace(
@@ -3236,7 +3246,7 @@ def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
             f'echo "[cvehunt] orchestrating harness for {cve.cve_id}"',
             'pushd "$(dirname "$0")/.." >/dev/null',
             "mkdir -p exploiter/logs",
-            'exec > >(tee exploiter/logs/run-poc.log) 2>&1',
+            'exec > exploiter/logs/run-poc.log 2>&1',
             "compose_available() { docker compose version >/dev/null 2>&1 || command -v docker-compose >/dev/null 2>&1; }",
             "compose_cmd() {",
             "  if docker compose version >/dev/null 2>&1; then docker compose \"$@\"; else docker-compose \"$@\"; fi",
@@ -3323,8 +3333,8 @@ def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
             "servable=sum(1 for t in targets if t['servable'])",
             "status='servable' if targets and servable==len(targets) else ('partially_servable' if servable else 'not_servable')",
             "note=f'{servable}/{len(targets)} targets servable'",
-            "open('provision/provision.json','w').write(json.dumps({'status':status,'note':note,'targets':targets}, indent=2)+'\n')",
-            "open('provision/provision.log','w').write(f'[provision] {status}: {note}\n')",
+            "open('provision/provision.json','w').write(json.dumps({'status':status,'note':note,'targets':targets}, indent=2)+'\\n')",
+            "open('provision/provision.log','w').write(f'[provision] {status}: {note}\\n')",
             "print(f'provision: {status} ({note})')",
             "PROVISIONPY",
             "python3 exploiter/poc.py | tee exploiter/outcome.json || true",
