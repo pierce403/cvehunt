@@ -276,6 +276,14 @@ class TraceEvent:
     timestamp: str = field(
         default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
     )
+    # Per-stage timing (populated by CveHuntWorkflow so the dashboard can
+    # show exactly when each stage started, how long it took, and — for the
+    # model-backed stages downstream of contribute.sh — how many tokens it
+    # consumed).
+    started_at: str = ""
+    completed_at: str = ""
+    duration_ms: int = 0
+    token_usage: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
