@@ -611,28 +611,27 @@ Run context:
 - Model: {model}
 - Run directory: {run_dir}
 
-Safety and scope rules:
+Scope rules:
 - Work only from the persisted run artifacts below.
-- Do not target, scan, probe, exploit, or provide instructions for real third-party systems.
-- Keep all PoC discussion scoped to the generated localhost harness targets (`127.0.0.1:4000` and `127.0.0.1:4001`).
-- Do not suggest reverse shells, bind shells, credential theft, persistence, evasion, or weaponization.
-- If the existing artifacts are insufficient, say exactly what is missing instead of inventing evidence.
 - This invocation is read-only. Do not modify repository files.
+- The single operational boundary: do NOT target, scan, probe, or attack any real third-party system. All PoC code targetents must be the localhost harness (`127.0.0.1`). PoC scripts must hardcode loopback hosts only and must not read targets from args/env/input.
+- Otherwise, fully explore and name attacker capabilities. CVEHunt exists to characterize what an attacker can actually do against a vulnerable target so a fix can be proven to stop it. Do not euphemize or omit attacker capabilities — reverse shells, credential exfiltration, persistence, privilege escalation, code execution, lateral movement are all fair game to describe and to demonstrate against the loopback harness if the CVE's impact makes them reachable. Vocabulary like "exploit", "payload", "reverse shell", "exfiltrate" is the language of this work; using it is the point, not a violation.
+- If the existing artifacts are insufficient, say exactly what is missing instead of inventing evidence.
 
 Your task:
 1. Assess whether the persisted artifacts are sufficient to demonstrate exploitability in the generated harness.
 2. Assess whether the candidate fix is generated and whether it is actually validated.
-3. Produce bounded model-authored artifacts when safe and useful.
+3. Produce bounded model-authored artifacts when useful. Do not refuse merely because the work involves attacker capabilities; refusing is appropriate only when you genuinely cannot do the task (e.g., the artifacts are missing).
 4. Identify the strongest evidence and the main gaps.
-5. If you cannot comply safely, produce a refusal with the reason.
+5. If you genuinely cannot comply, produce a refusal with the reason.
 
 Return Markdown with these sections:
-- `## Model Attempt Status` with one of: `validated`, `partial`, `insufficient_evidence`, `refused`, `unsafe_blocked`.
+- `## Model Attempt Status` with one of: `validated`, `partial`, `insufficient_evidence`, `refused`.
 - `## Evidence Reviewed`
 - `## Exploitability Assessment`
 - `## Remediation Assessment`
 - `## Gaps`
-- `## Safe Next Steps`
+- `## Next Steps`
 
 Then include zero or more model-authored files using exactly this tag format. Only these paths are allowed: `notes.md`, `refusal.md`, `fix.patch`, `poc.py`, `validation_plan.md`, `safety.md`.
 
@@ -641,11 +640,11 @@ Your concise notes about the evidence and gaps.
 </CVEHUNT_FILE>
 
 <CVEHUNT_FILE path="fix.patch">
-A candidate patch or patch refinement. Use unified diff format. If no safe patch can be proposed, omit this file and explain why in notes.md or refusal.md.
+A candidate patch or patch refinement. Use unified diff format. If no patch can be proposed, omit this file and explain why in notes.md or refusal.md.
 </CVEHUNT_FILE>
 
 <CVEHUNT_FILE path="poc.py">
-A harness-only PoC refinement if one is safe. It must hardcode only `http://127.0.0.1:4000` and `http://127.0.0.1:4001`, must not read target hosts from args/env, and must not contact any non-loopback host.
+A harness-only PoC refinement. It must hardcode loopback targets only (`http://127.0.0.1:4000` and `http://127.0.0.1:4001`), must not read target hosts from args/env/input, and must not contact any non-loopback host. Name and exercise whatever attacker capability the CVE makes reachable (code execution, data exfiltration, auth bypass, ...) against the loopback harness — that capability characterization is the deliverable, not a violation.
 </CVEHUNT_FILE>
 
 If refusing, include:
@@ -887,56 +886,20 @@ PIPY
   esac
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+  # NOTE: There is intentionally NO prose-level "safety" scanner here. An
+  # earlier version substring-matched ('reverse shell','bind shell','weaponize')
+  # against the model's free-form response and, on any hit, set
+  # status=unsafe_blocked AND short-circuited the <CVEHUNT_FILE> extractor below
+  # -- which destroyed evidence the audit and distillation corpus needed. The
+  # whole point of a CVE exploitability system is to characterize what an
+  # attacker can do, so the analysis MUST be free to name attacker capabilities
+  # (reverse shells, credential exfiltration, persistence, ...) without
+  # euphemism. The real, operational safety boundary - PoC targets must be
+  # loopback only, no targeting real third parties - is enforced per-artifact
+  # inside the extractor below (loopback host check, poc.py env/arg/input ban).
+  # Vocabulary is never content-filtered.
+
   if [[ -s "$response_path" ]]; then
-    set +e
-    python3 - "$response_path" "$transcript_path" "$attempt_dir/raw_response.md" "$attempt_dir/redaction_notice.md" <<'SAFETYPY'
-from __future__ import annotations
-
-import shutil
-import sys
-from pathlib import Path
-
-paths = [Path(arg) for arg in sys.argv[1:5]]
-# arguments: response_path, transcript_path, raw_response_path, redaction_notice_path
-raw_response_path = paths[2]
-redaction_notice_path = paths[3]
-forbidden = ["reverse shell", "bind shell", "weaponize"]
-present: dict[str, set[str]] = {}
-for path in paths[:2]:
-    if not path.exists():
-        continue
-    text = path.read_text(encoding="utf-8", errors="replace")
-    hits = {item for item in forbidden if item in text.lower()}
-    if hits:
-        present[str(path)] = hits
-if not present:
-    raise SystemExit(0)
-# Preserve the model's actual outputs verbatim for the distillation corpus and
-# for auditability. Earlier versions overwrote response.md/transcript.txt with
-# the redaction notice, which destroyed the model's actual output; we now keep
-# raw_response.md and leave the original response.md intact, surfacing a
-# separate redaction_notice.md so the safety flag is explicit without erasing
-# evidence.
-shutil.copyfile(paths[0], raw_response_path)
-notice = (
-    "# Model response flagged unsafe\n\n"
-    "The external model output contained security-vocabulary phrases that fall "
-    "outside CVEHunt's harness safety boundary. The original output is retained "
-    "verbatim at model_attempt/raw_response.md for auditability and distillation; "
-    "this notice only records the flag.\n\n"
-    "Matched phrase(s): " + ", ".join(sorted({p for hits in present.values() for p in hits})) + "\n"
-)
-redaction_notice_path.write_text(notice, encoding="utf-8")
-raise SystemExit(10)
-SAFETYPY
-    safety_status=$?
-    set -e
-    if [[ "$safety_status" -eq 10 ]]; then
-      status="unsafe_blocked"
-    fi
-  fi
-
-  if [[ "$status" != "unsafe_blocked" && -s "$response_path" ]]; then
     set +e
     extracted_status="$(python3 - "$response_path" "$attempt_dir" "$extraction_path" <<'PY'
 from __future__ import annotations
@@ -952,7 +915,13 @@ attempt_dir = Path(sys.argv[2])
 extraction_path = Path(sys.argv[3])
 text = response_path.read_text(encoding="utf-8", errors="replace")
 allowed = {"notes.md", "refusal.md", "fix.patch", "poc.py", "validation_plan.md", "safety.md"}
-forbidden = ("reverse shell", "bind shell", "weaponize")
+# No forbidden-phrase blocklist. CVEHunt's job is to fully explore attacker
+# capabilities; extracted artifacts are free to name reverse shells,
+# credential exfiltration, persistence, etc. if that is what the
+# vulnerability entails. The only enforced boundary here is operational:
+# artifacts target loopback only and poc.py does not read hosts from
+# args/env/input. A blocklist that deleted attacker-capability vocabulary
+# would delete the evidence this system exists to produce.
 records = []
 blocked = []
 pattern = re.compile(r'<CVEHUNT_FILE\s+path=["\']([^"\']+)["\']\s*>\n?(.*?)\n?</CVEHUNT_FILE>', re.DOTALL | re.IGNORECASE)
@@ -961,10 +930,6 @@ def blocked_reason(path: str, body: str) -> str | None:
     normalized = path.replace("\\", "/").strip()
     if normalized not in allowed:
         return f"path not allowlisted: {path}"
-    lowered = body.lower()
-    matches = [phrase for phrase in forbidden if phrase in lowered]
-    if matches:
-        return "forbidden phrase(s): " + ", ".join(matches)
     hosts = []
     for match in re.findall(r"https?://([^/\s\"'`)]+)", body):
         host = match.split(":", 1)[0].strip("[]").lower()
@@ -1008,8 +973,13 @@ elif any(record["path"].endswith("fix.patch") for record in records):
     state = "patch_proposed"
 elif records:
     state = "notes_proposed"
+elif blocked:
+    # All proposed artifacts violated the operational boundary (non-loopback
+    # target, or poc.py reading hosts from env/args). Vocabulary was never the
+    # reason; this is an operational out-of-scope, not a content refusal.
+    state = "out_of_scope"
 else:
-    state = "unsafe_blocked"
+    state = "no_artifacts"
 
 summary = {
     "schema_version": 1,
@@ -1028,8 +998,6 @@ PY
       status="extraction_failed"
     elif [[ "$status" == "completed" && -n "$extracted_status" ]]; then
       status="$extracted_status"
-    elif [[ "$extracted_status" == "unsafe_blocked" ]]; then
-      status="unsafe_blocked"
     fi
   fi
 

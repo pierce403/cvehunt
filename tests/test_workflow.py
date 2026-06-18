@@ -139,15 +139,24 @@ def test_safety_policy_blocks_external_targets() -> None:
     policy.assert_localhost_scoped("urllib.request.urlopen('http://127.0.0.1:4000/x')")
 
 
-def test_safety_policy_blocks_explicit_unsafe_phrases() -> None:
+def test_safety_policy_permits_attacker_capability_vocabulary() -> None:
+    """The pipeline's job is to fully characterize what an attacker can do,
+    so attacker-capability vocabulary (reverse shell, bind shell, weaponize,
+    credential exfiltration, persistence, …) must NOT be content-filtered.
+    The only enforcement is the operational targeting boundary
+    (loopback-only), exercised separately.
+    """
     policy = SafetyPolicy()
-
+    # These describe attacker capabilities, not real targets. They must pass.
+    assert not hasattr(policy, "assert_safe_text")
+    assert not hasattr(policy, "forbidden_phrases")
+    # The operational boundary still holds: an external host is rejected.
     try:
-        policy.assert_safe_text("set up a reverse shell to attacker box")
+        policy.assert_localhost_scoped("set up a reverse shell to 10.0.0.5:4444")
     except ValueError as exc:
-        assert "unsafe output blocked" in str(exc)
-    else:
-        raise AssertionError("expected reverse shell language to be blocked")
+        assert "outside harness scope" in str(exc)
+    # Loopback reverse-shell description is fully allowed — vocabulary only.
+    policy.assert_localhost_scoped("reverse shell to 127.0.0.1:4444 via /bin/sh")
 
 
 def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:

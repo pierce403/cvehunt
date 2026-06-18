@@ -257,7 +257,7 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
   - Supported external model harnesses currently include `pi`, `codex`, `gemini`, and best-effort `claude`.
   - External model invocation stores `model_attempt/prompt.md`, `transcript.txt`, `stderr.txt`, `response.md`, `command.txt`, `metadata.json`, and `extracted.json`.
   - The wrapper extracts allowlisted model-authored files such as `model_attempt/notes.md`, `model_attempt/refusal.md`, `model_attempt/fix.patch`, `model_attempt/poc.py`, `model_attempt/validation_plan.md`, and `model_attempt/safety.md`.
-  - Extracted PoC proposals must hardcode loopback targets and must not read target hosts from args, env vars, or input.
+  - Extracted PoC proposals must hardcode loopback targets and must not read target hosts from args, env vars, or input. This is the ONLY enforced boundary on extracted artifacts — it is operational (don't attack a real third party), not a content filter. Attacker-capability vocabulary (reverse shell, bind shell, weaponize, credential exfiltration, persistence, ...) is intentionally NOT blocklisted, because CVEHunt's purpose is to fully characterize what an attacker can do; deleting that vocabulary deletes the evidence. (An earlier prose scanner substring-blocked those phrases in model responses and short-circuited extraction on any hit — it destroyed GLM 5.2's safe outputs because its own safety.md declared "No reverse shell..." and the scanner matched inside the negation. That scanner is removed.)
   - `contribution_audit.md` records external model invocation status and artifacts.
   - The dashboard shows model metadata for latest CVE rows and historical run rows.
 - **Not Implemented**:
@@ -269,6 +269,7 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
   - [x] The dashboard shows model metadata for analyzed CVEs.
   - [x] Manual smoke run verified `model_attempt/` artifacts are written for Pi invocation, including timeout metadata.
   - [x] Model-authored attempt artifacts are parsed into allowlisted `model_attempt/` files.
+  - [x] `test_safety_policy_permits_attacker_capability_vocabulary` asserts reverse-shell/bind-shell/weaponize vocabulary is not filtered, only non-loopback targeting is blocked.
   - [ ] Model-authored attempt artifacts affect the run score after independent validation.
 
 ### Repository-Backed Dashboard

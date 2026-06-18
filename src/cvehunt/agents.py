@@ -36,32 +36,27 @@ from cvehunt.models import (
 
 
 class SafetyPolicy:
-    """Scope guard for harness-bound proof-of-concept artifacts.
+    """Operational boundary for harness-bound proof-of-concept artifacts.
 
-    The policy enforces what the AGENTS.md safety boundary actually requires:
-    PoC artifacts target the local harness only and never reach out to
-    third-party infrastructure. It does not filter security vocabulary,
-    since words like "exploit" and "payload" are unavoidable in legitimate
-    harness-bound CVE validation.
+    CVEHunt's job is to fully characterize what an attacker can do against a
+    vulnerable target, which means PoC and investigation text *must* be free to
+    name attacker capabilities — reverse shells, credential exfiltration,
+    persistence, privilege escalation, code execution — without euphemism.
+    Censoring that vocabulary censors the analysis. Accordingly, this policy
+    does NOT filter security vocabulary at all.
+
+    The one thing it does enforce is the operational targeting boundary: PoC
+    artifacts point at the local loopback harness only, never at real
+    third-party infrastructure. A PoC that targets `evil.example.com` would be
+    an operational violation (attacking a real third party), not a content
+    violation, and that distinction is what this policy encodes.
     """
-
-    forbidden_phrases = (
-        "reverse shell",
-        "weaponize",
-        "bind shell",
-    )
 
     allowed_hosts = (
         "127.0.0.1",
         "localhost",
         "::1",
     )
-
-    def assert_safe_text(self, text: str) -> None:
-        lowered = text.lower()
-        matches = [phrase for phrase in self.forbidden_phrases if phrase in lowered]
-        if matches:
-            raise ValueError(f"unsafe output blocked: {', '.join(matches)}")
 
     def assert_localhost_scoped(self, text: str) -> None:
         import re
@@ -534,8 +529,6 @@ class HarnessBuilderAgent:
             patched_app_source = _shim_app_source(
                 finding.vulnerability_class, variant="patched"
             )
-            self.safety_policy.assert_safe_text(vuln_app_source)
-            self.safety_policy.assert_safe_text(patched_app_source)
             vuln_app.write_text(vuln_app_source, encoding="utf-8")
             patched_app.write_text(patched_app_source, encoding="utf-8")
             vuln_dockerfile.write_text(_shim_dockerfile(), encoding="utf-8")
@@ -618,9 +611,8 @@ class HarnessBuilderAgent:
                 "target-specific instructions",
             ],
         )
-        for check in plan.checks:
-            self.safety_policy.assert_safe_text(check.purpose)
-            self.safety_policy.assert_safe_text(check.safe_method)
+        # ValidationPlan checks are descriptive metadata; no content policy to
+        # enforce here now that attacker-capability vocabulary is permitted.
         return (
             HarnessArtifact(
                 status="built",
@@ -699,7 +691,6 @@ class ExploiterAgent:
         runner_source = _poc_runner_script(cve, base_port=base_port)
         investigation = _poc_investigation_payload(cve, finding, harness, base_port)
 
-        self.safety_policy.assert_safe_text(poc_source)
         self.safety_policy.assert_localhost_scoped(poc_source)
 
         poc_path.write_text(poc_source, encoding="utf-8")

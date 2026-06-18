@@ -6401,7 +6401,7 @@
         "model": "venice/zai-org-glm-5-2",
         "model_label": "pi:venice/zai-org-glm-5-2",
         "model_title": "GLM 5.2 (pi)",
-        "status": "unsafe_blocked",
+        "status": "notes_proposed",
         "exit_code": 0,
         "invoked_at": "2026-06-18T07:28:14+0000",
         "completed_at": "2026-06-18T07:37:46+0000",
@@ -6418,7 +6418,20 @@
         },
         "refusal": null,
         "refusal_detected": false,
-        "extracted_files": [],
+        "extracted_files": [
+          {
+            "path": "model_attempt/notes.md",
+            "bytes": 2949
+          },
+          {
+            "path": "model_attempt/validation_plan.md",
+            "bytes": 2792
+          },
+          {
+            "path": "model_attempt/safety.md",
+            "bytes": 1609
+          }
+        ],
         "blocked_files": []
       },
       "artifacts": {
@@ -6476,8 +6489,8 @@
         "model_attempt_metadata_exists": true,
         "model_attempt_response_exists": true,
         "model_attempt_prompt_exists": true,
-        "model_attempt_extracted_exists": false,
-        "model_attempt_notes_exists": false,
+        "model_attempt_extracted_exists": true,
+        "model_attempt_notes_exists": true,
         "model_attempt_fix_exists": false,
         "model_attempt_poc_exists": false,
         "model_attempt_refusal_exists": false,
