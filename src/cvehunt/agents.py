@@ -1398,6 +1398,213 @@ class AdversarialLoopAgent:
         )
 
 
+class ModelPocVerifier:
+    """Execute a model-authored poc.py against the run's harness.
+
+    Given a persisted run directory containing a `model_attempt/poc.py` that the
+    extractor persisted (i.e. it passed the loopback/no-env-source checks),
+    this agent builds/runs the harness the same way `exploiter/run-poc.sh` does,
+    then runs the model PoC against the live vulnerable/patched/shim targets on
+    127.0.0.1 and records a verdict in `model_attempt/poc_outcome.json`:
+    `vulnerable_triggered` / `patched_blocked` / `raw` (stdout) / `stderr`.
+
+    This is what promotes a model PoC on the dashboard from
+    `poc_authored_unverified` (amber) to `poc_verified` (green). The model
+    PoC must hardcode loopback targets; SafetyPolicy.assert_localhost_scoped is
+    re-applied here too before execution as a runtime guard.
+    """
+
+    verify_timeout_seconds: int = 1200
+
+    def __init__(self, safety_policy: SafetyPolicy | None = None) -> None:
+        self.safety_policy = safety_policy or SafetyPolicy()
+
+    def verify(
+        self,
+        cve: CveRecord,
+        run_dir: Path,
+        base_port: int = 4000,
+    ) -> dict[str, object] | None:
+        poc_path = run_dir / "model_attempt" / "poc.py"
+        outcome_path = run_dir / "model_attempt" / "poc_outcome.json"
+        log_path = run_dir / "model_attempt" / "poc_verify.log"
+        log_lines: list[str] = [f"[verify-model-poc] {cve.cve_id} run={run_dir.name}"]
+        if not poc_path.exists():
+            log_lines.append("[verify-model-poc] no model_attempt/poc.py present; nothing to verify")
+            self._write_log(log_path, log_lines)
+            self._write_outcome(outcome_path, {
+                "verified": False,
+                "reason": "no model_attempt/poc.py present",
+                "vulnerable_triggered": False,
+            })
+            return None
+        source = poc_path.read_text(encoding="utf-8")
+        self.safety_policy.assert_localhost_scoped(source)
+        log_lines.append("[verify-model-poc] poc passed loopback scope; running harness then model PoC")
+        if not _docker_available():
+            log_lines.append("[verify-model-poc] docker not available; cannot build/run harness")
+            self._write_log(log_path, log_lines)
+            self._write_outcome(outcome_path, {
+                "verified": False,
+                "reason": "docker not available",
+                "vulnerable_triggered": False,
+            })
+            return None
+        # Bring up the stack via the persisted orchestrator so the harness is in
+        # the exact shape the deterministic run used. The orchestrator writes
+        # provision/provision.json and tears down on exit (trap), but we want the
+        # stack UP while we run the model PoC, so run it in the background, poll
+        # provision, then run poc.py, then kill it.
+        runner_path = run_dir / "exploiter" / "run-poc.sh"
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                ["bash", str(runner_path)],
+                cwd=str(run_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except Exception as exc:
+            log_lines.append(f"[verify-model-poc] failed to start orchestrator: {exc}")
+            self._write_log(log_path, log_lines)
+            self._write_outcome(outcome_path, {
+                "verified": False,
+                "reason": f"orchestrator failed: {exc}",
+                "vulnerable_triggered": False,
+            })
+            return None
+        # Wait until provision reports something servable (or timeout).
+        import time
+        provision_path = run_dir / "provision" / "provision.json"
+        servable = False
+        for _ in range(120):
+            if proc.poll() is not None:
+                log_lines.append(f"[verify-model-poc] orchestrator exited early rc={proc.returncode}")
+                break
+            if provision_path.exists():
+                try:
+                    pj = json.loads(provision_path.read_text(encoding="utf-8"))
+                    if any(t.get("servable") for t in pj.get("targets", [])):
+                        servable = True
+                        break
+                except Exception:
+                    pass
+            time.sleep(2)
+        log_lines.append(f"[verify-model-poc] harness servable={servable} (base_port={base_port})")
+        if not servable and proc.poll() is None:
+            # Best-effort: try a direct probe even if provision didn't write.
+            for port in (base_port + 10, base_port + 11, base_port, base_port + 1):
+                status, _ = _http_probe(f"http://127.0.0.1:{port}/health/readiness", timeout=2.0)
+                if status == 200:
+                    servable = True
+                    log_lines.append(f"[verify-model-poc] direct probe found port {port} servable")
+                    break
+        # Run the model PoC against the live stack.
+        raw_stdout = ""
+        raw_stderr = ""
+        triggered_vuln = False
+        blocked_patched = False
+        verify_status = "ok"
+        if servable and proc.poll() is None:
+            try:
+                # Most PoC templates print a summary JSON; capture it.
+                comp = subprocess.run(
+                    ["python3", str(poc_path)],
+                    cwd=str(run_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=self.verify_timeout_seconds,
+                    check=False,
+                )
+                raw_stdout = comp.stdout
+                raw_stderr = comp.stderr
+                log_lines.append(
+                    f"[verify-model-poc] model PoC ran rc={comp.returncode} stdout_len={len(raw_stdout)} stderr_len={len(raw_stderr)}"
+                )
+                outcome = self._parse_outcome(raw_stdout)
+                if outcome is not None:
+                    triggered_vuln = bool(outcome.get("vulnerable_triggered") or outcome.get("triggered_vulnerable"))
+                    blocked_patched = bool(outcome.get("patched_blocked") or outcome.get("patched_blocked_poc"))
+                    log_lines.append(
+                        f"[verify-model-poc] parsed outcome vulnerable_triggered={triggered_vuln} patched_blocked={blocked_patched}"
+                    )
+                else:
+                    # No JSON outcome — heuristic on stdout patterns.
+                    lowered = raw_stdout.lower()
+                    triggered_vuln = ("vulnerable" in lowered and "triggered" in lowered and "false" not in lowered[:200])
+                    log_lines.append(
+                        f"[verify-model-poc] no outcome JSON; heuristic triggered_vuln={triggered_vuln}"
+                    )
+                    verify_status = "no_outline_json"
+            except subprocess.TimeoutExpired:
+                verify_status = "timeout"
+                log_lines.append(f"[verify-model-poc] model PoC timed out after {self.verify_timeout_seconds}s")
+            except Exception as exc:
+                verify_status = f"error: {exc}"
+                log_lines.append(f"[verify-model-poc] model PoC error: {exc}")
+        else:
+            verify_status = "harness_not_servable"
+            log_lines.append("[verify-model-poc] harness not servable; model PoC not executed against live target")
+        verified = bool(triggered_vuln)
+        record = {
+            "verified": verified,
+            "status": verify_status,
+            "vulnerable_triggered": triggered_vuln,
+            "patched_blocked": blocked_patched,
+            "stdout": raw_stdout[:8192],
+            "stderr": raw_stderr[:8192],
+            "base_port": base_port,
+            "run_id": run_dir.name,
+        }
+        # Tear down the harness orchestrator (its EXIT trap cleans containers).
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=30)
+            except Exception:
+                proc.kill()
+        self._write_log(log_path, log_lines)
+        self._write_outcome(outcome_path, record)
+        return record
+
+    @staticmethod
+    def _parse_outcome(stdout: str) -> dict[str, object] | None:
+        # PoC templates print JSON; pull the last {...,...} block on stdout.
+        text = stdout.strip()
+        if not text:
+            return None
+        # Try direct JSON parse of the whole thing first.
+        try:
+            d = json.loads(text)
+            if isinstance(d, dict):
+                return d
+        except Exception:
+            pass
+        # Fall back to last balanced-brace block.
+        end = text.rfind("}")
+        if end == -1:
+            return None
+        start = text.rfind("{", 0, end + 1)
+        if start == -1:
+            return None
+        try:
+            d = json.loads(text[start : end + 1])
+            return d if isinstance(d, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _write_log(path: Path, lines: list[str]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _write_outcome(path: Path, record: dict[str, object]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+
+
 class FixDeveloperAgent:
     def develop(
         self,

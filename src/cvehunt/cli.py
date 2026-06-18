@@ -77,6 +77,19 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subcommands.add_parser("serve", help="Serve the local dashboard")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
+
+    verify = subcommands.add_parser(
+        "verify-model-poc",
+        help="Build the harness for a persisted run and execute model_attempt/poc.py against it, writing model_attempt/poc_outcome.json.",
+    )
+    verify.add_argument("run_dir", help="Path to the persisted run directory to verify")
+    verify.add_argument(
+        "--base-port",
+        type=int,
+        default=int(os.environ.get("CVEHUNT_BASE_PORT", "4000")),
+        help="Base localhost port the run used for vulnerable/patched/shim targets.",
+    )
+    verify.add_argument("--json", action="store_true", help="Emit the resulting poc_outcome record as JSON")
     return parser
 
 
@@ -116,6 +129,33 @@ def main() -> None:
         print(path)
     elif args.command == "serve":
         serve_dashboard(store, args.host, args.port)
+    elif args.command == "verify-model-poc":
+        from cvehunt.agents import ModelPocVerifier
+        # Resolve /cves/<CVE>/runs/<RUN-ID>/<run-name relative>, accept CVE+run too.
+        run_dir = Path(args.run_dir)
+        # Try store-relative shorthand: CVE-XXXX-NNNNN 2026-MM-DDTHH-MM-SSZ
+        if not run_dir.exists() and " " in args.run_dir and not Path.cwd().joinpath(args.run_dir).exists():
+            cve_id, run_id = args.run_dir.split(" ", 1)
+            run_dir = store.run_dir(cve_id, run_id)
+        if not run_dir.exists():
+            raise SystemExit(f"run directory not found: {run_dir}")
+        cve_path = run_dir / "cve.json"
+        if not cve_path.exists():
+            cve_path = store.cve_dir(run_dir.parent.name) / "cve.json"
+        cve_record = None
+        if cve_path.exists():
+            data = json.loads(cve_path.read_text(encoding="utf-8"))
+            from cvehunt.models import CveRecord
+            cve_record = CveRecord(**data)
+        outcome = ModelPocVerifier().verify(cve_record, run_dir, base_port=args.base_port)
+        if args.json:
+            print(json.dumps(outcome or {"verified": False, "reason": "no poc to verify"}, indent=2))
+        else:
+            ok = bool(outcome and outcome.get("verified"))
+            print(
+                f"model PoC verification: {'VERIFIED (vulnerable triggered)' if ok else 'NOT verified'}\n"
+                + json.dumps(outcome or {}, indent=2)
+            )
 
 
 if __name__ == "__main__":
