@@ -49,6 +49,7 @@ class CveHuntWorkflow:
         cve_record: CveRecord | None = None,
         artifact_root: Path | None = None,
         execute_poc: bool = False,
+        residual_rounds: int = 0,
     ) -> tuple[WorkflowReport, list[TraceEvent]]:
         events: list[TraceEvent] = []
         self.last_artifact_root = artifact_root or Path(
@@ -113,7 +114,7 @@ class CveHuntWorkflow:
         if execute_poc:
             negotiation = self.adversarial_loop.run(
                 cve, finding, harness, exploiter, provision, self.last_artifact_root,
-                base_port=self.base_port,
+                base_port=self.base_port, residual_rounds_budget=residual_rounds,
             )
             events.append(
                 TraceEvent(

@@ -16,6 +16,8 @@ const PHASES = [
   'Researcher',
   'Harness Builder',
   'Exploiter',
+  'Provision',
+  'Adversarial Loop',
   'Fix Developer',
   'Validator',
   'Judge',
@@ -334,6 +336,9 @@ function InlineRunDetails({ item }) {
             <span className="metaPill">Run {item.report?.run?.run_id || item.pipeline_status?.run_id || 'none'}</span>
             <span className="metaPill">Score {runScore(item).score}/{runScore(item).max_score}</span>
             <span className="metaPill">Model {item.report?.run?.model || item.pipeline_status?.model || 'none'}</span>
+            {item.progress?.adversarial_verdict && (
+              <span className="metaPill">Loop: {item.progress.adversarial_verdict}</span>
+            )}
           </div>
         </div>
         <div className="inlineActions">
@@ -476,6 +481,13 @@ function Detail({ item }) {
       <section className="panel gridTwo">
         <Outcome title="Exploit generated" value={item.progress.exploit_generated} note={item.progress.exploit_note} />
         <Outcome title="Patch generated" value={item.progress.patch_generated} note={item.progress.patch_note} />
+        <Outcome
+          title="Adversarial verdict"
+          value={Boolean(item.progress.adversarial_verdict && item.progress.negotiation && item.progress.negotiation.executed)}
+          note={item.progress.negotiation?.verdict
+            ? `${item.progress.negotiation.verdict} — ${item.progress.negotiation.rationale || ''}`
+            : 'The adversarial exploit/defend loop did not execute (--execute-poc was off or nothing was servable).'}
+        />
       </section>
 
       <section className="panel">
@@ -576,6 +588,8 @@ function Detail({ item }) {
             <p className="mutedText">{exploiter?.next_step || ''}</p>
           </section>
 
+          <AdversarialLoopPanel item={item} />
+
           <section className="panel">
             <h2>Validation Plan</h2>
             <p className="mutedText">{plan.runtime} · {plan.isolation}</p>
@@ -662,6 +676,60 @@ function Outcome({ title, value, note }) {
   );
 }
 
+function VerdictBadge({ verdict }) {
+  if (!verdict) return <span className="status pending">not executed</span>;
+  const cls = verdict === 'defensive_signal_observed' ? 'status analyzed'
+    : verdict === 'residual_bypass_found' ? 'status pending'
+    : 'status pending';
+  return <span className={cls}>{verdict}</span>;
+}
+
+function AdversarialLoopPanel({ item }) {
+  const negotiation = item.progress?.negotiation;
+  const provision = item.progress?.provision;
+  const a = item.artifacts || {};
+  if (!negotiation && !provision) return null;
+  return (
+    <section className="panel">
+      <h2>Adversarial Exploit / Defend Loop</h2>
+      <p className="mutedText">
+        The verdict below is driven by observed behavior in the running harness, not by artifact existence.
+        A scaffold-only run is explicitly NOT a defensive signal — even if sources, a harness, a PoC, and a fix were produced.
+      </p>
+      <dl className="definitionList">
+        <Info label="Adversarial verdict" value={negotiation?.verdict || 'not executed'} />
+        <Info label="Escalation achieved" value={negotiation ? (negotiation.escalation_achieved ? 'yes' : 'no') : 'n/a'} />
+        <Info label="Patch effective" value={negotiation ? (negotiation.patch_effective ? 'yes' : 'no') : 'n/a'} />
+        <Info label="Residual bypass" value={negotiation ? (negotiation.residual_bypass ? 'yes' : 'no') : 'n/a'} />
+        <Info label="Rounds" value={negotiation ? `${negotiation.rounds_total} total (exploit=${negotiation.exploit_rounds}, defense=${negotiation.defense_rounds}, residual=${negotiation.residual_rounds})` : 'n/a'} />
+        <Info label="Provision status" value={provision?.status || 'n/a'} />
+        <Info label="Provision note" value={provision?.note || 'n/a'} />
+      </dl>
+      {negotiation?.rationale && <p>{negotiation.rationale}</p>}
+      {provision?.targets?.length > 0 && (
+        <>
+          <h3>Provisioned targets</h3>
+          <ul>
+            {provision.targets.map((t) => (
+              <li key={t.name}>{t.name} — {t.url} — {t.servable ? 'servable' : 'not servable'} ({t.detail})</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <h3>Negotiation logs</h3>
+      <div className="artifactGrid">
+        <Artifact href={a.negotiation_verdict_url} label="negotiation/verdict.json" disabled={!a.negotiation_verdict_exists} />
+        <Artifact href={a.negotiation_log_url} label="negotiation/negotiation.log" disabled={!a.negotiation_log_exists} />
+        <Artifact href={a.exploit_rounds_url} label="negotiation/exploit-rounds.ndjson" disabled={!a.exploit_rounds_exists} />
+        <Artifact href={a.defense_rounds_url} label="negotiation/defense-rounds.ndjson" disabled={!a.defense_rounds_exists} />
+        <Artifact href={a.residual_rounds_url} label="negotiation/residual-rounds.ndjson" disabled={!a.residual_rounds_exists} />
+        <Artifact href={a.provision_json_url} label="provision/provision.json" disabled={!a.provision_json_exists} />
+        <Artifact href={a.provision_log_url} label="provision/provision.log" disabled={!a.provision_log_exists} />
+      </div>
+    </section>
+  );
+}
+
 function Artifact({ href, label, disabled }) {
   if (disabled) return <span className="artifact disabled">{label}</span>;
   return <a className="artifact" href={href}>{label} <ExternalLink size={13} /></a>;
@@ -687,6 +755,13 @@ function artifactFor(item, artifact) {
     'exploiter/README.md': item.artifacts.exploiter_stub_url,
     'exploiter/investigation.md': item.artifacts.exploiter_investigation_url,
     'exploiter/investigation.json': item.artifacts.exploiter_investigation_json_url,
+    'negotiation/verdict.json': item.artifacts.negotiation_verdict_url,
+    'negotiation/negotiation.log': item.artifacts.negotiation_log_url,
+    'negotiation/exploit-rounds.ndjson': item.artifacts.exploit_rounds_url,
+    'negotiation/defense-rounds.ndjson': item.artifacts.defense_rounds_url,
+    'negotiation/residual-rounds.ndjson': item.artifacts.residual_rounds_url,
+    'provision/provision.json': item.artifacts.provision_json_url,
+    'provision/provision.log': item.artifacts.provision_log_url,
   };
   if (known[artifact]) return known[artifact];
   return `${item.artifacts.artifact_blob_prefix}/${artifact}`;

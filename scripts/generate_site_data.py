@@ -112,6 +112,10 @@ def summarize_progress(
             "patch_generated": bool(pipeline_status.get("fix_generated")),
             "exploit_note": _exploit_note_from_status(pipeline_status),
             "patch_note": _patch_note_from_status(pipeline_status),
+            "adversarial_verdict": pipeline_status.get("adversarial_verdict"),
+            "residual_bypass": bool(pipeline_status.get("residual_bypass")),
+            "provision": pipeline_status.get("provision"),
+            "negotiation": _negotiation_summary(pipeline_status.get("negotiation")),
         }
 
     completed_phases = [str(event.get("phase", "")) for event in trace]
@@ -220,6 +224,13 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "exploiter_stub_url": repo_url(artifact_dir / "exploiter" / "README.md"),
             "exploiter_investigation_url": repo_url(exploiter_investigation_path),
             "exploiter_investigation_json_url": repo_url(exploiter_investigation_json_path),
+            "provision_log_url": repo_url(artifact_dir / "provision" / "provision.log"),
+            "provision_json_url": repo_url(artifact_dir / "provision" / "provision.json"),
+            "negotiation_log_url": repo_url(artifact_dir / "negotiation" / "negotiation.log"),
+            "negotiation_verdict_url": repo_url(artifact_dir / "negotiation" / "verdict.json"),
+            "exploit_rounds_url": repo_url(artifact_dir / "negotiation" / "exploit-rounds.ndjson"),
+            "defense_rounds_url": repo_url(artifact_dir / "negotiation" / "defense-rounds.ndjson"),
+            "residual_rounds_url": repo_url(artifact_dir / "negotiation" / "residual-rounds.ndjson"),
             "sources_exists": (artifact_dir / "sources").exists(),
             "trace_exists": trace_path.exists(),
             "report_exists": report_path.exists(),
@@ -241,6 +252,13 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),
             "exploiter_investigation_exists": exploiter_investigation_path.exists(),
             "exploiter_investigation_json_exists": exploiter_investigation_json_path.exists(),
+            "provision_log_exists": (artifact_dir / "provision" / "provision.log").exists(),
+            "provision_json_exists": (artifact_dir / "provision" / "provision.json").exists(),
+            "negotiation_log_exists": (artifact_dir / "negotiation" / "negotiation.log").exists(),
+            "negotiation_verdict_exists": (artifact_dir / "negotiation" / "verdict.json").exists(),
+            "exploit_rounds_exists": (artifact_dir / "negotiation" / "exploit-rounds.ndjson").exists(),
+            "defense_rounds_exists": (artifact_dir / "negotiation" / "defense-rounds.ndjson").exists(),
+            "residual_rounds_exists": (artifact_dir / "negotiation" / "residual-rounds.ndjson").exists(),
         },
     }
 
@@ -300,6 +318,23 @@ def _summary_from_report(
     if isinstance(notes, list) and notes:
         return str(notes[0])
     return "The workflow captured a repository-backed autonomous run."
+
+
+def _negotiation_summary(negotiation: object) -> dict[str, object] | None:
+    if not isinstance(negotiation, dict):
+        return None
+    return {
+        "executed": bool(negotiation.get("executed")) if negotiation.get("executed") is not None else False,
+        "escalation_achieved": bool(negotiation.get("escalation_achieved")),
+        "patch_effective": bool(negotiation.get("patch_effective")),
+        "residual_bypass": bool(negotiation.get("residual_bypass")),
+        "rounds_total": int(negotiation.get("rounds_total") or 0),
+        "exploit_rounds": int(negotiation.get("exploit_rounds") or 0),
+        "defense_rounds": int(negotiation.get("defense_rounds") or 0),
+        "residual_rounds": int(negotiation.get("residual_rounds") or 0),
+        "verdict": str(negotiation.get("verdict") or ""),
+        "rationale": str(negotiation.get("rationale") or ""),
+    }
 
 
 def _exploit_note_from_status(pipeline_status: dict[str, object]) -> str:

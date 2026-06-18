@@ -40,6 +40,17 @@ def build_parser() -> argparse.ArgumentParser:
             "PoC against the local containers. Requires Docker."
         ),
     )
+    run.add_argument(
+        "--residual-rounds",
+        type=int,
+        default=int(os.environ.get("CVEHUNT_RESIDUAL_ROUNDS", "0")),
+        help=(
+            "When --execute-poc is set, run this many residual/variant exploit "
+            "rounds against a freshly-started patched target to check the fix "
+            "holds under bounded adversarial probing. 0 disables residual (fast "
+            "default). Defaults to CVEHUNT_RESIDUAL_ROUNDS or 0."
+        ),
+    )
 
     sync = subcommands.add_parser("sync-recent", help="Fetch recent CVEs from NVD")
     sync.add_argument("--days", type=int, default=7, help="Publication lookback window")
@@ -81,7 +92,8 @@ def main() -> None:
         cve = store.read_cve(args.cve_id)
         workflow = CveHuntWorkflow(model=_model_label(args.model), base_port=args.base_port)
         report, events = workflow.run_with_trace(
-            args.cve_id, cve, execute_poc=args.execute_poc
+            args.cve_id, cve, execute_poc=args.execute_poc,
+            residual_rounds=args.residual_rounds,
         )
         if args.persist:
             store.write_report(report, events, artifact_root=workflow.last_artifact_root)

@@ -23,8 +23,9 @@ Options:
   --skip-model             Skip the external model evaluation stage
   --model-timeout SECONDS  External model evaluation timeout
   --base-port PORT         Base localhost port for harness targets
+  --residual-rounds N      Adversarial residual/variant rounds vs a freshly-started patched target (default 3 when --execute-poc is on)
   --isolation-backend NAME Target isolation preflight backend
-  -h, --help               Show this help
+  -h, --help               Show the help
 
 Environment overrides:
   CVEHUNT_CVE       CVE to run when no positional CVE is provided
@@ -38,6 +39,7 @@ Environment overrides:
   CVEHUNT_SKIP_MODEL=1  Skip the external model evaluation stage
   CVEHUNT_MODEL_TIMEOUT=600  Timeout in seconds for external model evaluation
   CVEHUNT_BASE_PORT=4000  Base localhost port; patched uses base+1 and shims use base+10/base+11
+  CVEHUNT_RESIDUAL_ROUNDS=3  Adversarial residual rounds vs a freshly-started patched target (default 3 when --execute-poc is on; 0 disables)
   CVEHUNT_ISOLATION_BACKEND=docker|external-vm|firecracker|qemu
                          Target isolation preflight backend (docker is current execution backend)
 USAGE
@@ -124,6 +126,14 @@ parse_cli_args() {
         ;;
       --base-port=*)
         CVEHUNT_BASE_PORT="${1#*=}"
+        ;;
+      --residual-rounds)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_RESIDUAL_ROUNDS="$1"
+        ;;
+      --residual-rounds=*)
+        CVEHUNT_RESIDUAL_ROUNDS="${1#*=}"
         ;;
       --isolation-backend)
         [[ "$#" -ge 2 ]] || missing_flag_value "$1"
@@ -1327,6 +1337,16 @@ main() {
   if [[ -z "${CVEHUNT_EXECUTE_POC+x}" ]]; then
     CVEHUNT_EXECUTE_POC=1
   fi
+  # Default the adversarial residual budget to 3 when execution is on, so the
+  # bounded back-and-forth against the patched target runs by default. "0" is
+  # still honored as an explicit opt-out, and the flag wins over the env.
+  if [[ -z "${CVEHUNT_RESIDUAL_ROUNDS+x}" ]]; then
+    if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
+      CVEHUNT_RESIDUAL_ROUNDS=3
+    else
+      CVEHUNT_RESIDUAL_ROUNDS=0
+    fi
+  fi
 
   local model_label="$harness:$model"
   export CVEHUNT_MODEL="$model_label"
@@ -1345,6 +1365,11 @@ main() {
     echo "  Target execution: disabled; will generate source, harness, PoC, and patch artifacts only."
     echo "  To build/run the localhost target harness, add --execute-poc."
   fi
+  if [[ "${CVEHUNT_RESIDUAL_ROUNDS:-0}" != "0" && "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
+    echo "  Adversarial residual rounds: ${CVEHUNT_RESIDUAL_ROUNDS} (bounded exploit/defend back-and-forth vs patched target)."
+  else
+    echo "  Adversarial residual rounds: disabled (set --residual-rounds N or CVEHUNT_RESIDUAL_ROUNDS=N with --execute-poc)."
+  fi
   echo "  Isolation backend: ${CVEHUNT_ISOLATION_BACKEND:-docker}"
   preflight_isolation_dependencies | tee "$isolation_preflight_log"
   if [[ "${CVEHUNT_DRY_RUN:-0}" == "1" ]]; then
@@ -1352,7 +1377,11 @@ main() {
       echo "Would check/install project dependencies"
     fi
     if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
-      printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q --execute-poc\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
+      if [[ "${CVEHUNT_RESIDUAL_ROUNDS:-0}" != "0" ]]; then
+        printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q --execute-poc --residual-rounds %q\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}" "${CVEHUNT_RESIDUAL_ROUNDS:-0}"
+      else
+        printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q --execute-poc\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
+      fi
     else
       printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
     fi
@@ -1377,6 +1406,9 @@ main() {
   run_command=(uv run cvehunt run "$cve_id" --persist --json --model "$model_label" --base-port "${CVEHUNT_BASE_PORT:-4000}")
   if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
     run_command=("${run_command[@]}" --execute-poc)
+    if [[ "${CVEHUNT_RESIDUAL_ROUNDS:-0}" != "0" ]]; then
+      run_command=("${run_command[@]}" --residual-rounds "${CVEHUNT_RESIDUAL_ROUNDS}")
+    fi
   fi
 
   printf 'Running command:'

@@ -1274,17 +1274,18 @@ class AdversarialLoopAgent:
     def _run_residual_rounds(
         self,
         cve: CveRecord,
-        harness: HarnessArtifact | None,
         finding: ResearchFinding,
         base_port: int,
         artifact_root: Path,
         residual_log: Path,
         transcript: list[str],
         rounds: list[NegotiationRound],
+        budget: int = 0,
     ) -> bool:
         """Start a fresh patched shim and throw a bounded set of variant primitives.
 
-        Returns True if any primitive escalated (residual bypass found).
+        `budget` caps how many primitives are tried. Returns True if any
+        primitive escalated (residual bypass found).
         """
         shim_patched = artifact_root / "harness" / "shim" / "patched"
         if not shim_patched.is_dir():
@@ -1306,6 +1307,8 @@ class AdversarialLoopAgent:
                 transcript.append(f"[negotiation] patched shim never became ready on {port}")
                 return False
             for idx, primitive in enumerate(self.residual_primitives, start=1):
+                if idx > budget:
+                    break
                 status, body = _http_probe(
                     f"http://127.0.0.1:{port}/verify",
                     headers={"Authorization": primitive},
