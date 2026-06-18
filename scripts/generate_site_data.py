@@ -363,6 +363,82 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     }
 
 
+# PoC-contribution band success rank, best first. Used to order each CVE's
+# model-run list by 'most successful PoC' (the headline of the dashboard).
+_POC_BAND_RANK = {
+    "poc_verified": 5,
+    "poc_partial_verified": 4,
+    "poc_authored_unverified": 3,
+    "poc_authored_truncated": 2,
+    "refused_poc": 1,
+    "no_poc_authored": 1,
+    "no_model_attempt": 0,
+}
+
+
+def _poc_download_url(item: dict[str, object]) -> str | None:
+    """Direct GitHub '?raw=1' URL for the model-authored poc.py, or None.
+
+    Only return a URL when the PoC actually exists on disk so the 'Download
+    PoC' link never points at a 404. The extractor only persists poc.py when a
+    model authored one (so refused/no_poc rows have no poc on disk).
+    """
+    ma = item.get("model_attempt") or {}
+    poc = ma.get("poc") or {}
+    # Prefer the per-PoC url (only set when poc_present) — it is the true
+    # signal of 'there is a real file to download'.
+    url = poc.get("url") if poc.get("path_present") else None
+    # Fall back to the artifacts URL + the *_exists flag as a second source.
+    if not url:
+        a = item.get("artifacts") or {}
+        if a.get("model_attempt_poc_exists"):
+            url = a.get("model_attempt_poc_url")
+    if not url:
+        return None
+    sep = "&" if "?" in url else "?"
+    return url + sep + "raw=1"
+
+
+def _compact_run_for_cve_list(item: dict[str, object]) -> dict[str, object]:
+    """Per-run view used in the 'Runs for this CVE' list on the dashboard.'"""
+    ma = item.get("model_attempt") or {}
+    poc = ma.get("poc") or {}
+    a = item.get("artifacts") or {}
+    is_model_backed = bool(ma.get("harness") or ma.get("model_label"))
+    return {
+        "run_id": item.get("run_id"),
+        "model_title": ma.get("model_title") or item.get("model_title") or "unspecified",
+        "model_label": ma.get("model_label") or item.get("model_label"),
+        "is_model_backed": is_model_backed,
+        "poc_contribution": ma.get("poc_contribution") or "no_model_attempt",
+        "poc_url": poc.get("url"),
+        "poc_download_url": _poc_download_url(item),
+        "poc_present": bool(poc.get("path_present")),
+        "vulnerable_triggered": bool(poc.get("vulnerable_triggered")),
+        "patched_blocked": bool(poc.get("patched_blocked")),
+        "refusal_detected": bool(ma.get("refusal_detected")),
+        "tokens_used": ma.get("tokens_used"),
+        "duration_seconds": ma.get("duration_seconds"),
+        "run_score": item.get("run_score") or {"score": 0, "max_score": 100, "percent": 0.0},
+        "pipeline_status": (item.get("progress") or {}).get("autonomous_status"),
+        "negotiation_verdict": ((item.get("progress") or {}).get("negotiation") or {}).get("verdict"),
+        "latest_run_url": a.get("latest_run_url"),
+        "detail_href": f"#/run/{item.get('cve',{}).get('cve_id')}/{item.get('run_id')}",
+    }
+
+
+def _run_success_key(item: dict[str, object]) -> tuple:
+    """Order runs by: PoC band rank, pipeline run score, then PoC verified
+    (vul-triggered & patched-blocked), then newest run_id."""
+    band = (item.get("poc_contribution")) or "no_model_attempt"
+    rank = _POC_BAND_RANK.get(band, 0)
+    score = (item.get("run_score") or {}).get("score", 0)
+    vt = 1 if item.get("vulnerable_triggered") else 0
+    pb = 1 if item.get("patched_blocked") else 0
+    rid = str(item.get("run_id") or "")
+    return (rank, score, vt, pb, rid)
+
+
 def build() -> dict[str, object]:
     cves = []
     all_runs = []
@@ -383,15 +459,47 @@ def build() -> dict[str, object]:
             if run_item and run_item["report"]:
                 all_runs.append(run_item)
 
-    all_runs = sorted(
-        all_runs,
-        key=lambda item: (
-            item["run_score"].get("score", 0),
-            item["run_score"].get("percent", 0),
-            str(item.get("run_id") or ""),
-        ),
-        reverse=True,
-    )
+    # Filter 'old broken runs' off the site: only keep runs that are
+    # model-backed (have model_attempt with a harness/model_label), OR runs
+    # that have a model-authored poc present. Everything else (the early
+    # scaffold-only / unspecified-model transition runs) stays on disk and
+    # is excluded from the dashboard so it reflects model comparison cleanly.
+    def _keep_run(item: dict[str, object]) -> bool:
+        ma = item.get("model_attempt") or {}
+        if ma.get("harness") or ma.get("model_label"):
+            return True
+        # No model_attempt summary but a model_attempt/poc.py is present on disk:
+        poc_path = (item.get("cve") or {}).get("cve_id") and None
+        # build_item already created model_attempt_summary only when metadata/
+        # usage/timing exist; treat 'no_model_attempt' with poc_present as keep.
+        poc = ma.get("poc") or {}
+        return bool(poc.get("path_present"))
+
+    visible_runs = [r for r in all_runs if _keep_run(r)]
+    visible_runs = sorted(visible_runs, key=_run_success_key, reverse=True)
+
+    # Per-CVE: latest run (for the leading row) + ordered visible model runs.
+    visible_by_cve: dict[str, list[dict[str, object]]] = {}
+    for r in visible_runs:
+        cid = (r.get("cve") or {}).get("cve_id")
+        if not cid:
+            continue
+        visible_by_cve.setdefault(cid, []).append(_compact_run_for_cve_list(r))
+    for cid, rows in visible_by_cve.items():
+        rows.sort(key=_run_success_key, reverse=True)
+
+    # Attach the per-CVE ordered visible-runs list to each CVE row.
+    for item in cves:
+        cid = item["cve"]["cve_id"]
+        item["visible_runs"] = visible_by_cve.get(cid, [])
+        item["visible_run_count"] = len(item["visible_runs"])
+        # Point the leading row at the single most-successful visible run if any,
+        # otherwise the latest persisted run (preserves previous behavior).
+        if item["visible_runs"]:
+            top = item["visible_runs"][0]
+            item["best_visible_run_id"] = top.get("run_id")
+            item["best_visible_run_detail_href"] = top.get("detail_href")
+
     analyzed = [item for item in cves if item["report"]]
     return {
         "generated_at": "build-time",
@@ -401,10 +509,10 @@ def build() -> dict[str, object]:
             "analyzed": len(analyzed),
             "not_analyzed": len(cves) - len(analyzed),
             "high": sum(1 for item in cves if (item["cve"].get("cvss") or 0) >= 7),
-            "runs": len(all_runs),
+            "runs": len(visible_runs),
         },
         "cves": cves,
-        "runs": all_runs,
+        "runs": visible_runs,
     }
 
 

@@ -415,6 +415,7 @@ function InlineRunDetails({ item }) {
           </div>
         </section>
       </div>
+      <CveRunsPanel item={item} currentRunId={item.run_id} />
     </div>
   );
 }
@@ -462,6 +463,7 @@ function Detail({ item, data }) {
         <Info label="Model label" value={item.model_label || item.report?.run?.model || 'none'} />
       </section>
 
+      <CveRunsPanel item={item} currentRunId={item.run_id} />
       <ModelAttemptPanel item={item} />
       <ModelComparisonPanel data={data} cveId={item.cve.cve_id} currentRunId={item.run_id} />
 
@@ -906,6 +908,84 @@ function ModelComparisonPanel({ data, cveId, currentRunId }) {
                 <td>{ma.duration_seconds != null ? `${ma.duration_seconds}s` : '-'}</td>
                 <td className={ma.refusal_detected ? 'no' : 'ok'}>{ma.refusal_detected ? 'yes' : 'no'}</td>
                 <td>{n.verdict || '-'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function CveRunsPanel({ item, currentRunId }) {
+  const runs = item.visible_runs || [];
+  if (!runs.length) {
+    return (
+      <section className="panel">
+        <h2>Runs for {item.cve.cve_id}</h2>
+        <p className="mutedText">No model-backed runs have been recorded for this CVE yet.</p>
+      </section>
+    );
+  }
+  const bandLabel = {
+    poc_verified: 'PoC ✓ verified',
+    poc_partial_verified: 'PoC partial',
+    poc_authored_truncated: 'PoC truncated',
+    poc_authored_unverified: 'PoC authored',
+    refused_poc: 'refused PoC',
+    no_poc_authored: 'no PoC',
+    no_model_attempt: 'no attempt',
+  };
+  return (
+    <section className="panel">
+      <h2>Runs for {item.cve.cve_id} — ordered by most successful</h2>
+      <p className="mutedText">
+        Each row is one model evaluation run, ranked by PoC verification outcome
+        (verified beats partial beats authored beats refused), then pipeline run
+        score. 'Download PoC' fetches the model-authored <code>model_attempt/poc.py</code>
+        verbatim from GitHub (only enabled when the model actually produced one).
+      </p>
+      <table className="compTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Model</th>
+            <th>Run</th>
+            <th>PoC verdict</th>
+            <th>Pipeline verdict</th>
+            <th>Score</th>
+            <th>Trig.</th>
+            <th>Blocked</th>
+            <th>Tokens</th>
+            <th>Refusal</th>
+            <th>Download PoC</th>
+          </tr>
+        </thead>
+        <tbody>
+          {runs.map((r, idx) => {
+            const isCurrent = currentRunId && r.run_id === currentRunId;
+            const label = bandLabel[r.poc_contribution] || r.poc_contribution;
+            return (
+              <tr key={r.run_id} className={isCurrent ? 'currentRow' : ''}>
+                <td>{idx + 1}{isCurrent && <span className="mutedText"> *</span>}</td>
+                <td>{r.model_title || 'unspecified'}</td>
+                <td><a href={r.detail_href}>{r.run_id?.slice(-13)}</a></td>
+                <td><span className={`score ${pocBandClass(r.poc_contribution)}`}>{label}</span></td>
+                <td><span className={badgeClass(r.pipeline_status)}>{r.pipeline_status || '-'}</span></td>
+                <td>{r.run_score?.score != null ? `${r.run_score.score}/${r.run_score.max_score}` : '-'}</td>
+                <td className={r.vulnerable_triggered ? 'ok' : 'no'}>{r.vulnerable_triggered ? 'yes' : 'no'}</td>
+                <td className={r.patched_blocked ? 'ok' : 'no'}>{r.patched_blocked ? 'yes' : 'no'}</td>
+                <td>{r.tokens_used != null ? r.tokens_used : '-'}</td>
+                <td className={r.refusal_detected ? 'no' : 'ok'}>{r.refusal_detected ? 'yes' : 'no'}</td>
+                <td>
+                  {r.poc_download_url ? (
+                    <a className="artifact" href={r.poc_download_url} download={`poc-${r.run_id}.py`}>
+                      poc.py <ExternalLink size={13} />
+                    </a>
+                  ) : (
+                    <span className="mutedText">—</span>
+                  )}
+                </td>
               </tr>
             );
           })}
