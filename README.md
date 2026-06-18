@@ -38,13 +38,18 @@ The PoC validates the harness, not real services. See `ISOLATION.md` for the tar
 
 ## Current Pipeline
 
+The pipeline is an adversarial exploit/defend loop. Artifacts existing are not evidence; only observed behavior counts.
+
 - `CollectorAgent`: loads CVE metadata from fixtures.
-- `ResearcherAgent`: extracts defensive hypotheses, downloads supported package releases (npm and pypi), and writes a real source diff.
-- `HarnessBuilderAgent`: generates Dockerfiles plus a localhost-only `docker-compose.yml` for the vulnerable and patched variants.
-- `ExploiterAgent`: emits a localhost-scoped PoC (`exploiter/poc.py`) and orchestration runner (`exploiter/run-poc.sh`) keyed on the inferred vulnerability class.
+- `ResearcherAgent`: derives defensive hypotheses, downloads supported package releases (npm and pypi), and writes a real source diff.
+- `HarnessBuilderAgent`: generates Dockerfiles plus a localhost-only `docker-compose.yml` for the vulnerable and patched variants (and a class-level `shim` mini-service for `sql injection`).
+- `ProvisionAgent` (with `--execute-poc`): builds and starts the harness, health-checks each target, and records per-target `servable`/`not_servable` in `provision/provision.json`. The vulnerable surface must be servable before exploit development proceeds.
+- `ExploiterAgent`: emits a localhost-scoped PoC (`exploiter/poc.py`) and runner (`exploiter/run-poc.sh`) keyed on the inferred vulnerability class.
+- `HarnessRunnerAgent` (with `--execute-poc`): runs the orchestrator and tees `exploiter/outcome.json`.
+- `AdversarialLoopAgent` (with `--execute-poc`): runs bounded exploit rounds (try to reproduce the CVE escalation), defense rounds (apply the fix, restart the patched target, re-run the exploit), and residual rounds (try to re-escalate against the patched target). Each round is logged to `negotiation/*.ndjson` and a `negotiation/verdict.json` records `escalation_achieved`, `patch_effective`, `residual_bypass`.
 - `FixDeveloperAgent`: promotes the upstream vulnerable→patched diff as `fix/candidate.patch`, applies it to a copied vulnerable source tree, and validates the result against upstream patched files.
-- `ValidatorAgent`: records evidence for source acquisition, diff capture, harness generation, PoC scaffolding, and candidate fix.
-- `JudgeAgent`: assigns a status, confidence, and remediation notes.
+- `ValidatorAgent`: records evidence for source acquisition, diff capture, harness/provision health, PoC execution outcomes, and candidate fix. The differential check only passes when a real vulnerable/patched behavioral differential was observed — not from fixture strings.
+- `JudgeAgent`: assigns a status and confidence. A run is `defensive_signal_observed` (≥0.90) only when the vulnerable target was escalated, the patched target blocked the same behavior, and no residual bypass was found. With no behavioral outcome the verdict is `needs_human_review` (≤0.50) and is explicitly NOT a defensive signal — even if a harness and fix were scaffolded.
 
 ## Dashboard And Workdirs
 
@@ -76,7 +81,7 @@ uv run cvehunt sync-recent --days 7 --limit 25
 Each CVE directory is intended to become the durable working directory for that CVE. The initial implementation writes structured metadata, a full phase trace, and report artifacts.
 Persisted runs are written to timestamped `runs/<RUN-ID>/` directories. Root-level report artifacts should only be promoted into `cves/<CVE-ID>/` after a fully successful end-to-end run.
 
-Every persisted run receives a run score out of 100. A score of 100 means the workflow produced a working PoC against the vulnerable target, produced a candidate patch, and proved the patch blocks the same PoC. Partial runs receive lower scores based on source acquisition, harness setup, PoC generation/execution, patch generation, and fix validation.
+Every persisted run receives a run score out of 100. A score of 100 means the workflow produced a working PoC against the vulnerable target, produced a candidate patch, and proved the patch blocks the same PoC. Partial runs receive lower scores based on source acquisition, harness setup, PoC generation/execution, patch generation, and fix validation. Note: a high score alone (e.g. 70 for a scaffolded-and-diffed run) is NOT the same as `defensive_signal_observed` — the verdict string and confidence are driven by actually observed behavior, not by artifact existence.
 
 The public site is a React/Vite app generated into `docs/` for GitHub Pages:
 

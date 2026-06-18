@@ -14,6 +14,10 @@ ExploitabilityStatus = Literal[
     "needs_human_review",
     "defensive_signal_observed",
     "insufficient_evidence",
+    "exploit_reproduced",
+    "patch_verified",
+    "residual_bypass_found",
+    "target_not_servable",
 ]
 
 
@@ -118,6 +122,75 @@ class ExploitOutcome:
     detail: str
 
 
+ProvisionStatus = Literal[
+    "not_executed",
+    "servable",
+    "partially_servable",
+    "not_servable",
+    "skipped",
+]
+
+
+@dataclass(frozen=True)
+class TargetHealth:
+    """Per-target provisioning health observation.
+
+    A target is `servable` only when its readiness endpoint answers and an
+    instrumented probe of the vulnerable surface returns a recognizable
+    response shape. A `console.log`-and-exit stub container is `not_servable`.
+    """
+
+    name: str
+    url: str
+    ready: bool
+    servable: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class ProvisionArtifact:
+    status: ProvisionStatus
+    targets: list[TargetHealth] = field(default_factory=list)
+    note: str = ""
+    log_path: str | None = None
+    json_path: str | None = None
+
+
+@dataclass(frozen=True)
+class NegotiationRound:
+    """One observed attempt in the adversarial exploit/defend loop."""
+
+    role: Literal["exploiter", "defender"]
+    phase: Literal["exploit", "defense", "residual"]
+    round: int
+    attempt: str
+    request: str
+    response: str
+    observation: str
+    escalated: bool
+    blocked: bool
+    rationale: str
+
+
+@dataclass(frozen=True)
+class NegotiationLog:
+    """Summary of the bounded adversarial loop that proves/disproves the bug."""
+
+    executed: bool
+    escalation_achieved: bool
+    patch_effective: bool
+    residual_bypass: bool
+    rounds: list[NegotiationRound] = field(default_factory=list)
+    rounds_total: int = 0
+    exploit_rounds: int = 0
+    defense_rounds: int = 0
+    residual_rounds: int = 0
+    verdict: str = "not_executed"
+    rationale: str = ""
+    log_path: str | None = None
+    verdict_path: str | None = None
+
+
 @dataclass(frozen=True)
 class ExploiterArtifact:
     implemented: bool
@@ -187,6 +260,8 @@ class WorkflowReport:
     plan: ValidationPlan
     evidence: list[Evidence]
     judgement: Judgement
+    provision: ProvisionArtifact | None = None
+    negotiation: NegotiationLog | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

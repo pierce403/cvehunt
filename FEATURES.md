@@ -10,6 +10,9 @@ By default, `uv run cvehunt run` generates artifacts only and requires `--execut
 
 A run score of 100 means: metadata was collected, vulnerable/patched sources were diffed, an isolated harness was generated, a harness-scoped PoC was generated, the PoC triggered the vulnerable target, the patched target blocked the same PoC, a candidate fix was generated, and that candidate fix was validated. Current normal scaffold-only runs do not reach 100.
 
+### Honest verdict contract (v2 — in force)
+A high run score is NOT the same as `defensive_signal_observed`. The verdict string and confidence are driven by observed behavior in the running harness, not by artifact existence. A scaffold-only run with no `--execute-poc` (or execution that yields no behavioral differential) is judged `needs_human_review` at ≤0.50 and is explicitly NOT a defensive signal — even if sources were acquired, a harness was built, a PoC was scaffolded, and a fix was validated. `defensive_signal_observed` ≥0.90 requires a real vulnerable escalation AND a patched-side block observed in the harness, with no residual bypass. This is enforced by `ProvisionAgent` and `AdversarialLoopAgent` and locked in by regression tests in `tests/test_workflow.py` (search for `test_no_behavior_run_is_not_defensive_signal`, `test_provision_gate_refuses_non_serving_harness`, `test_adversarial_loop_records_rounds_and_verdict`, `test_residual_bypass_downgrades_verdict`).
+
 ## Features
 
 ### CVE Metadata Collection
@@ -164,10 +167,11 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 
 ### Validation and Judgement
 - **Stability**: in-progress
-- **Description**: Convert collected artifacts into evidence and an explainable assessment.
+- **Description**: Convert collected artifacts AND observed behavior into evidence and an explainable assessment.
 - **Implemented**:
-  - Validator records evidence for source acquisition, patch diff capture, harness scaffolding, PoC generation, PoC execution outcomes when present, and candidate fix generation.
-  - Judge emits an overall status and confidence based on available evidence.
+  - Validator records evidence for source acquisition, patch diff capture, harness scaffolding, PoC generation, PoC execution outcomes when present, candidate fix generation, provisioning health, and adversarial-loop verdict.
+  - The `patched-vs-vulnerable differential check` is now behavioral: it passes only when a real vulnerable escalation AND a patched block were observed, and no residual bypass was later found (previously it passed by comparing two `cve.safe_fixture` strings, which credited input as evidence).
+  - Judge emits status/confidence from observed behavior, not artifact existence: `defensive_signal_observed` ≥0.90 requires escalation + block; with no behavioral observation the verdict is `needs_human_review` ≤0.50 (≤0.50) or `target_not_servable`; a residual bypass downgrades to `residual_bypass_found` at 0.45.
   - Unsupported ecosystems without fixture coverage end as insufficient evidence instead of silently passing.
 - **Not Implemented**:
   - Independent semantic proof beyond source-equivalence with the upstream patched files and PoC behavior against the upstream patched harness.
@@ -176,7 +180,25 @@ A run score of 100 means: metadata was collected, vulnerable/patched sources wer
 - **Test Criteria**:
   - [x] Tests verify unsupported ecosystem fallback behavior.
   - [x] Reports include evidence and judgement fields.
-  - [ ] Candidate fix validation evidence is produced by an applied-patch run.
+  - [x] No-behavior scaffold-only run is NOT `defensive_signal_observed` (`test_no_behavior_run_is_not_defensive_signal`).
+  - [x] Non-servable harness produces `target_not_servable`, not a defensive signal (`test_provision_gate_refuses_non_serving_harness`).
+  - [x] Residual bypass downgrades the verdict to `residual_bypass_found` at 0.45 (`test_residual_bypass_downgrades_verdict`).
+
+### Adversarial Exploit/Defend Loop
+- **Stability**: in-progress
+- **Description**: Prove and disprove the bug by running a bounded exploit→defend→residual loop against the provisioned harness, with per-step logs.
+- **Implemented**:
+  - `ProvisionAgent` health-checks each started target and records per-target `servable`/`not_servable` in `provision/provision.{json,log}`. The orchestrator (`exploiter/run-poc.sh`) writes the provision record; ProvisionAgent reads it (or does a short best-effort probe fallback); it never rebuilds containers.
+  - `AdversarialLoopAgent` replays observed exploit/defense outcomes as structured rounds, runs an opt-in bounded set of residual/variant primitives against a freshly-started patched shim, and writes `negotiation/exploit-rounds.ndjson`, `negotiation/defense-rounds.ndjson`, `negotiation/residual-rounds.ndjson`, `negotiation/negotiation.log`, and `negotiation/verdict.json` (escalation_achieved, patch_effective, residual_bypass, rounds_total).
+  - The orchestrator no longer `exit 2`-aborts before running the PoC on upstream readiness failure; it records per-target provision health and still runs `exploiter/poc.py` against whatever is servable, so a genuine shim differential is never swallowed by an un-servable upstream.
+  - Workflow emits `provision` and `negotiation` on the `WorkflowReport`; `report.md` and `pipeline_status.json` render Provision and Adversarial Loop sections.
+- **Not Implemented**:
+  - Real LLM/model-driven exploit and defense iteration (the loop currently replays captured outcomes and runs a fixed residual primitive budget; a model-authored generate-attack → generate-fix loop is future work).
+  - Residual rounds are off by default (`residual_rounds_budget=0`) to keep the deterministic loop fast; enable when a real patched target is servable.
+- **Test Criteria**:
+  - [x] `test_adversarial_loop_records_rounds_and_verdict` asserts the ndjson logs and `verdict.json` are written and escalate the Judge to the capped shim tier.
+  - [x] `test_workflow_execute_poc_flag_threads_outcomes_into_judge` asserts `report.negotiation.escalation_achieved`/`patch_effective` are threaded into the judgement.
+  - [x] `test_workflow_default_does_not_invoke_runner` confirms no Docker/loop execution occurs without `--execute-poc`.
 
 ### Target Environment Reporting
 - **Stability**: stable

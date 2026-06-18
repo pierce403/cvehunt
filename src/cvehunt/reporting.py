@@ -110,6 +110,16 @@ FULL_PIPELINE_PHASES = [
         "implemented": True,
     },
     {
+        "phase": "Provision",
+        "goal": "Build and start the harness, health-check the vulnerable surface, and record servability before exploit development proceeds.",
+        "implemented": True,
+    },
+    {
+        "phase": "Adversarial Loop",
+        "goal": "Run bounded exploit/defense/residual rounds against the running target until the bug is proven or disproven.",
+        "implemented": True,
+    },
+    {
         "phase": "Fix Developer",
         "goal": "Generate or apply a candidate source fix and re-validate it.",
         "implemented": True,
@@ -274,6 +284,38 @@ def render_markdown(report: WorkflowReport) -> str:
         if exploiter.get("investigation_json_path"):
             lines.append(f"- Investigation JSON: {exploiter['investigation_json_path']}")
 
+    provision = data.get("provision")
+    if provision:
+        lines.extend(["", "## Provision", ""])
+        lines.append(f"- Status: {provision['status']}")
+        lines.append(f"- Note: {provision['note']}")
+        if provision.get("targets"):
+            lines.append("- Targets:")
+            for target in provision["targets"]:
+                lines.append(
+                    f"  - {target['name']}: url={target['url']} ready={target['ready']} "
+                    f"servable={target['servable']} detail={target['detail']}"
+                )
+        if provision.get("json_path"):
+            lines.append(f"- Artifact: {provision['json_path']}")
+
+    negotiation = data.get("negotiation")
+    if negotiation:
+        lines.extend(["", "## Adversarial Loop", ""])
+        lines.append(f"- Executed: {'yes' if negotiation['executed'] else 'no'}")
+        lines.append(f"- Escalation achieved: {'yes' if negotiation['escalation_achieved'] else 'no'}")
+        lines.append(f"- Patch effective: {'yes' if negotiation['patch_effective'] else 'no'}")
+        lines.append(f"- Residual bypass: {'yes' if negotiation['residual_bypass'] else 'no'}")
+        lines.append(
+            f"- Rounds: {negotiation['rounds_total']} total "
+            f"(exploit={negotiation['exploit_rounds']}, defense={negotiation['defense_rounds']}, "
+            f"residual={negotiation['residual_rounds']})"
+        )
+        lines.append(f"- Verdict: {negotiation['verdict']}")
+        lines.append(f"- Rationale: {negotiation['rationale']}")
+        if negotiation.get("verdict_path"):
+            lines.append(f"- Artifact: {negotiation['verdict_path']}")
+
     lines.extend(["", "## Fix Developer", ""])
     if fix:
         lines.extend(
@@ -319,6 +361,8 @@ def render_markdown(report: WorkflowReport) -> str:
             ]
         )
 
+    negotiation = data.get("negotiation")
+    residual_bypass = bool(negotiation and negotiation.get("residual_bypass"))
     lines.extend(
         [
             "",
@@ -329,6 +373,8 @@ def render_markdown(report: WorkflowReport) -> str:
             f"- Full exploit generated: {'yes' if exploiter and exploiter['implemented'] else 'no'}",
             f"- Source patch generated: {'yes' if fix and fix.get('status') in {'generated', 'validated'} else 'no'}",
             f"- Fix validation complete: {'yes' if fix and fix.get('status') == 'validated' else 'no'}",
+            f"- Adversarial loop executed: {'yes' if negotiation else 'no'}",
+            f"- Residual bypass observed: {'yes' if residual_bypass else 'no'}",
             "",
             "## Judgement",
             "",
@@ -393,7 +439,13 @@ def render_pipeline_status(
     fix_generated = bool(report.fix and report.fix.status in {"generated", "validated"})
     fix_validated = bool(report.fix and report.fix.status == "validated")
     run_score = calculate_run_score(report)
-    requested_full_pipeline_completed = run_score["score"] == run_score["max_score"]
+    residual_bypass = bool(report.negotiation and report.negotiation.residual_bypass)
+    verdict = report.negotiation.verdict if report.negotiation else None
+    requested_full_pipeline_completed = (
+        run_score["score"] == run_score["max_score"]
+        and not residual_bypass
+        and report.judgement.status == "defensive_signal_observed"
+    )
 
     return {
         "cve_id": report.cve.cve_id,
@@ -407,6 +459,14 @@ def render_pipeline_status(
         "exploit_generated": exploit_generated,
         "fix_generated": fix_generated,
         "fix_validated": fix_validated,
+        "provision": (
+            asdict(report.provision) if report.provision is not None else None
+        ),
+        "negotiation": (
+            asdict(report.negotiation) if report.negotiation is not None else None
+        ),
+        "residual_bypass": residual_bypass,
+        "adversarial_verdict": verdict,
         "notes": notes,
         "stages": stages,
     }

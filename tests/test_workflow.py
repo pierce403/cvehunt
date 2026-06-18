@@ -12,13 +12,18 @@ from cvehunt.agents import (
     ResearcherAgent,
     SafetyPolicy,
 )
+from cvehunt.agents import JudgeAgent
 from cvehunt.dashboard import _repo_artifact_url, build_dashboard
 from cvehunt.fixtures import get_fixture
+from cvehunt.reporting import calculate_run_score
 from cvehunt.models import (
     ChangedFile,
     CveRecord,
+    Evidence,
     ExploiterArtifact,
     HarnessArtifact,
+    NegotiationLog,
+    ProvisionArtifact,
     ResearchFinding,
     SourceBundle,
 )
@@ -103,8 +108,13 @@ def test_known_cve_produces_defensive_signal(monkeypatch, tmp_path) -> None:
     assert report.exploiter.poc_path is not None
     assert report.fix is not None
     assert report.fix.status == "validated"
-    assert report.judgement.status == "defensive_signal_observed"
-    assert report.evidence[0].passed is True
+    # Honest contract: a scaffold-only run with NO behavioral observation
+    # (--execute-poc not set) must NOT be a defensive signal, even though a
+    # harness, PoC, and fix were all materialized. It is needs_human_review
+    # at a capped low confidence.
+    assert report.judgement.status == "needs_human_review"
+    assert report.judgement.confidence <= 0.50
+    assert "NOT a defensive signal" in report.judgement.rationale
     assert any("127.0.0.1" in note for note in report.judgement.safety_notes)
 
 
@@ -440,10 +450,11 @@ def test_harness_runner_parses_outcome_into_evidence(monkeypatch, tmp_path) -> N
         },
     }
 
-    def fake_run(cmd, cwd, timeout, check):
-        (Path(cwd) / "exploiter" / "outcome.json").write_text(
-            json.dumps(fake_outcome), encoding="utf-8"
-        )
+    def fake_run(cmd, cwd=None, timeout=None, check=False, **kwargs):
+        if cwd is not None:
+            (Path(cwd) / "exploiter" / "outcome.json").write_text(
+                json.dumps(fake_outcome), encoding="utf-8"
+            )
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -468,10 +479,11 @@ def test_workflow_execute_poc_flag_threads_outcomes_into_judge(monkeypatch, tmp_
         "patched": {"base_url": "http://127.0.0.1:4001", "triggered": False, "detail": "patched blocked"},
     }
 
-    def fake_run(cmd, cwd, timeout, check):
-        (Path(cwd) / "exploiter" / "outcome.json").write_text(
-            json.dumps(fake_outcome), encoding="utf-8"
-        )
+    def fake_run(cmd, cwd=None, timeout=None, check=False, **kwargs):
+        if cwd is not None:
+            (Path(cwd) / "exploiter" / "outcome.json").write_text(
+                json.dumps(fake_outcome), encoding="utf-8"
+            )
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -494,8 +506,13 @@ def test_workflow_execute_poc_flag_threads_outcomes_into_judge(monkeypatch, tmp_
     ]
     assert triggered_evidence and triggered_evidence[0].passed
     assert blocked_evidence and blocked_evidence[0].passed
+    assert report.judgement.status == "defensive_signal_observed"
     assert report.judgement.confidence >= 0.95
-    assert "triggered the vulnerable container" in report.judgement.rationale
+    assert "adversarial loop reproduced" in report.judgement.rationale
+    assert report.negotiation is not None
+    assert report.negotiation.escalation_achieved is True
+    assert report.negotiation.patch_effective is True
+    assert report.negotiation.residual_bypass is False
 
 
 def test_litellm_harness_emits_shim_artifacts_for_sql_injection(monkeypatch, tmp_path) -> None:
@@ -548,10 +565,11 @@ def test_workflow_shim_outcomes_drive_judge_when_upstream_silent(monkeypatch, tm
         },
     }
 
-    def fake_run(cmd, cwd, timeout, check):
-        (Path(cwd) / "exploiter" / "outcome.json").write_text(
-            json.dumps(fake_outcome), encoding="utf-8"
-        )
+    def fake_run(cmd, cwd=None, timeout=None, check=False, **kwargs):
+        if cwd is not None:
+            (Path(cwd) / "exploiter" / "outcome.json").write_text(
+                json.dumps(fake_outcome), encoding="utf-8"
+            )
         return subprocess.CompletedProcess(cmd, 0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -572,8 +590,15 @@ def test_workflow_shim_outcomes_drive_judge_when_upstream_silent(monkeypatch, tm
     ]
     assert shim_triggered and shim_triggered[0].passed
     assert shim_blocked and shim_blocked[0].passed
-    assert "harness shim demonstrated" in report.judgement.rationale
-    assert report.judgement.confidence >= 0.90
+    assert report.judgement.status == "defensive_signal_observed"
+    # A shim-only differential proves the class is exercisable but does not
+    # confirm the upstream package has the specific bug: capped at 0.90 and
+    # the rationale must say so.
+    assert report.judgement.confidence == 0.90
+    assert "class-level demonstration" in report.judgement.rationale
+    assert report.negotiation is not None
+    assert report.negotiation.escalation_achieved is True
+    assert report.negotiation.patch_effective is True
 
 
 def test_workflow_default_does_not_invoke_runner(monkeypatch, tmp_path) -> None:
@@ -590,3 +615,186 @@ def test_workflow_default_does_not_invoke_runner(monkeypatch, tmp_path) -> None:
     )
     assert report.exploiter is not None
     assert report.exploiter.status == "scaffolded"
+
+
+def test_no_behavior_run_is_not_defensive_signal(monkeypatch, tmp_path) -> None:
+    """Regression: scaffold-only run with no --execute-poc must NOT be a
+    defensive signal even though sources were acquired, a harness was built,
+    a PoC was scaffolded, and a fix was validated.
+
+    This is exactly the CVE-2025-55182 70/100 run that was previously
+    mislabeled `defensive_signal_observed @ 0.92` purely from artifact
+    existence.
+    """
+    _patch_researcher(monkeypatch)
+    workflow = CveHuntWorkflow(model="test-model")
+    report, _events = workflow.run_with_trace(
+        "CVE-2025-55182",
+        artifact_root=tmp_path / "artifacts",
+    )
+    score = calculate_run_score(report)
+    earned = {c["name"]: c["earned"] for c in score["components"]}
+    assert earned["poc_triggers_vulnerable_target"] is False
+    assert earned["patched_target_blocks_poc"] is False
+    assert score["score"] == 70  # honest partial: scaffolding only, no behavior
+    assert report.judgement.status == "needs_human_review"
+    assert report.judgement.confidence <= 0.50
+    assert "NOT a defensive signal" in report.judgement.rationale
+    assert report.negotiation is None
+    assert report.provision is None
+
+
+def test_provision_gate_refuses_non_serving_harness(monkeypatch, tmp_path) -> None:
+    """The npm react-server-dom-webpack harness is a `console.log`-and-exit
+    stub with no servable endpoint and no shim. With --execute-poc, the
+    provision gate must record `not_servable`, the adversarial loop must not
+    credit an escalation, and the Judge must return needs_human_review
+    (NOT defensive_signal_observed).
+    """
+    _patch_researcher(monkeypatch)
+    monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
+
+    def fake_run(cmd, cwd=None, timeout=None, check=False, **kwargs):
+        # run-poc.sh runs against a console.log stub; no outcome is produced.
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    workflow = CveHuntWorkflow(model="test-model")
+    report, _events = workflow.run_with_trace(
+        "CVE-2025-55182",
+        artifact_root=tmp_path / "artifacts",
+        execute_poc=True,
+    )
+    assert report.provision is not None
+    assert report.provision.status == "not_servable"
+    assert report.exploiter is not None
+    assert report.exploiter.outcomes == []
+    assert report.negotiation is not None
+    assert report.negotiation.escalation_achieved is False
+    assert report.negotiation.verdict == "target_not_servable"
+    assert report.judgement.status == "target_not_servable"
+    assert report.judgement.confidence <= 0.50
+    assert "never became servable" in report.judgement.rationale
+
+
+def test_adversarial_loop_records_rounds_and_verdict(monkeypatch, tmp_path) -> None:
+    """When the shim demonstrates the class (vulnerable triggers, patched
+    blocks), the adversarial loop emits per-round ndjson logs and a
+    verdict.json, and escalates the Judge to defensive_signal_observed at the
+    capped 0.90 shim tier.
+    """
+    _patch_pypi_researcher(monkeypatch)
+    monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
+    fake_outcome = {
+        "cve_id": "CVE-2026-42208",
+        "shim_vulnerable": {
+            "base_url": "http://127.0.0.1:4010",
+            "triggered": True,
+            "detail": "/verify returned 200 for Bearer ' OR 1=1--",
+        },
+        "shim_patched": {
+            "base_url": "http://127.0.0.1:4011",
+            "triggered": False,
+            "detail": "/verify returned 401 invalid token",
+        },
+    }
+
+    def fake_run(cmd, cwd=None, timeout=None, check=False, **kwargs):
+        if cwd is not None:
+            (Path(cwd) / "exploiter" / "outcome.json").write_text(
+                json.dumps(fake_outcome), encoding="utf-8"
+            )
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    workflow = CveHuntWorkflow(model="test-model")
+    report, _events = workflow.run_with_trace(
+        "CVE-2026-42208",
+        artifact_root=tmp_path / "artifacts",
+        execute_poc=True,
+    )
+    neg_dir = tmp_path / "artifacts" / "negotiation"
+    assert (neg_dir / "exploit-rounds.ndjson").exists()
+    assert (neg_dir / "defense-rounds.ndjson").exists()
+    assert (neg_dir / "verdict.json").exists()
+    verdict = json.loads((neg_dir / "verdict.json").read_text(encoding="utf-8"))
+    assert verdict["escalation_achieved"] is True
+    assert verdict["patch_effective"] is True
+    assert verdict["residual_bypass"] is False
+    assert verdict["verdict"] == "defensive_signal_observed"
+    assert report.judgement.status == "defensive_signal_observed"
+    assert report.judgement.confidence == 0.90
+
+
+def test_residual_bypass_downgrades_verdict(tmp_path) -> None:
+    """If a residual primitive later re-escalates the patched target, the
+    Judge must downgrade to residual_bypass_found at a capped low confidence
+    and must NOT be a defensive signal — even if escalation and patch-block
+    were otherwise observed.
+    """
+    cve = get_fixture("CVE-2026-42208")
+    assert cve is not None
+    finding = ResearchFinding(
+        impacted_surface="query construction",
+        vulnerability_class="sql injection",
+        defensive_hypothesis="parameterized queries",
+        relevant_patch_signal="? observed in auth.py.",
+    )
+    sources = SourceBundle(
+        status="materialized",
+        ecosystem="pypi",
+        package="litellm",
+        vulnerable_version="1.81.16",
+        patched_version="1.83.7",
+        vulnerable_tarball_url=None,
+        patched_tarball_url=None,
+        vulnerable_tarball_sha256=None,
+        patched_tarball_sha256=None,
+        vulnerable_root="sources/vulnerable/litellm",
+        patched_root="sources/patched/litellm",
+        diff_path="research/source_diff.patch",
+        notes=["fixture"],
+    )
+    harness = HarnessArtifact(
+        status="built",
+        runtime="dockerized offline harness for litellm",
+        isolation="localhost ports 4000/4001",
+        workspace=".",
+        dockerfiles=["harness/Dockerfile.vulnerable", "harness/Dockerfile.patched"],
+    )
+    structural_evidence = [
+        Evidence(check_name="published package pair retrieved",
+                 vulnerable_signal="sources/vulnerable/litellm",
+                 patched_signal="sources/patched/litellm", passed=True, artifact="sources"),
+        Evidence(check_name="patch diff captured",
+                 vulnerable_signal="1 changed file(s)",
+                 patched_signal="? observed in auth.py.", passed=True,
+                 artifact="research/source_diff.patch"),
+        Evidence(check_name="container harness scaffolded",
+                 vulnerable_signal="harness/Dockerfile.vulnerable",
+                 patched_signal="harness/Dockerfile.patched", passed=True,
+                 artifact="harness/README.md"),
+    ]
+    provisional = ProvisionArtifact(status="servable", note="2/2 servable")
+    negotiation = NegotiationLog(
+        executed=True,
+        escalation_achieved=True,
+        patch_effective=True,
+        residual_bypass=True,
+        rounds=[],
+        rounds_total=0,
+        exploit_rounds=1,
+        defense_rounds=1,
+        residual_rounds=1,
+        verdict="residual_bypass_found",
+        rationale="residual primitive re-escalated",
+        log_path="negotiation/negotiation.log",
+        verdict_path="negotiation/verdict.json",
+    )
+    judgement = JudgeAgent().judge(
+        cve, finding, sources, harness, None, None,
+        structural_evidence, provisional, negotiation,
+    )
+    assert judgement.status == "residual_bypass_found"
+    assert judgement.confidence == 0.45
+    assert "NOT a defensive signal" in judgement.rationale

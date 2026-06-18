@@ -4,12 +4,14 @@ import tempfile
 from pathlib import Path
 
 from cvehunt.agents import (
+    AdversarialLoopAgent,
     CollectorAgent,
     ExploiterAgent,
     FixDeveloperAgent,
     HarnessBuilderAgent,
     HarnessRunnerAgent,
     JudgeAgent,
+    ProvisionAgent,
     ResearcherAgent,
     ValidatorAgent,
 )
@@ -26,6 +28,8 @@ class CveHuntWorkflow:
         self.builder = HarnessBuilderAgent()
         self.exploiter = ExploiterAgent()
         self.harness_runner = HarnessRunnerAgent()
+        self.provisioner = ProvisionAgent()
+        self.adversarial_loop = AdversarialLoopAgent()
         self.fix_developer = FixDeveloperAgent()
         self.validator = ValidatorAgent()
         self.judge = JudgeAgent()
@@ -81,9 +85,22 @@ class CveHuntWorkflow:
             )
         )
         exploiter = self.exploiter.run(cve, finding, harness, self.last_artifact_root, base_port=self.base_port)
+        provision = None
+        negotiation = None
         if execute_poc:
             exploiter = self.harness_runner.run(
                 cve, harness, exploiter, self.last_artifact_root
+            )
+            provision = self.provisioner.run(
+                cve, harness, finding, self.last_artifact_root, base_port=self.base_port
+            )
+            events.append(
+                TraceEvent(
+                    phase="Provision",
+                    message=provision.note,
+                    artifact=provision.json_path,
+                    status=provision.status,
+                )
             )
         events.append(
             TraceEvent(
@@ -93,6 +110,19 @@ class CveHuntWorkflow:
                 status=exploiter.status,
             )
         )
+        if execute_poc:
+            negotiation = self.adversarial_loop.run(
+                cve, finding, harness, exploiter, provision, self.last_artifact_root,
+                base_port=self.base_port,
+            )
+            events.append(
+                TraceEvent(
+                    phase="Adversarial Loop",
+                    message=negotiation.rationale,
+                    artifact=negotiation.verdict_path,
+                    status=negotiation.verdict,
+                )
+            )
         fix = self.fix_developer.develop(cve, sources, finding, self.last_artifact_root)
         events.append(
             TraceEvent(
@@ -102,7 +132,9 @@ class CveHuntWorkflow:
                 status=fix.status,
             )
         )
-        evidence = self.validator.validate(cve, plan, sources, harness, exploiter, fix)
+        evidence = self.validator.validate(
+            cve, plan, sources, harness, exploiter, fix, provision, negotiation
+        )
         events.append(
             TraceEvent(
                 phase="Validator",
@@ -112,7 +144,9 @@ class CveHuntWorkflow:
                 ),
             )
         )
-        judgement = self.judge.judge(cve, finding, sources, harness, exploiter, fix, evidence)
+        judgement = self.judge.judge(
+            cve, finding, sources, harness, exploiter, fix, evidence, provision, negotiation
+        )
         events.append(
             TraceEvent(
                 phase="Judge",
@@ -134,5 +168,7 @@ class CveHuntWorkflow:
             plan=plan,
             evidence=evidence,
             judgement=judgement,
+            provision=provision,
+            negotiation=negotiation,
         )
         return report, events

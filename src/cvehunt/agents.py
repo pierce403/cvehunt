@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import os
 import shutil
 import subprocess
 import tarfile
 from difflib import unified_diff
 from pathlib import Path
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 import json
+import urllib.error
 
 from cvehunt.fixtures import get_fixture
 from cvehunt.models import (
@@ -22,8 +24,12 @@ from cvehunt.models import (
     FixStatus,
     HarnessArtifact,
     Judgement,
+    NegotiationLog,
+    NegotiationRound,
+    ProvisionArtifact,
     ResearchFinding,
     SourceBundle,
+    TargetHealth,
     ValidationCheck,
     ValidationPlan,
 )
@@ -845,6 +851,549 @@ class HarnessRunnerAgent:
         )
 
 
+class ProvisionAgent:
+    """Health gate for the harness.
+
+    The orchestrator (`exploiter/run-poc.sh`) is responsible for building,
+    starting, and tearing down the target containers, and it writes a
+    `provision/provision.json` recording per-target servability while the
+    stack is up. ProvisionAgent reads that record (or, if absent, performs a
+    lightweight best-effort probe of the expected localhost ports with a
+    short deadline — it NEVER rebuilds or restarts containers itself). The
+    result records whether the vulnerable surface was actually servable;
+    the adversarial loop and the Judge may only credit an escalation when it
+    was. A `console.log`-and-exit harness is recorded `not_servable`.
+    """
+
+    fallback_probe_seconds: int = 2
+
+    def __init__(self, safety_policy: SafetyPolicy | None = None) -> None:
+        self.safety_policy = safety_policy or SafetyPolicy()
+
+    def run(
+        self,
+        cve: CveRecord,
+        harness: HarnessArtifact | None,
+        finding: ResearchFinding,
+        artifact_root: Path,
+        base_port: int = 4000,
+    ) -> ProvisionArtifact:
+        import time
+
+        provision_dir = artifact_root / "provision"
+        provision_dir.mkdir(parents=True, exist_ok=True)
+        log_path = provision_dir / "provision.log"
+        json_path = provision_dir / "provision.json"
+        log_lines: list[str] = [f"[provision] {cve.cve_id} class={finding.vulnerability_class}"]
+
+        if harness is None or harness.status != "built":
+            note = "Harness was not built; no target to provision."
+            log_lines.append(f"[provision] {note}")
+            self._write_provision(
+                json_path, log_path, log_lines, status="not_executed", note=note, targets=[]
+            )
+            return ProvisionArtifact(
+                status="not_executed",
+                note=note,
+                log_path=_relpath(log_path, artifact_root),
+                json_path=_relpath(json_path, artifact_root),
+            )
+
+        # Prefer the orchestrator's own provision record when present.
+        if json_path.exists():
+            try:
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and isinstance(payload.get("targets"), list):
+                targets = [
+                    TargetHealth(
+                        name=str(t.get("name", "")),
+                        url=str(t.get("url", "")),
+                        ready=bool(t.get("ready")),
+                        servable=bool(t.get("servable")),
+                        detail=str(t.get("detail", "")),
+                    )
+                    for t in payload["targets"]
+                ]
+                status = str(payload.get("status") or self._status_for(targets))
+                note = str(payload.get("note") or self._note_for(targets))
+                log_lines.append(f"[provision] read orchestrator record: {status} ({note})")
+                self._write_provision_log(log_path, log_lines)
+                return ProvisionArtifact(
+                    status=status,
+                    targets=targets,
+                    note=note,
+                    log_path=_relpath(log_path, artifact_root),
+                    json_path=_relpath(json_path, artifact_root),
+                )
+
+        if not _docker_available():
+            note = "Docker is not available and no orchestrator provision record exists; provisioning skipped."
+            log_lines.append(f"[provision] {note}")
+            self._write_provision(
+                json_path, log_path, log_lines, status="skipped", note=note, targets=[]
+            )
+            return ProvisionArtifact(
+                status="skipped",
+                note=note,
+                log_path=_relpath(log_path, artifact_root),
+                json_path=_relpath(json_path, artifact_root),
+            )
+
+        # Fallback: lightweight best-effort probe of expected ports. No rebuild,
+        # no restart — purely observational so a stub `console.log`-and-exit
+        # upstream harness is honestly recorded `not_servable`.
+        port_specs = self._expected_targets(cve, finding, base_port)
+        if not port_specs:
+            note = (
+                "No servable target surface is available for this class/ecosystem "
+                f"({finding.vulnerability_class}/{cve.ecosystem}); the upstream harness "
+                "container does not expose a probeable endpoint."
+            )
+            log_lines.append(f"[provision] {note}")
+            self._write_provision(
+                json_path, log_path, log_lines, status="not_servable", note=note, targets=[]
+            )
+            return ProvisionArtifact(
+                status="not_servable",
+                note=note,
+                log_path=_relpath(log_path, artifact_root),
+                json_path=_relpath(json_path, artifact_root),
+            )
+        targets: list[TargetHealth] = []
+        for name, port in port_specs:
+            ready = self._health_ready(port)
+            # Brief re-poll window for freshly-started services.
+            for _ in range(self.fallback_probe_seconds):
+                if ready:
+                    break
+                time.sleep(1)
+                ready = self._health_ready(port)
+            detail = "readiness HTTP 200" if ready else "no readiness response"
+            log_lines.append(
+                f"[provision] {name} port={port} ready={ready} servable={ready} detail={detail}"
+            )
+            targets.append(
+                TargetHealth(
+                    name=name,
+                    url=f"http://127.0.0.1:{port}",
+                    ready=ready,
+                    servable=ready,
+                    detail=detail,
+                )
+            )
+        status = self._status_for(targets)
+        note = self._note_for(targets)
+        log_lines.append(f"[provision] {note}")
+        self._write_provision(
+            json_path, log_path, log_lines, status=status, note=note, targets=targets
+        )
+        return ProvisionArtifact(
+            status=status,
+            targets=targets,
+            note=note,
+            log_path=_relpath(log_path, artifact_root),
+            json_path=_relpath(json_path, artifact_root),
+        )
+
+    @staticmethod
+    def _expected_targets(cve: CveRecord, finding: ResearchFinding, base_port: int) -> list[tuple[str, int]]:
+        # Only the shim (and litellm upstream) exposes /health/readiness on a
+        # known localhost port today. The npm react-server-dom-webpack stub
+        # does not, which is exactly why it must be recorded not_servable.
+        if _shim_supported(finding.vulnerability_class):
+            return [
+                ("shim-vulnerable", base_port + 10),
+                ("shim-patched", base_port + 11),
+            ]
+        if cve.ecosystem == "pypi" and finding.vulnerability_class == "sql injection":
+            return [
+                ("vulnerable", base_port),
+                ("patched", base_port + 1),
+            ]
+        return []
+
+    @staticmethod
+    def _health_ready(port: int) -> bool:
+        status, _ = _http_probe(f"http://127.0.0.1:{port}/health/readiness", timeout=2.0)
+        return status == 200
+
+    @staticmethod
+    def _status_for(targets: list[TargetHealth]) -> str:
+        servable_count = sum(1 for t in targets if t.servable)
+        if targets and servable_count == len(targets):
+            return "servable"
+        if servable_count > 0:
+            return "partially_servable"
+        return "not_servable"
+
+    @staticmethod
+    def _note_for(targets: list[TargetHealth]) -> str:
+        servable_count = sum(1 for t in targets if t.servable)
+        return f"{servable_count}/{len(targets)} target(s) servable."
+
+    @staticmethod
+    def _write_provision(
+        json_path: Path,
+        log_path: Path,
+        log_lines: list[str],
+        *,
+        status: str,
+        note: str,
+        targets: list[TargetHealth],
+    ) -> None:
+        ProvisionAgent._write_provision_log(log_path, log_lines)
+        json_path.write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "note": note,
+                    "targets": [dataclasses.asdict(target) for target in targets],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _write_provision_log(log_path: Path, log_lines: list[str]) -> None:
+        log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+
+    def _health_ready(self, port: int) -> bool:
+        status, _ = _http_probe(f"http://127.0.0.1:{port}/health/readiness", timeout=2.0)
+        return status == 200
+
+    def _probe_target(
+        self, container: str, name: str, port: int, log_lines: list[str]
+    ) -> TargetHealth:
+        url = f"http://127.0.0.1:{port}/health/readiness"
+        ready_status, ready_body = _http_probe(url, timeout=3.0)
+        ready = ready_status == 200
+        servable = ready
+        detail = f"readiness HTTP {ready_status}"
+        if ready_status is None:
+            detail = f"readiness probe failed: {ready_body}"
+            servable = False
+        log_lines.append(
+            f"[provision] {name} readiness={ready_status} servable={servable} detail={detail}"
+        )
+        return TargetHealth(
+            name=name,
+            url=f"http://127.0.0.1:{port}",
+            ready=ready,
+            servable=servable,
+            detail=detail,
+        )
+
+    @staticmethod
+    def _write_provision(
+        json_path: Path,
+        log_path: Path,
+        log_lines: list[str],
+        *,
+        status: str,
+        note: str,
+        targets: list[TargetHealth],
+    ) -> None:
+        log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
+        json_path.write_text(
+            json.dumps(
+                {
+                    "status": status,
+                    "note": note,
+                    "targets": [dataclasses.asdict(target) for target in targets],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
+class AdversarialLoopAgent:
+    """Bounded exploit/defend/residual loop against the running harness.
+
+    Replay the observed exploit/defense outcomes as structured rounds, then run
+    a bounded set of residual/variant primitives against the PATCHED target.
+    The loop terminates when the exploiter cannot re-escalate within the bound,
+    or when a residual bypass is found. Every round is logged as an ndjson line
+    and summarized in `negotiation/verdict.json`. The verdict — not the mere
+    existence of a PoC file — drives the Judge.
+    """
+
+    residual_primitives: tuple[str, ...] = (
+        "Bearer ' OR 1=1-- ",
+        "Bearer x' UNION SELECT token,key_alias,user_id FROM api_keys--",
+        "Bearer x' OR ''='",
+        "Bearer sk-harness-demo-only' /* */",
+        "Bearer a'; --",
+    )
+
+    def __init__(self, safety_policy: SafetyPolicy | None = None) -> None:
+        self.safety_policy = safety_policy or SafetyPolicy()
+
+    def run(
+        self,
+        cve: CveRecord,
+        finding: ResearchFinding,
+        harness: HarnessArtifact | None,
+        exploiter: ExploiterArtifact | None,
+        provision: ProvisionArtifact | None,
+        artifact_root: Path,
+        base_port: int = 4000,
+        residual_rounds_budget: int = 0,
+    ) -> NegotiationLog:
+        neg_dir = artifact_root / "negotiation"
+        neg_dir.mkdir(parents=True, exist_ok=True)
+        exploit_log = neg_dir / "exploit-rounds.ndjson"
+        defense_log = neg_dir / "defense-rounds.ndjson"
+        residual_log = neg_dir / "residual-rounds.ndjson"
+        transcript_log = neg_dir / "negotiation.log"
+        verdict_path = neg_dir / "verdict.json"
+        transcript: list[str] = [f"[negotiation] {cve.cve_id} class={finding.vulnerability_class}"]
+
+        rounds: list[NegotiationRound] = []
+        escalation_achieved = False
+        patch_effective = False
+
+        # Replay observed outcomes (captured by HarnessRunnerAgent) as logged
+        # rounds. Both upstream (vulnerable/patched) and shim
+        # (shim_vulnerable/shim_patched) variants are adversarial evidence;
+        # both drive escalation_achieved / patch_effective.
+        for outcome in (exploiter.outcomes if exploiter else []):
+            is_vuln_variant = outcome.variant in {"vulnerable", "shim_vulnerable"}
+            is_patched_variant = outcome.variant in {"patched", "shim_patched"}
+            surface = "shim /verify" if outcome.variant.startswith("shim") else "upstream /health or /verify"
+            if is_vuln_variant and outcome.triggered:
+                rounds.append(
+                    NegotiationRound(
+                        role="exploiter", phase="exploit", round=1,
+                        attempt=f"reproduce escalation against {surface}",
+                        request="PoC primitive against vulnerable target",
+                        response="observed vulnerable escalation",
+                        observation=outcome.detail,
+                        escalated=True, blocked=False,
+                        rationale="Vulnerable target exhibited the CVE-described behavior as observed by the runner.",
+                    )
+                )
+                escalation_achieved = True
+            elif is_patched_variant and not outcome.triggered:
+                rounds.append(
+                    NegotiationRound(
+                        role="defender", phase="defense", round=1,
+                        attempt=f"repeat primitive against patched {surface}",
+                        request="same PoC primitive against patched target",
+                        response="patched target blocked the primitive",
+                        observation=outcome.detail,
+                        escalated=False, blocked=True,
+                        rationale="Patched target blocked the original primitive.",
+                    )
+                )
+                patch_effective = True
+
+        residual_bypass = False
+        residual_rounds = 0
+        can_residual = bool(
+            residual_rounds_budget > 0
+            and provision is not None
+            and provision.status in {"servable", "partially_servable"}
+            and escalation_achieved
+            and _docker_available()
+        )
+        if can_residual:
+            residual_bypass = self._run_residual_rounds(
+                cve, finding, base_port, artifact_root,
+                residual_log, transcript, rounds,
+                budget=residual_rounds_budget,
+            )
+            residual_rounds = sum(1 for r in rounds if r.phase == "residual")
+        elif residual_rounds_budget > 0 and escalation_achieved:
+            transcript.append(
+                "[negotiation] residual phase skipped: Docker unavailable, patched target not servable, or no escalation"
+            )
+
+        if escalation_achieved and patch_effective and not residual_bypass:
+            verdict = "defensive_signal_observed"
+            rationale = (
+                "Exploit loop reproduced the CVE-described escalation against the vulnerable "
+                "target, the defense loop confirmed the patched target blocks the same behavior, "
+                f"and {residual_rounds} residual primitive(s) did not re-escalate."
+            )
+        elif residual_bypass:
+            verdict = "residual_bypass_found"
+            rationale = (
+                "A residual primitive re-escalated the patched target; the fix does not fully "
+                "close the class boundary within the bounded residual phase."
+            )
+        elif escalation_achieved and not patch_effective:
+            verdict = "exploit_reproduced"
+            rationale = "The vulnerable target escalated but the patched target did not demonstrably block it."
+        elif not escalation_achieved and (exploiter and exploiter.outcomes):
+            verdict = "target_not_servable"
+            rationale = "The observability rounds produced no escalation; the vulnerable surface was not demonstrably exploitable in this harness."
+        elif provision is not None and provision.status == "not_servable":
+            verdict = "target_not_servable"
+            rationale = ("The harness target surface never became servable during provisioning, "
+                         "so the adversarial loop had nothing to escalate against.")
+        else:
+            verdict = "not_executed"
+            rationale = "The adversarial loop did not execute (no --execute-poc or nothing to observe)."
+
+        exploit_rounds = sum(1 for r in rounds if r.phase == "exploit")
+        defense_rounds = sum(1 for r in rounds if r.phase == "defense")
+        log = NegotiationLog(
+            executed=bool(rounds) or can_residual,
+            escalation_achieved=escalation_achieved,
+            patch_effective=patch_effective,
+            residual_bypass=residual_bypass,
+            rounds=rounds,
+            rounds_total=len(rounds),
+            exploit_rounds=exploit_rounds,
+            defense_rounds=defense_rounds,
+            residual_rounds=residual_rounds,
+            verdict=verdict,
+            rationale=rationale,
+            log_path=_relpath(transcript_log, artifact_root),
+            verdict_path=_relpath(verdict_path, artifact_root),
+        )
+        self._write_negotiation(
+            exploit_log, defense_log, residual_log, transcript_log, verdict_path, rounds, log, transcript
+        )
+        return log
+
+    def _run_residual_rounds(
+        self,
+        cve: CveRecord,
+        harness: HarnessArtifact | None,
+        finding: ResearchFinding,
+        base_port: int,
+        artifact_root: Path,
+        residual_log: Path,
+        transcript: list[str],
+        rounds: list[NegotiationRound],
+    ) -> bool:
+        """Start a fresh patched shim and throw a bounded set of variant primitives.
+
+        Returns True if any primitive escalated (residual bypass found).
+        """
+        shim_patched = artifact_root / "harness" / "shim" / "patched"
+        if not shim_patched.is_dir():
+            transcript.append("[negotiation] patched shim missing; residual phase aborted")
+            return False
+        net = f"cvehunt-res-{os.getpid()}-{base_port}"
+        image = f"cvehunt-res-{cve.cve_id.lower()}-patched:latest"
+        name = f"cvehunt-res-{os.getpid()}-patched"
+        port = base_port + 11
+        bypass = False
+        try:
+            self._docker(["network", "create", net], transcript)
+            self._docker(["build", "-t", image, "-f", str(shim_patched / "Dockerfile"), str(shim_patched)], transcript)
+            self._docker(
+                ["run", "-d", "--name", name, "--network", net, f"-p", f"127.0.0.1:{port}:8000", image],
+                transcript,
+            )
+            if not self._wait_ready(port, deadline=60):
+                transcript.append(f"[negotiation] patched shim never became ready on {port}")
+                return False
+            for idx, primitive in enumerate(self.residual_primitives, start=1):
+                status, body = _http_probe(
+                    f"http://127.0.0.1:{port}/verify",
+                    headers={"Authorization": primitive},
+                    timeout=5.0,
+                )
+                escalated = status == 200 and ("key_alias" in body or "user_id" in body or "keys" in body)
+                blocked = not escalated
+                round_entry = NegotiationRound(
+                    role="exploiter",
+                    phase="residual",
+                    round=idx,
+                    attempt=primitive,
+                    request=f"GET /verify Authorization: {primitive}",
+                    response=f"HTTP {status}",
+                    observation=body[:256],
+                    escalated=escalated,
+                    blocked=blocked,
+                    rationale=("residual primitive escalated against patched target" if escalated
+                               else "patched target blocked residual primitive"),
+                )
+                rounds.append(round_entry)
+                transcript.append(
+                    f"[negotiation] residual round {idx}: primitive={primitive!r} "
+                    f"status={status} escalated={escalated}"
+                )
+                if escalated:
+                    bypass = True
+        finally:
+            self._docker(["rm", "-f", name], transcript, check=False)
+            if net:
+                self._docker(["network", "rm", net], transcript, check=False)
+        return bypass
+
+    @staticmethod
+    def _docker(cmd: list[str], transcript: list[str], check: bool = True) -> None:
+        transcript.append(f"[negotiation] $ docker {' '.join(cmd)}")
+        try:
+            subprocess.run(
+                ["docker", *cmd],
+                timeout=120,
+                check=check,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            transcript.append("[negotiation] docker binary not found")
+
+    @staticmethod
+    def _wait_ready(port: int, deadline: int = 60) -> bool:
+        import time
+        for _ in range(deadline):
+            status, _ = _http_probe(f"http://127.0.0.1:{port}/health/readiness", timeout=2.0)
+            if status == 200:
+                return True
+            time.sleep(1)
+        return False
+
+    @staticmethod
+    def _write_negotiation(
+        exploit_log: Path,
+        defense_log: Path,
+        residual_log: Path,
+        transcript_log: Path,
+        verdict_path: Path,
+        rounds: list[NegotiationRound],
+        log: NegotiationLog,
+        transcript: list[str],
+    ) -> None:
+        for path, phase in (
+            (exploit_log, "exploit"),
+            (defense_log, "defense"),
+            (residual_log, "residual"),
+        ):
+            with path.open("w", encoding="utf-8") as handle:
+                for entry in rounds:
+                    if entry.phase == phase:
+                        handle.write(json.dumps(dataclasses.asdict(entry)) + "\n")
+        transcript_log.write_text("\n".join(transcript) + "\n", encoding="utf-8")
+        verdict_path.write_text(
+            json.dumps(
+                {
+                    "executed": log.executed,
+                    "escalation_achieved": log.escalation_achieved,
+                    "patch_effective": log.patch_effective,
+                    "residual_bypass": log.residual_bypass,
+                    "rounds_total": log.rounds_total,
+                    "exploit_rounds": log.exploit_rounds,
+                    "defense_rounds": log.defense_rounds,
+                    "residual_rounds": log.residual_rounds,
+                    "verdict": log.verdict,
+                    "rationale": log.rationale,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+
 class FixDeveloperAgent:
     def develop(
         self,
@@ -901,8 +1450,13 @@ class ValidatorAgent:
         harness: HarnessArtifact | None,
         exploiter: ExploiterArtifact | None = None,
         fix: FixArtifact | None = None,
+        provision: ProvisionArtifact | None = None,
+        negotiation: NegotiationLog | None = None,
     ) -> list[Evidence]:
         evidence: list[Evidence] = []
+        vulnerable_escalated = self._behavioral_escalation(exploiter)
+        patched_blocked = self._behavioral_block(exploiter)
+        residual_bypass = bool(negotiation and negotiation.residual_bypass)
         for check in plan.checks:
             if check.name == "published package pair retrieved":
                 passed = bool(
@@ -954,14 +1508,30 @@ class ValidatorAgent:
                     )
                 )
                 continue
-            if check.name == "patched-vs-vulnerable differential check" and not cve.safe_fixture:
+            if check.name == "patched-vs-vulnerable differential check":
+                # The differential check is behavioral, not lexical. Passing on
+                # "the two cve.safe_fixture strings differ" would credit the
+                # input as evidence — that was the prior mislabeling. It now
+                # passes only when the harness actually demonstrated a
+                # vulnerable escalation that the patched target blocked, and
+                # no residual bypass was later observed.
+                diff_passed = bool(vulnerable_escalated and patched_blocked and not residual_bypass)
+                vuln_signal = (
+                    "observed vulnerable escalation" if vulnerable_escalated
+                    else (cve.safe_fixture.get("vulnerable_signal") or "no vulnerable escalation observed")
+                )
+                patched_sig = (
+                    "observed patched block" if patched_blocked
+                    else (cve.safe_fixture.get("patched_signal") or "no patched block observed")
+                )
+                residual_note = "; residual bypass observed" if residual_bypass else ""
                 evidence.append(
                     Evidence(
                         check_name=check.name,
-                        vulnerable_signal=check.expected_vulnerable_signal,
-                        patched_signal=check.expected_patched_signal,
-                        passed=False,
-                        artifact=check.artifact,
+                        vulnerable_signal=vuln_signal + residual_note,
+                        patched_signal=patched_sig + residual_note,
+                        passed=diff_passed,
+                        artifact=("negotiation/verdict.json" if negotiation and negotiation.executed else check.artifact),
                     )
                 )
                 continue
@@ -1080,7 +1650,43 @@ class ValidatorAgent:
                     artifact="fix/validation.json",
                 )
             )
+        if provision is not None:
+            evidence.append(
+                Evidence(
+                    check_name="harness provisioned and health-checked",
+                    vulnerable_signal=provision.status,
+                    patched_signal=provision.note,
+                    passed=provision.status in {"servable", "partially_servable"},
+                    artifact=provision.json_path,
+                )
+            )
+        if negotiation is not None and negotiation.executed:
+            evidence.append(
+                Evidence(
+                    check_name="adversarial loop reached a verdict",
+                    vulnerable_signal=("escalation observed" if negotiation.escalation_achieved else "no escalation observed"),
+                    patched_signal=negotiation.verdict,
+                    passed=negotiation.escalation_achieved
+                    and negotiation.patch_effective
+                    and not negotiation.residual_bypass,
+                    artifact=negotiation.verdict_path,
+                )
+            )
         return evidence
+
+    @staticmethod
+    def _behavioral_escalation(exploiter: ExploiterArtifact | None) -> bool:
+        if not exploiter:
+            return False
+        return any(item.triggered for item in exploiter.outcomes if item.variant in {"vulnerable", "shim_vulnerable"})
+
+    @staticmethod
+    def _behavioral_block(exploiter: ExploiterArtifact | None) -> bool:
+        if not exploiter:
+            return False
+        return any(
+            not item.triggered for item in exploiter.outcomes if item.variant in {"patched", "shim_patched"}
+        )
 
 
 class JudgeAgent:
@@ -1093,6 +1699,8 @@ class JudgeAgent:
         exploiter: ExploiterArtifact | None,
         fix: FixArtifact | None,
         evidence: list[Evidence],
+        provision: ProvisionArtifact | None = None,
+        negotiation: NegotiationLog | None = None,
     ) -> Judgement:
         if cve.name == "Unknown":
             return Judgement(
@@ -1104,15 +1712,20 @@ class JudgeAgent:
             )
 
         # Behavioral (outcome-derived) evidence describes what happened when
-        # the PoC ran. It can legitimately fail — e.g., upstream containers
-        # show no differential — without meaning the workflow itself failed.
-        # Only structural evidence (artifacts materialized, harness built) is
-        # required to pass for the run to be considered well-formed.
+        # the adversarial loop ran. It can legitimately fail — e.g., the target
+        # surface never served, or the exploit never escalated — without the
+        # workflow itself being malformed. Only structural evidence (artifacts
+        # materially existing) must pass for the run to be well-formed. A
+        # well-formed run with NO behavioral outcomes is NOT a defensive
+        # signal; it is `needs_human_review` at a capped low confidence.
         behavioral_check_names = {
             "harness poc triggered vulnerable container",
             "harness poc blocked by patched container",
             "harness shim triggered vulnerable demo surface",
             "harness shim blocked by patched demo surface",
+            "patched-vs-vulnerable differential check",
+            "harness provisioned and health-checked",
+            "adversarial loop reached a verdict",
         }
         structural_evidence = [
             item for item in evidence if item.check_name not in behavioral_check_names
@@ -1133,106 +1746,112 @@ class JudgeAgent:
                 ],
             )
 
-        if sources and sources.status == "materialized" and harness and harness.status == "built":
-            poc_scaffolded = bool(exploiter and exploiter.implemented)
-            fix_generated = bool(fix and fix.status in {"generated", "validated"})
-            outcomes = list(exploiter.outcomes) if exploiter else []
-            vulnerable_triggered = any(
-                item.variant == "vulnerable" and item.triggered for item in outcomes
-            )
-            patched_blocked = any(
-                item.variant == "patched" and not item.triggered for item in outcomes
-            )
-            shim_triggered = any(
-                item.variant == "shim_vulnerable" and item.triggered for item in outcomes
-            )
-            shim_blocked = any(
-                item.variant == "shim_patched" and not item.triggered for item in outcomes
-            )
-            confidence = 0.78
-            if poc_scaffolded:
-                confidence = 0.85
-            if poc_scaffolded and fix_generated:
-                confidence = 0.92
-            if vulnerable_triggered and patched_blocked:
-                confidence = 0.95
-            elif vulnerable_triggered or patched_blocked:
-                confidence = max(confidence, 0.88)
-            if shim_triggered and shim_blocked:
-                # Shim differential proves the vulnerability class is exercisable
-                # in the harness, but does not confirm the upstream package has
-                # the specific bug — keep below the upstream-confirmed tier.
-                confidence = max(confidence, 0.90)
-            rationale = (
-                f"Downloaded vulnerable and patched {cve.ecosystem} releases, captured a real source diff, "
-                f"and generated an isolated harness scaffold. The strongest observed patch signal was: "
-                f"{finding.relevant_patch_signal}"
-            )
-            if poc_scaffolded:
-                rationale += (
-                    " A localhost-scoped PoC and orchestration runner were emitted "
-                    "for the harness."
-                )
-            if fix and fix.status == "validated":
-                rationale += " A candidate fix was promoted from the upstream diff and validated by applying it to the vulnerable source tree."
-            elif fix_generated:
-                rationale += " A candidate fix was promoted from the upstream diff."
-            if outcomes:
-                if vulnerable_triggered and patched_blocked:
-                    rationale += (
-                        " The PoC triggered the vulnerable container and was blocked "
-                        "by the patched container against the local harness."
-                    )
-                elif vulnerable_triggered:
-                    rationale += (
-                        " The PoC triggered the vulnerable container, but the patched "
-                        "container did not produce the expected blocked signal."
-                    )
-                else:
-                    rationale += (
-                        " The PoC ran but neither upstream container exhibited the "
-                        "vulnerability class through the probed paths."
-                    )
-                if shim_triggered and shim_blocked:
-                    rationale += (
-                        " The harness shim demonstrated the vulnerability class "
-                        "deterministically (vulnerable variant triggered, patched "
-                        "variant blocked) on the dedicated demo surface."
-                    )
-            remediation_notes = [
-                f"Pin deployments to {', '.join(cve.patched_versions) or 'the patched release'} as a minimum floor.",
-                "Review the generated source diff and carry the same guard conditions into downstream forks.",
-                "Add regression tests that assert the patched behavior captured by the fixture remains blocked.",
-            ]
-            safety_notes = [
-                "PoC artifacts target 127.0.0.1 only and are bound to the harness compose stack.",
-                "Service ports are bound to the loopback interface; no external target is reachable.",
-                "Source acquisition only contacts package registry download endpoints.",
-            ]
-            return Judgement(
-                status="defensive_signal_observed",
-                confidence=confidence,
-                rationale=rationale,
-                remediation_notes=remediation_notes,
-                safety_notes=safety_notes,
-            )
+        outcomes = list(exploiter.outcomes) if exploiter else []
+        upstream_triggered = any(item.variant == "vulnerable" and item.triggered for item in outcomes)
+        upstream_blocked = any(item.variant == "patched" and not item.triggered for item in outcomes)
+        shim_triggered = any(item.variant == "shim_vulnerable" and item.triggered for item in outcomes)
+        shim_blocked = any(item.variant == "shim_patched" and not item.triggered for item in outcomes)
+        escalation_achieved = bool(upstream_triggered or shim_triggered)
+        patch_effective = bool(upstream_blocked or shim_blocked)
+        residual_bypass = bool(negotiation and negotiation.residual_bypass)
+        has_behavioral = bool(outcomes) or bool(negotiation and negotiation.executed)
 
-        urgency = "high" if cve.kev or (cve.cvss is not None and cve.cvss >= 9) else "medium"
+        base_rationale = (
+            f"Downloaded vulnerable and patched {cve.ecosystem} releases, captured a real source diff, "
+            f"and generated an isolated harness scaffold. The strongest observed patch signal was: "
+            f"{finding.relevant_patch_signal}"
+        )
+        remediation_notes = [
+            f"Pin deployments to {', '.join(cve.patched_versions) or 'the patched release'} as a minimum floor.",
+            "Review the generated source diff and carry the same guard conditions into downstream forks.",
+            "Add regression tests that assert the patched behavior captured by the fixture remains blocked.",
+        ]
+        safety_notes = [
+            "PoC artifacts target 127.0.0.1 only and are bound to the harness compose stack.",
+            "Service ports are bound to the loopback interface; no external target is reachable.",
+            "Source acquisition only contacts package registry download endpoints.",
+        ]
+
+        if residual_bypass:
+            return self._judgement(
+                "residual_bypass_found", 0.45,
+                base_rationale
+                + " The adversarial loop found a residual primitive that re-escalated the patched target, "
+                  "so the candidate fix does not fully close the vulnerability class within the bounded "
+                  "residual phase — this is NOT a defensive signal.",
+                remediation_notes, safety_notes,
+            )
+        if escalation_achieved and patch_effective:
+            if upstream_triggered and upstream_blocked:
+                confidence = 0.95
+                layer = "upstream"
+            else:
+                confidence = 0.90
+                layer = "shim (class-level demonstration; upstream package exploit not confirmed)"
+            rationale = base_rationale
+            rationale += (
+                f" The adversarial loop reproduced the CVE-described escalation against the vulnerable "
+                f"target ({layer}) and confirmed the patched target blocks the same behavior."
+            )
+            if negotiation and negotiation.residual_rounds:
+                rationale += (
+                    f" {negotiation.residual_rounds} bounded residual primitive(s) did not re-escalate."
+                )
+            return self._judgement(
+                "defensive_signal_observed", confidence, rationale, remediation_notes, safety_notes
+            )
+        if escalation_achieved and not patch_effective:
+            return self._judgement(
+                "exploit_reproduced", 0.65,
+                base_rationale
+                + " The adversarial loop reproduced the escalation against the vulnerable target, but "
+                  "the patched target did not demonstrably block the same behavior — remediation is "
+                  "not proven; this is NOT a defensive signal.",
+                remediation_notes, safety_notes,
+            )
+        # The provision gate ran and the target surface was never servable. A
+        # failed gate is itself a behavioral observation (we tried to provision
+        # and could not), so it routes here regardless of whether any exploit
+        # outcome was also captured.
+        if provision is not None and provision.status == "not_servable":
+            confidence = 0.50
+            rationale = base_rationale
+            rationale += (
+                " The harness target surface never became servable during provisioning, so no "
+                "escalation could be demonstrated; this is NOT a defensive signal."
+            )
+            return self._judgement(
+                "target_not_servable", confidence, rationale, remediation_notes, safety_notes
+            )
+        # Sources/harness were materialized, the loop ran, but no escalation.
+        if has_behavioral:
+            confidence = 0.50
+            rationale = base_rationale
+            rationale += (
+                " The exploit loop ran against the provisioned target but did not reproduce the "
+                "CVE-described escalation; this is NOT a defensive signal."
+            )
+            return self._judgement(
+                "needs_human_review", confidence, rationale, remediation_notes, safety_notes
+            )
+        # No --execute-poc (or nothing executed): scaffolding exists with no behavior.
+        rationale = base_rationale
+        rationale += (
+            " No behavioral observation was captured (the adversarial loop did not execute against "
+            "the running target). Artifacts alone are not evidence; this is NOT a defensive signal."
+        )
+        return self._judgement(
+            "needs_human_review", 0.45, rationale, remediation_notes, safety_notes
+        )
+
+    @staticmethod
+    def _judgement(status, confidence, rationale, remediation_notes, safety_notes) -> Judgement:
         return Judgement(
-            status="needs_human_review",
-            confidence=0.56 if urgency == "high" else 0.48,
-            rationale=(
-                "The workflow retained fixture evidence, but real source acquisition or harness generation "
-                "did not complete cleanly enough for a stronger assessment."
-            ),
-            remediation_notes=[
-                "Manually review the affected releases and patch availability.",
-                "Retry the run after resolving the captured source acquisition or harness issue.",
-            ],
-            safety_notes=[
-                "No proof-of-concept logic was generated.",
-                "Assessment remained limited to offline defensive workflow steps.",
-            ],
+            status=status,
+            confidence=confidence,
+            rationale=rationale,
+            remediation_notes=remediation_notes,
+            safety_notes=safety_notes,
         )
 
 
@@ -1653,6 +2272,35 @@ def _docker_available() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return completed.returncode == 0 and completed.stdout.strip() != ""
+
+
+def _http_probe(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    method: str = "GET",
+    body: str | None = None,
+    timeout: float = 5.0,
+) -> tuple[int | None, str]:
+    """Probe a localhost harness endpoint. Returns (status, body).
+
+    Returns (None, error_message) on connection failure so callers can
+    distinguish "target answered" from "nothing listening" — which is
+    exactly the distinction the provisioning gate depends on.
+    """
+    try:
+        request = Request(
+            url,
+            data=(None if body is None else body.encode("utf-8")),
+            headers=headers or {},
+            method=method,
+        )
+        with urlopen(request, timeout=timeout) as response:
+            return response.status, response.read(2048).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(2048).decode("utf-8", errors="replace")
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
 
 
 def _parse_poc_outcome(payload: dict) -> list[ExploitOutcome]:
@@ -2637,22 +3285,26 @@ def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
             "}",
             "trap cleanup EXIT",
             "if compose_available; then compose_cmd -f harness/docker-compose.yml build; compose_cmd -f harness/docker-compose.yml up -d; else echo '[cvehunt] docker compose unavailable; using direct docker fallback'; manual_build; manual_up; fi",
-            f'echo "[cvehunt] waiting for harness services on 127.0.0.1:{base_port} and :{base_port + 1}"',
-            "ready=0",
+            "mkdir -p provision",
+            ": > provision/provision.tsv",
+            "probe_target() {",
+            '  name="$1"; port="$2"',
+            f'  if curl --silent --fail --max-time 3 http://127.0.0.1:${{port}}/health/readiness >/dev/null 2>&1; then',
+            '    printf "%s\t%s\t1\n" "$name" "$port" >> provision/provision.tsv',
+            "  else",
+            '    printf "%s\t%s\t0\n" "$name" "$port" >> provision/provision.tsv',
+            "  fi",
+            "  return 0",
+            "}",
+            f'echo "[cvehunt] best-effort readiness: upstream 127.0.0.1:{base_port} and :{base_port + 1}"',
             "for _ in $(seq 1 90); do",
             f'  if curl --silent --fail http://127.0.0.1:{base_port}/health/readiness >/dev/null 2>&1 \\',
             f'    && curl --silent --fail http://127.0.0.1:{base_port + 1}/health/readiness >/dev/null 2>&1; then',
-            "    ready=1",
             "    break",
             "  fi",
             "  sleep 2",
             "done",
-            'if [ "$ready" -ne 1 ]; then',
-            '  echo "[cvehunt] services did not reach readiness within window" >&2',
-            "  capture_logs",
-            "  exit 2",
-            "fi",
-            f'echo "[cvehunt] waiting for shim services on 127.0.0.1:{base_port + 10} and :{base_port + 11} (best-effort)"',
+            f'echo "[cvehunt] best-effort readiness: shim 127.0.0.1:{base_port + 10} and :{base_port + 11}"',
             "for _ in $(seq 1 30); do",
             f'  if curl --silent --fail http://127.0.0.1:{base_port + 10}/health/readiness >/dev/null 2>&1 \\',
             f'    && curl --silent --fail http://127.0.0.1:{base_port + 11}/health/readiness >/dev/null 2>&1; then',
@@ -2660,7 +3312,22 @@ def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
             "  fi",
             "  sleep 2",
             "done",
-            "python3 exploiter/poc.py | tee exploiter/outcome.json",
+            f'probe_target vulnerable {base_port}',
+            f'probe_target patched {base_port + 1}',
+            f'probe_target shim-vulnerable {base_port + 10}',
+            f'probe_target shim-patched {base_port + 11}',
+            "python3 - <<'PROVISIONPY'",
+            "import csv, json",
+            "rows=[r for r in csv.reader(open('provision/provision.tsv'), delimiter='\t') if len(r)==3]",
+            "targets=[{'name':r[0],'url':f'http://127.0.0.1:{r[1]}','ready':r[2]=='1','servable':r[2]=='1','detail':('readiness HTTP 200' if r[2]=='1' else 'no readiness response')} for r in rows]",
+            "servable=sum(1 for t in targets if t['servable'])",
+            "status='servable' if targets and servable==len(targets) else ('partially_servable' if servable else 'not_servable')",
+            "note=f'{servable}/{len(targets)} targets servable'",
+            "open('provision/provision.json','w').write(json.dumps({'status':status,'note':note,'targets':targets}, indent=2)+'\n')",
+            "open('provision/provision.log','w').write(f'[provision] {status}: {note}\n')",
+            "print(f'provision: {status} ({note})')",
+            "PROVISIONPY",
+            "python3 exploiter/poc.py | tee exploiter/outcome.json || true",
             "popd >/dev/null",
             "",
         ]
