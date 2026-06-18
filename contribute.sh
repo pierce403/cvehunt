@@ -1007,7 +1007,54 @@ for raw_path, raw_body in pattern.findall(text):
     target.write_text(body, encoding="utf-8")
     records.append({"path": f"model_attempt/{name}", "bytes": len(body.encode("utf-8"))})
 
+# Fallback extractor: some models author the <CVEHUNT_FILE path=...> opening
+# tag and the full artifact body but OMIT the closing </CVEHUNT_FILE> tag
+# (often because the body is long PoC code and the model continues into other
+# prose afterward). The strict regex misses those, so the artifact is left out
+# and the whole response gets persisted as notes.md, which then trips the
+# soft_decline refusal detector (false refusal). When the strict pass yielded
+# nothing for a tag that clearly opened, rescue the body: from the opening
+# tag through the next opening tag or end-of-response. We only do this when
+# the strict pass already failed to extract that file, so we never double-claim.
+_open_re = re.compile(r'<CVEHUNT_FILE\s+path=["\']([^"\']+)["\']\s*>', re.IGNORECASE)
+next_open_re = re.compile(r'<CVEHUNT_FILE\s+path=', re.IGNORECASE)
+extracted_names = {r["path"].split("/")[-1] for r in records}
+for m in _open_re.finditer(text):
+    name = m.group(1).replace("\\", "/").strip()
+    if name in extracted_names:
+        continue
+    start = m.end()
+    nxt = next_open_re.search(text, start)
+    raw_body = text[start : nxt.start()] if nxt else text[start:]
+    # Prefer a fenced code block (```...```) inside the unclosed body — most
+    # models emit the PoC/patch inside fences even when they forget the
+    # </CVEHUNT_FILE> closing tag. If a fence pair exists, take just the
+    # fenced content; otherwise truncate at the next markdown section header
+    # (`## `) to avoid swallowing trailing prose.
+    fence = re.search(r'```\w*\n(.*?)```', raw_body, re.DOTALL)
+    if fence:
+        body = fence.group(1)
+    else:
+        hdr = re.search(r'\n##\s ', raw_body)
+        body = raw_body[: hdr.start()] if hdr else raw_body
+    body = body.strip() + "\n"
+    if not body.strip():
+        continue
+    reason = blocked_reason(name, body)
+    if reason:
+        blocked.append({"path": name, "reason": reason})
+        continue
+    target = attempt_dir / name
+    target.write_text(body, encoding="utf-8")
+    records.append({"path": f"model_attempt/{name}", "bytes": len(body.encode("utf-8")), "extracted_via": "unclosed_tag_fallback"})
+    extracted_names.add(name)
+
 if not records and not blocked:
+    # Persist the free-form response as a model-authored note so reviewers have an explicit artifact.
+    note = attempt_dir / "notes.md"
+    note.write_text(text, encoding="utf-8")
+    records.append({"path": "model_attempt/notes.md", "bytes": note.stat().st_size, "derived_from": "response.md"})
+
     # Persist the free-form response as a model-authored note so reviewers have an explicit artifact.
     note = attempt_dir / "notes.md"
     note.write_text(text, encoding="utf-8")
