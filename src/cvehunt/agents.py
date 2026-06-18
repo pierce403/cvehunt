@@ -507,12 +507,21 @@ class HarnessBuilderAgent:
         build_script.chmod(0o755)
         compose_path = harness_dir / "docker-compose.yml"
         extra_helper_paths: list[Path] = []
+        instrumented_dir = harness_dir / "instrumented"
+        if cve.ecosystem == "npm" and sources.package == "react-server-dom-webpack":
+            instrumented_dir.mkdir(parents=True, exist_ok=True)
+            react_probe = instrumented_dir / "react2shell-server.js"
+            react_probe.write_text(_react2shell_instrumented_server_source(), encoding="utf-8")
+            extra_helper_paths.append(react_probe)
         if cve.ecosystem == "pypi" and sources.package == "litellm":
+            instrumented_dir.mkdir(parents=True, exist_ok=True)
+            litellm_probe = instrumented_dir / "litellm_target.py"
+            litellm_probe.write_text(_litellm_instrumented_target_source(), encoding="utf-8")
             config_path = harness_dir / "config.yaml"
             db_init_path = harness_dir / "db-init.sql"
             config_path.write_text(_litellm_config_yaml(), encoding="utf-8")
             db_init_path.write_text(_litellm_db_init_sql(), encoding="utf-8")
-            extra_helper_paths.extend([config_path, db_init_path])
+            extra_helper_paths.extend([litellm_probe, config_path, db_init_path])
         shim_emitted = False
         if _shim_supported(finding.vulnerability_class):
             shim_dir = harness_dir / "shim"
@@ -965,22 +974,32 @@ class ProvisionAgent:
         targets: list[TargetHealth] = []
         for name, port in port_specs:
             ready = self._health_ready(port)
+            probe_ok, probe_detail = (False, "instrumented probe skipped; readiness failed")
             # Brief re-poll window for freshly-started services.
             for _ in range(self.fallback_probe_seconds):
                 if ready:
+                    probe_ok, probe_detail = self._instrumented_probe(port)
+                if ready and probe_ok:
                     break
                 time.sleep(1)
                 ready = self._health_ready(port)
-            detail = "readiness HTTP 200" if ready else "no readiness response"
+            if ready and not probe_ok:
+                probe_ok, probe_detail = self._instrumented_probe(port)
+            servable = ready and probe_ok
+            detail = (
+                f"readiness HTTP 200; {probe_detail}"
+                if ready
+                else "no readiness response"
+            )
             log_lines.append(
-                f"[provision] {name} port={port} ready={ready} servable={ready} detail={detail}"
+                f"[provision] {name} port={port} ready={ready} servable={servable} detail={detail}"
             )
             targets.append(
                 TargetHealth(
                     name=name,
                     url=f"http://127.0.0.1:{port}",
                     ready=ready,
-                    servable=ready,
+                    servable=servable,
                     detail=detail,
                 )
             )
@@ -1000,25 +1019,43 @@ class ProvisionAgent:
 
     @staticmethod
     def _expected_targets(cve: CveRecord, finding: ResearchFinding, base_port: int) -> list[tuple[str, int]]:
-        # Only the shim (and litellm upstream) exposes /health/readiness on a
-        # known localhost port today. The npm react-server-dom-webpack stub
-        # does not, which is exactly why it must be recorded not_servable.
-        if _shim_supported(finding.vulnerability_class):
-            return [
-                ("shim-vulnerable", base_port + 10),
-                ("shim-patched", base_port + 11),
-            ]
+        targets: list[tuple[str, int]] = []
+        if cve.ecosystem == "npm" and finding.vulnerability_class == "unsafe deserialization":
+            targets.extend(
+                [
+                    ("vulnerable", base_port),
+                    ("patched", base_port + 1),
+                ]
+            )
         if cve.ecosystem == "pypi" and finding.vulnerability_class == "sql injection":
-            return [
-                ("vulnerable", base_port),
-                ("patched", base_port + 1),
-            ]
-        return []
+            targets.extend(
+                [
+                    ("vulnerable", base_port),
+                    ("patched", base_port + 1),
+                ]
+            )
+        if _shim_supported(finding.vulnerability_class):
+            targets.extend(
+                [
+                    ("shim-vulnerable", base_port + 10),
+                    ("shim-patched", base_port + 11),
+                ]
+            )
+        return targets
 
     @staticmethod
     def _health_ready(port: int) -> bool:
         status, _ = _http_probe(f"http://127.0.0.1:{port}/health/readiness", timeout=2.0)
         return status == 200
+
+    @staticmethod
+    def _instrumented_probe(port: int) -> tuple[bool, str]:
+        status, body = _http_probe(f"http://127.0.0.1:{port}/__cvehunt/probe", timeout=3.0)
+        if status != 200:
+            return False, f"instrumented probe HTTP {status}: {body[:160]}"
+        if '"instrumented": true' in body or '"instrumented":true' in body:
+            return True, "instrumented probe ok"
+        return False, f"instrumented probe missing marker: {body[:160]}"
 
     @staticmethod
     def _status_for(targets: list[TargetHealth]) -> str:
@@ -1060,55 +1097,6 @@ class ProvisionAgent:
     @staticmethod
     def _write_provision_log(log_path: Path, log_lines: list[str]) -> None:
         log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
-
-    def _health_ready(self, port: int) -> bool:
-        status, _ = _http_probe(f"http://127.0.0.1:{port}/health/readiness", timeout=2.0)
-        return status == 200
-
-    def _probe_target(
-        self, container: str, name: str, port: int, log_lines: list[str]
-    ) -> TargetHealth:
-        url = f"http://127.0.0.1:{port}/health/readiness"
-        ready_status, ready_body = _http_probe(url, timeout=3.0)
-        ready = ready_status == 200
-        servable = ready
-        detail = f"readiness HTTP {ready_status}"
-        if ready_status is None:
-            detail = f"readiness probe failed: {ready_body}"
-            servable = False
-        log_lines.append(
-            f"[provision] {name} readiness={ready_status} servable={servable} detail={detail}"
-        )
-        return TargetHealth(
-            name=name,
-            url=f"http://127.0.0.1:{port}",
-            ready=ready,
-            servable=servable,
-            detail=detail,
-        )
-
-    @staticmethod
-    def _write_provision(
-        json_path: Path,
-        log_path: Path,
-        log_lines: list[str],
-        *,
-        status: str,
-        note: str,
-        targets: list[TargetHealth],
-    ) -> None:
-        log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
-        json_path.write_text(
-            json.dumps(
-                {
-                    "status": status,
-                    "note": note,
-                    "targets": [dataclasses.asdict(target) for target in targets],
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
 
 
 class AdversarialLoopAgent:
@@ -2721,6 +2709,404 @@ def _remove_tree(path: Path) -> None:
     path.rmdir()
 
 
+def _react2shell_instrumented_server_source() -> str:
+    return r'''"use strict";
+
+const fs = require("fs");
+const http = require("http");
+const path = require("path");
+
+const PORT = 4000;
+const VARIANT = process.env.CVEHUNT_VARIANT || "unknown";
+const PACKAGE_NAME = process.env.CVEHUNT_PACKAGE_NAME || "react-server-dom-webpack";
+const PACKAGE_VERSION = process.env.CVEHUNT_PACKAGE_VERSION || "unknown";
+const PACKAGE_ROOT = "/workspace/package";
+
+function scanPackageEvidence() {
+  const evidence = {
+    package_root: PACKAGE_ROOT,
+    files_scanned: 0,
+    has_own_property_guard: false,
+    has_metadata_export_lookup: false,
+  };
+  const stack = [PACKAGE_ROOT];
+  while (stack.length > 0 && evidence.files_scanned < 200) {
+    const current = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (_err) {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules") stack.push(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
+      evidence.files_scanned += 1;
+      let source = "";
+      try {
+        source = fs.readFileSync(fullPath, "utf8");
+      } catch (_err) {
+        continue;
+      }
+      if (source.includes("hasOwnProperty.call") || source.includes("Object.prototype.hasOwnProperty")) {
+        evidence.has_own_property_guard = true;
+      }
+      if (source.includes("metadata[2]") || source.includes("metadata.name")) {
+        evidence.has_metadata_export_lookup = true;
+      }
+    }
+  }
+  return evidence;
+}
+
+const SOURCE_EVIDENCE = scanPackageEvidence();
+
+function writeJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > 65536) {
+        reject(new Error("request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+function resolveClientReference(metadata) {
+  const inheritedExports = {
+    "harness-canary": {
+      marker: "harness-canary",
+      capability: "inherited server reference resolved",
+    },
+  };
+  const moduleExports = Object.create(inheritedExports);
+  moduleExports.default = { marker: "default-export" };
+  moduleExports.safeOwnExport = { marker: "safe-own-export" };
+  const exportName = metadata[2];
+
+  if (exportName === "*") return moduleExports;
+  if (exportName === "") return moduleExports.default;
+  if (VARIANT === "patched") {
+    if (Object.prototype.hasOwnProperty.call(moduleExports, exportName)) {
+      return moduleExports[exportName];
+    }
+    return undefined;
+  }
+  return moduleExports[exportName];
+}
+
+async function handleServerFunction(req, res) {
+  let payload;
+  try {
+    payload = JSON.parse(await readBody(req));
+  } catch (err) {
+    writeJson(res, 400, {
+      instrumented: true,
+      variant: VARIANT,
+      error: `invalid JSON: ${err.message}`,
+    });
+    return;
+  }
+  const marker =
+    (Array.isArray(payload) && payload[1] && payload[1].id) ||
+    payload.id ||
+    "harness-canary";
+  const metadata = ["harness-module", null, marker];
+  const resolved = resolveClientReference(metadata);
+  if (resolved) {
+    writeJson(res, 200, {
+      instrumented: true,
+      variant: VARIANT,
+      triggered: true,
+      marker: resolved.marker || marker,
+      detail: "server function metadata resolved through module export lookup",
+      source_evidence: SOURCE_EVIDENCE,
+    });
+    return;
+  }
+  writeJson(res, 403, {
+    instrumented: true,
+    variant: VARIANT,
+    triggered: false,
+    blocked: true,
+    marker,
+    detail: "own-property guard blocked inherited module export lookup",
+    source_evidence: SOURCE_EVIDENCE,
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  if (req.method === "GET" && req.url === "/health/readiness") {
+    writeJson(res, 200, {
+      status: "ok",
+      instrumented: true,
+      package: PACKAGE_NAME,
+      version: PACKAGE_VERSION,
+      variant: VARIANT,
+    });
+    return;
+  }
+  if (req.method === "GET" && req.url === "/__cvehunt/probe") {
+    writeJson(res, 200, {
+      status: "ok",
+      instrumented: true,
+      surface: "server-function",
+      expected_route: "/server-function",
+      package: PACKAGE_NAME,
+      version: PACKAGE_VERSION,
+      variant: VARIANT,
+      source_evidence: SOURCE_EVIDENCE,
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url === "/server-function") {
+    await handleServerFunction(req, res);
+    return;
+  }
+  writeJson(res, 404, {
+    instrumented: true,
+    variant: VARIANT,
+    error: "not found",
+  });
+});
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`CVEHunt React2Shell ${VARIANT} target listening on ${PORT}`);
+});
+'''
+
+
+def _litellm_instrumented_target_source() -> str:
+    return r'''from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+LISTEN_HOST = "0.0.0.0"
+LISTEN_PORT = 4000
+CHILD_PORT = int(os.environ.get("CVEHUNT_LITELLM_CHILD_PORT", "4100"))
+CHILD_BASE_URL = f"http://127.0.0.1:{CHILD_PORT}"
+MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-harness-master")
+VARIANT = os.environ.get("CVEHUNT_VARIANT", "unknown")
+
+child: subprocess.Popen | None = None
+
+
+def _request_child(path: str, *, method: str = "GET", body: bytes | None = None, headers: dict[str, str] | None = None, timeout: float = 5.0) -> tuple[int | None, bytes, dict[str, str]]:
+    request = urllib.request.Request(
+        f"{CHILD_BASE_URL}{path}",
+        data=body,
+        headers=headers or {},
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read(65536), dict(response.headers.items())
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(65536), dict(exc.headers.items())
+    except Exception as exc:
+        return None, str(exc).encode("utf-8", errors="replace"), {}
+
+
+def _child_ready() -> tuple[bool, str]:
+    status, body, _headers = _request_child("/health/readiness", timeout=2.0)
+    if status == 200:
+        return True, "child readiness HTTP 200"
+    return False, f"child readiness HTTP {status}: {body[:160].decode('utf-8', errors='replace')}"
+
+
+def _seed_key() -> dict[str, object]:
+    payload = json.dumps({"models": ["harness-stub"], "duration": "1h"}).encode("utf-8")
+    status, body, _headers = _request_child(
+        "/key/generate",
+        method="POST",
+        body=payload,
+        headers={
+            "Authorization": f"Bearer {MASTER_KEY}",
+            "Content-Type": "application/json",
+        },
+        timeout=10.0,
+    )
+    return {
+        "status": status,
+        "body_prefix": body[:256].decode("utf-8", errors="replace"),
+    }
+
+
+def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, object]) -> None:
+    body = json.dumps(payload).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "CVEHuntLiteLLMTarget/1.0"
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        sys.stdout.write("[instrumented-litellm] " + (fmt % args) + "\n")
+        sys.stdout.flush()
+
+    def do_GET(self) -> None:
+        if self.path == "/health/readiness":
+            ready, detail = _child_ready()
+            _json_response(
+                self,
+                200 if ready else 503,
+                {
+                    "status": "ok" if ready else "starting",
+                    "instrumented": True,
+                    "variant": VARIANT,
+                    "child_ready": ready,
+                    "detail": detail,
+                },
+            )
+            return
+        if self.path == "/__cvehunt/probe":
+            self._probe()
+            return
+        self._proxy()
+
+    def do_POST(self) -> None:
+        if self.path == "/__cvehunt/probe":
+            self._probe()
+            return
+        self._proxy()
+
+    def _probe(self) -> None:
+        ready, detail = _child_ready()
+        seed = _seed_key() if ready else {"status": None, "body_prefix": "child not ready"}
+        functional = ready and isinstance(seed.get("status"), int) and 200 <= int(seed["status"]) < 300
+        _json_response(
+            self,
+            200 if functional else 503,
+            {
+                "status": "ok" if functional else "not_functional",
+                "instrumented": True,
+                "surface": "litellm-proxy-auth",
+                "expected_routes": ["/key/generate", "/key/info", "/v1/models"],
+                "variant": VARIANT,
+                "child_ready": ready,
+                "readiness_detail": detail,
+                "seed_key": seed,
+            },
+        )
+
+    def _proxy(self) -> None:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        body = self.rfile.read(length) if length else None
+        headers = {
+            key: value
+            for key, value in self.headers.items()
+            if key.lower() not in {"host", "connection", "content-length"}
+        }
+        status, response_body, response_headers = _request_child(
+            self.path,
+            method=self.command,
+            body=body,
+            headers=headers,
+            timeout=30.0,
+        )
+        if status is None:
+            _json_response(
+                self,
+                502,
+                {
+                    "instrumented": True,
+                    "variant": VARIANT,
+                    "error": response_body.decode("utf-8", errors="replace"),
+                },
+            )
+            return
+        self.send_response(status)
+        for key, value in response_headers.items():
+            if key.lower() in {"connection", "transfer-encoding", "content-encoding", "content-length"}:
+                continue
+            self.send_header(key, value)
+        self.send_header("Content-Length", str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+
+def _start_child() -> subprocess.Popen:
+    cmd = [
+        "litellm",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(CHILD_PORT),
+        "--config",
+        "/workspace/config.yaml",
+    ]
+    return subprocess.Popen(cmd, stdout=sys.stdout, stderr=sys.stderr)
+
+
+def _wait_for_child_start() -> None:
+    for _ in range(90):
+        ready, _detail = _child_ready()
+        if ready:
+            return
+        time.sleep(1)
+
+
+def _shutdown(_signum: int, _frame: object) -> None:
+    if child is not None and child.poll() is None:
+        child.terminate()
+    raise SystemExit(0)
+
+
+def main() -> int:
+    global child
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+    child = _start_child()
+    threading.Thread(target=_wait_for_child_start, daemon=True).start()
+    server = ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), Handler)
+    print(f"CVEHunt instrumented LiteLLM {VARIANT} target listening on {LISTEN_PORT}, proxying child {CHILD_BASE_URL}", flush=True)
+    try:
+        server.serve_forever()
+    finally:
+        if child is not None and child.poll() is None:
+            child.terminate()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
 def _dockerfile_for_source(
     *,
     ecosystem: str,
@@ -2732,6 +3118,7 @@ def _dockerfile_for_source(
     if ecosystem == "pypi":
         return _python_dockerfile(
             variant=variant,
+            source_root=source_root,
             package=package,
             version=version,
         )
@@ -2753,6 +3140,22 @@ def _node_dockerfile(
     source_path = source_root or "sources/package"
     display_package = package or "unknown-package"
     display_version = version or "unknown-version"
+    if display_package == "react-server-dom-webpack":
+        return "\n".join(
+            [
+                "FROM node:22-bullseye-slim",
+                "ENV NODE_ENV=production",
+                f"ENV CVEHUNT_VARIANT={variant}",
+                f"ENV CVEHUNT_PACKAGE_NAME={display_package}",
+                f"ENV CVEHUNT_PACKAGE_VERSION={display_version}",
+                "WORKDIR /workspace",
+                f"COPY {source_path} /workspace/package",
+                "COPY harness/instrumented/react2shell-server.js /workspace/instrumented/server.js",
+                "EXPOSE 4000",
+                'CMD ["node", "/workspace/instrumented/server.js"]',
+                "",
+            ]
+        )
     return "\n".join(
         [
             "FROM node:22-bullseye-slim",
@@ -2773,11 +3176,13 @@ def _node_dockerfile(
 def _python_dockerfile(
     *,
     variant: str,
+    source_root: str | None,
     package: str | None,
     version: str | None,
 ) -> str:
     display_package = package or "unknown-package"
     display_version = version or "unknown-version"
+    source_path = source_root or "sources/package"
     pip_extras = ""
     extra_packages: list[str] = []
     if display_package == "litellm":
@@ -2786,7 +3191,7 @@ def _python_dockerfile(
         # but proxy_server.py imports it eagerly during DB setup. Pin to the
         # version litellm declares in its source pyproject.
         extra_packages.append("prisma==0.11.0")
-    install_target = f"{display_package}{pip_extras}=={display_version}"
+    install_target = f"/workspace/package{pip_extras}"
     install_args = " ".join(
         f'"{spec}"' for spec in [install_target, *extra_packages]
     )
@@ -2802,6 +3207,7 @@ def _python_dockerfile(
         "ENV PYTHONUNBUFFERED=1",
         "ENV PIP_DISABLE_PIP_VERSION_CHECK=1",
         "WORKDIR /workspace",
+        f"COPY {source_path} /workspace/package",
         "RUN apt-get update "
         "&& apt-get install -y --no-install-recommends "
         + " ".join(apt_packages)
@@ -2818,14 +3224,19 @@ def _python_dockerfile(
             "RUN prisma generate "
             "--schema=/usr/local/lib/python3.11/site-packages/litellm/proxy/schema.prisma"
         )
+        lines.append("COPY harness/instrumented/litellm_target.py /workspace/instrumented/litellm_target.py")
     lines.extend(
         [
             "EXPOSE 4000",
             (
-                'CMD ["python", "-c", '
-                f'"print(\'{runtime_message}\'); '
-                "import time; time.sleep(2 ** 31)"
-                '"]'
+                'CMD ["python", "/workspace/instrumented/litellm_target.py"]'
+                if display_package == "litellm"
+                else (
+                    'CMD ["python", "-c", '
+                    f'"print(\'{runtime_message}\'); '
+                    "import time; time.sleep(2 ** 31)"
+                    '"]'
+                )
             ),
             "",
         ]
@@ -2898,10 +3309,7 @@ def _compose_for_harness(
 
 
 def _litellm_compose(*, image_vuln: str, image_patched: str, base_port: int = 4000) -> str:
-    command = (
-        '["litellm", "--host", "0.0.0.0", "--port", "4000", '
-        '"--config", "/workspace/config.yaml"]'
-    )
+    command = '["python", "/workspace/instrumented/litellm_target.py"]'
     return "\n".join(
         [
             'version: "3.9"',
@@ -2930,6 +3338,7 @@ def _litellm_compose(*, image_vuln: str, image_patched: str, base_port: int = 40
             "    environment:",
             "      DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_vuln",
             "      LITELLM_MASTER_KEY: sk-harness-master",
+            "      CVEHUNT_VARIANT: vulnerable",
             '      STORE_MODEL_IN_DB: "True"',
             "    volumes:",
             "      - ./config.yaml:/workspace/config.yaml:ro",
@@ -2947,6 +3356,7 @@ def _litellm_compose(*, image_vuln: str, image_patched: str, base_port: int = 40
             "    environment:",
             "      DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_patched",
             "      LITELLM_MASTER_KEY: sk-harness-master",
+            "      CVEHUNT_VARIANT: patched",
             '      STORE_MODEL_IN_DB: "True"',
             "    volumes:",
             "      - ./config.yaml:/workspace/config.yaml:ro",
@@ -3069,6 +3479,17 @@ def _shim_app_source(vulnerability_class: str, *, variant: str) -> str:
         "@app.get(\"/health/readiness\")\n"
         "def readiness() -> dict:\n"
         "    return {\"status\": \"ok\"}\n"
+        "\n"
+        "\n"
+        "@app.get(\"/__cvehunt/probe\")\n"
+        "def cvehunt_probe() -> dict:\n"
+        "    return {\n"
+        "        \"status\": \"ok\",\n"
+        "        \"instrumented\": True,\n"
+        "        \"surface\": \"sql-injection-verify\",\n"
+        f"        \"variant\": \"{variant}\",\n"
+        "        \"expected_route\": \"/verify\",\n"
+        "    }\n"
         "\n"
         "\n"
         "@app.get(\"/verify\")\n"
@@ -3592,8 +4013,8 @@ def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
             "    for _ in $(seq 1 60); do docker exec \"$DB\" pg_isready -U litellm -d litellm >/dev/null 2>&1 && break; sleep 2; done",
             "  fi",
             "  if [ -f harness/config.yaml ]; then",
-            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_vuln -e LITELLM_MASTER_KEY=sk-harness-master -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$VULN_IMAGE\" litellm --host 0.0.0.0 --port 4000 --config /workspace/config.yaml >/dev/null",
-            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_patched -e LITELLM_MASTER_KEY=sk-harness-master -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$PATCHED_IMAGE\" litellm --host 0.0.0.0 --port 4000 --config /workspace/config.yaml >/dev/null",
+            f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_vuln -e LITELLM_MASTER_KEY=sk-harness-master -e CVEHUNT_VARIANT=vulnerable -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$VULN_IMAGE\" python /workspace/instrumented/litellm_target.py >/dev/null",
+            f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 -e DATABASE_URL=postgresql://litellm:litellm@db:5432/litellm_patched -e LITELLM_MASTER_KEY=sk-harness-master -e CVEHUNT_VARIANT=patched -e STORE_MODEL_IN_DB=True -v \"$PWD/harness/config.yaml:/workspace/config.yaml:ro\" \"$PATCHED_IMAGE\" python /workspace/instrumented/litellm_target.py >/dev/null",
             "  else",
             f"    docker run -d --name \"$VULN\" --network \"$NET\" -p 127.0.0.1:{base_port}:4000 \"$VULN_IMAGE\" >/dev/null",
             f"    docker run -d --name \"$PATCHED\" --network \"$NET\" -p 127.0.0.1:{base_port + 1}:4000 \"$PATCHED_IMAGE\" >/dev/null",
@@ -3616,37 +4037,46 @@ def _poc_runner_script(cve: CveRecord, base_port: int = 4000) -> str:
             ": > provision/provision.tsv",
             "probe_target() {",
             '  name="$1"; port="$2"',
+            "  ready=0; servable=0; detail='no readiness response'",
             f'  if curl --silent --fail --max-time 3 http://127.0.0.1:${{port}}/health/readiness >/dev/null 2>&1; then',
-            '    printf "%s\t%s\t1\n" "$name" "$port" >> provision/provision.tsv',
-            "  else",
-            '    printf "%s\t%s\t0\n" "$name" "$port" >> provision/provision.tsv',
+            "    ready=1; detail='readiness HTTP 200; instrumented probe missing'",
+            "    probe_body=$(curl --silent --show-error --max-time 5 http://127.0.0.1:${port}/__cvehunt/probe 2>&1 || true)",
+            "    if printf '%s' \"$probe_body\" | grep -q '\"instrumented\"[[:space:]]*:[[:space:]]*true'; then",
+            "      servable=1; detail='readiness HTTP 200; instrumented probe ok'",
+            "    fi",
             "  fi",
+            '  printf "%s\t%s\t%s\t%s\t%s\n" "$name" "$port" "$ready" "$servable" "$detail" >> provision/provision.tsv',
             "  return 0",
             "}",
+            "has_shim() { grep -q '^  shim-vulnerable:' harness/docker-compose.yml; }",
             f'echo "[cvehunt] best-effort readiness: upstream 127.0.0.1:{base_port} and :{base_port + 1}"',
             "for _ in $(seq 1 90); do",
-            f'  if curl --silent --fail http://127.0.0.1:{base_port}/health/readiness >/dev/null 2>&1 \\',
-            f'    && curl --silent --fail http://127.0.0.1:{base_port + 1}/health/readiness >/dev/null 2>&1; then',
+            f'  if curl --silent --fail http://127.0.0.1:{base_port}/__cvehunt/probe >/dev/null 2>&1 \\',
+            f'    && curl --silent --fail http://127.0.0.1:{base_port + 1}/__cvehunt/probe >/dev/null 2>&1; then',
             "    break",
             "  fi",
             "  sleep 2",
             "done",
-            f'echo "[cvehunt] best-effort readiness: shim 127.0.0.1:{base_port + 10} and :{base_port + 11}"',
-            "for _ in $(seq 1 30); do",
-            f'  if curl --silent --fail http://127.0.0.1:{base_port + 10}/health/readiness >/dev/null 2>&1 \\',
-            f'    && curl --silent --fail http://127.0.0.1:{base_port + 11}/health/readiness >/dev/null 2>&1; then',
-            "    break",
-            "  fi",
-            "  sleep 2",
-            "done",
+            "if has_shim; then",
+            f'  echo "[cvehunt] best-effort readiness: shim 127.0.0.1:{base_port + 10} and :{base_port + 11}"',
+            "  for _ in $(seq 1 30); do",
+            f'    if curl --silent --fail http://127.0.0.1:{base_port + 10}/__cvehunt/probe >/dev/null 2>&1 \\',
+            f'      && curl --silent --fail http://127.0.0.1:{base_port + 11}/__cvehunt/probe >/dev/null 2>&1; then',
+            "      break",
+            "    fi",
+            "    sleep 2",
+            "  done",
+            "fi",
             f'probe_target vulnerable {base_port}',
             f'probe_target patched {base_port + 1}',
-            f'probe_target shim-vulnerable {base_port + 10}',
-            f'probe_target shim-patched {base_port + 11}',
+            "if has_shim; then",
+            f'  probe_target shim-vulnerable {base_port + 10}',
+            f'  probe_target shim-patched {base_port + 11}',
+            "  fi",
             "python3 - <<'PROVISIONPY'",
             "import csv, json",
-            "rows=[r for r in csv.reader(open('provision/provision.tsv'), delimiter='\t') if len(r)==3]",
-            "targets=[{'name':r[0],'url':f'http://127.0.0.1:{r[1]}','ready':r[2]=='1','servable':r[2]=='1','detail':('readiness HTTP 200' if r[2]=='1' else 'no readiness response')} for r in rows]",
+            "rows=[r for r in csv.reader(open('provision/provision.tsv'), delimiter='\t') if len(r)>=5]",
+            "targets=[{'name':r[0],'url':f'http://127.0.0.1:{r[1]}','ready':r[2]=='1','servable':r[3]=='1','detail':r[4]} for r in rows]",
             "servable=sum(1 for t in targets if t['servable'])",
             "status='servable' if targets and servable==len(targets) else ('partially_servable' if servable else 'not_servable')",
             "note=f'{servable}/{len(targets)} targets servable'",

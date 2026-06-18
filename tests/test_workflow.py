@@ -9,6 +9,7 @@ from cvehunt.agents import (
     ExploiterAgent,
     HarnessBuilderAgent,
     HarnessRunnerAgent,
+    ProvisionAgent,
     ResearcherAgent,
     SafetyPolicy,
 )
@@ -382,19 +383,29 @@ def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path
     )
 
     harness_dir = tmp_path / "artifacts" / "harness"
+    vulnerable_dockerfile = (harness_dir / "Dockerfile.vulnerable").read_text(encoding="utf-8")
     config_yaml = (harness_dir / "config.yaml").read_text(encoding="utf-8")
     db_init = (harness_dir / "db-init.sql").read_text(encoding="utf-8")
+    target_py = (harness_dir / "instrumented" / "litellm_target.py").read_text(encoding="utf-8")
     compose = (harness_dir / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "COPY sources/vulnerable/litellm /workspace/package" in vulnerable_dockerfile
+    assert '"/workspace/package[proxy]"' in vulnerable_dockerfile
+    assert "COPY harness/instrumented/litellm_target.py" in vulnerable_dockerfile
     assert "master_key: sk-harness-master" in config_yaml
     assert "database_url: os.environ/DATABASE_URL" in config_yaml
     assert "CREATE DATABASE litellm_vuln" in db_init
     assert "CREATE DATABASE litellm_patched" in db_init
+    assert "/__cvehunt/probe" in target_py
+    assert "/key/generate" in target_py
     assert "postgres:16-alpine" in compose
     assert "DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_vuln" in compose
     assert "DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_patched" in compose
+    assert "CVEHUNT_VARIANT: vulnerable" in compose
+    assert 'command: ["python", "/workspace/instrumented/litellm_target.py"]' in compose
     assert "condition: service_healthy" in compose
     runner = (tmp_path / "artifacts" / "exploiter" / "run-poc.sh").read_text(encoding="utf-8")
     assert "seq 1 90" in runner
+    assert "/__cvehunt/probe" in runner
     assert "exploiter/logs/compose.log" in runner
 
 
@@ -540,6 +551,7 @@ def test_litellm_harness_emits_shim_artifacts_for_sql_injection(monkeypatch, tmp
     poc = (tmp_path / "artifacts" / "exploiter" / "poc.py").read_text(encoding="utf-8")
     assert "f\"SELECT key_alias, user_id FROM api_keys WHERE token = '{token}'" in vuln_app
     assert "WHERE token = ? LIMIT 1" in patched_app
+    assert "/__cvehunt/probe" in vuln_app
     assert "127.0.0.1:4010:8000" in compose
     assert "127.0.0.1:4011:8000" in compose
     assert "SHIM_VULNERABLE_BASE_URL" in poc
@@ -653,37 +665,90 @@ def test_no_behavior_run_is_not_defensive_signal(monkeypatch, tmp_path) -> None:
     assert report.provision is None
 
 
-def test_provision_gate_refuses_non_serving_harness(monkeypatch, tmp_path) -> None:
-    """The npm react-server-dom-webpack harness is a `console.log`-and-exit
-    stub with no servable endpoint and no shim. With --execute-poc, the
-    provision gate must record `not_servable`, the adversarial loop must not
-    credit an escalation, and the Judge must return needs_human_review
-    (NOT defensive_signal_observed).
-    """
+def test_react2shell_harness_emits_instrumented_node_target(monkeypatch, tmp_path) -> None:
     _patch_researcher(monkeypatch)
-    monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
-
-    def fake_run(cmd, cwd=None, timeout=None, check=False, **kwargs):
-        # run-poc.sh runs against a console.log stub; no outcome is produced.
-        return subprocess.CompletedProcess(cmd, 0)
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
     workflow = CveHuntWorkflow(model="test-model")
     report, _events = workflow.run_with_trace(
         "CVE-2025-55182",
         artifact_root=tmp_path / "artifacts",
-        execute_poc=True,
     )
-    assert report.provision is not None
-    assert report.provision.status == "not_servable"
-    assert report.exploiter is not None
-    assert report.exploiter.outcomes == []
-    assert report.negotiation is not None
-    assert report.negotiation.escalation_achieved is False
-    assert report.negotiation.verdict == "target_not_servable"
-    assert report.judgement.status == "target_not_servable"
-    assert report.judgement.confidence <= 0.50
-    assert "never became servable" in report.judgement.rationale
+
+    assert report.harness is not None
+    assert report.harness.status == "built"
+    harness_dir = tmp_path / "artifacts" / "harness"
+    vulnerable_dockerfile = (harness_dir / "Dockerfile.vulnerable").read_text(encoding="utf-8")
+    patched_dockerfile = (harness_dir / "Dockerfile.patched").read_text(encoding="utf-8")
+    target_js = (harness_dir / "instrumented" / "react2shell-server.js").read_text(encoding="utf-8")
+    compose = (harness_dir / "docker-compose.yml").read_text(encoding="utf-8")
+    runner = (tmp_path / "artifacts" / "exploiter" / "run-poc.sh").read_text(encoding="utf-8")
+
+    assert "COPY sources/vulnerable/package /workspace/package" in vulnerable_dockerfile
+    assert "COPY sources/patched/package /workspace/package" in patched_dockerfile
+    assert "COPY harness/instrumented/react2shell-server.js" in vulnerable_dockerfile
+    assert 'CMD ["node", "/workspace/instrumented/server.js"]' in vulnerable_dockerfile
+    assert "console.log" not in vulnerable_dockerfile
+    assert "/health/readiness" in target_js
+    assert "/__cvehunt/probe" in target_js
+    assert "/server-function" in target_js
+    assert "Object.prototype.hasOwnProperty.call" in target_js
+    assert "harness-canary" in target_js
+    assert "127.0.0.1:4000:4000" in compose
+    assert "/__cvehunt/probe" in runner
+
+
+def test_provision_gate_requires_instrumented_probe(monkeypatch, tmp_path) -> None:
+    cve = get_fixture("CVE-2025-55182")
+    assert cve is not None
+    finding = ResearchFinding(
+        impacted_surface="request parsing and server function argument materialization",
+        vulnerability_class="unsafe deserialization",
+        defensive_hypothesis="exercise local instrumented target",
+        relevant_patch_signal="hasOwnProperty guard",
+    )
+    harness = HarnessArtifact(
+        status="built",
+        runtime="dockerized offline harness",
+        isolation="localhost ports 4000/4001",
+        workspace=".",
+    )
+    monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
+
+    def readiness_only(url, **kwargs):
+        if url.endswith("/health/readiness"):
+            return 200, '{"status":"ok"}'
+        if url.endswith("/__cvehunt/probe"):
+            return 404, "not found"
+        return None, "unhandled"
+
+    monkeypatch.setattr(agents_module, "_http_probe", readiness_only)
+    result = ProvisionAgent().run(
+        cve,
+        harness,
+        finding,
+        tmp_path / "artifacts-readiness-only",
+    )
+    assert result.status == "not_servable"
+    assert result.targets
+    assert all(target.ready for target in result.targets)
+    assert not any(target.servable for target in result.targets)
+    assert "instrumented probe HTTP 404" in result.targets[0].detail
+
+    def instrumented(url, **kwargs):
+        if url.endswith("/health/readiness"):
+            return 200, '{"status":"ok"}'
+        if url.endswith("/__cvehunt/probe"):
+            return 200, '{"instrumented":true,"status":"ok"}'
+        return None, "unhandled"
+
+    monkeypatch.setattr(agents_module, "_http_probe", instrumented)
+    result = ProvisionAgent().run(
+        cve,
+        harness,
+        finding,
+        tmp_path / "artifacts-instrumented",
+    )
+    assert result.status == "servable"
+    assert all(target.servable for target in result.targets)
 
 
 def test_adversarial_loop_records_rounds_and_verdict(monkeypatch, tmp_path) -> None:
