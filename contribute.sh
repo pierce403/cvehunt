@@ -40,6 +40,8 @@ Environment overrides:
   CVEHUNT_EXECUTE_POC=0 Generate artifacts without building/running the target harness
   CVEHUNT_SKIP_MODEL=1  Skip the external model evaluation stage
   CVEHUNT_MODEL_TIMEOUT=600  Timeout in seconds for external model evaluation
+  CVEHUNT_MODEL_PROGRESS=0  Disable live external model progress output
+  CVEHUNT_MODEL_PROGRESS_INTERVAL=15  Seconds between progress updates
   CVEHUNT_BASE_PORT=4000  Base localhost port; patched uses base+1
   CVEHUNT_RESIDUAL_ROUNDS=3  Adversarial residual rounds vs a freshly-started patched target (default 3 when --execute-poc is on; 0 disables)
   CVEHUNT_ISOLATION_BACKEND=docker|external-vm|firecracker|qemu
@@ -566,6 +568,147 @@ run_with_optional_timeout() {
   fi
 }
 
+start_model_progress_monitor() {
+  local harness="$1"
+  local attempt_dir="$2"
+  local stream_path="$3"
+  local stderr_path="$4"
+  local interval="${CVEHUNT_MODEL_PROGRESS_INTERVAL:-15}"
+  if [[ "${CVEHUNT_MODEL_PROGRESS:-1}" == "0" ]]; then
+    CVEHUNT_MODEL_PROGRESS_PID=""
+    return
+  fi
+  python3 - "$harness" "$attempt_dir" "$stream_path" "$stderr_path" "$interval" <<'PY' &
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+harness = sys.argv[1]
+attempt_dir = Path(sys.argv[2])
+stream_path = Path(sys.argv[3])
+stderr_path = Path(sys.argv[4])
+try:
+    interval = max(3.0, float(sys.argv[5]))
+except Exception:
+    interval = 15.0
+started = time.monotonic()
+last_line = ""
+
+
+def fmt_bytes(size: int) -> str:
+    if size < 1024:
+        return f"{size}B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f}KB"
+    return f"{size / (1024 * 1024):.1f}MB"
+
+
+def tail_text(path: Path, limit: int = 1_000_000) -> str:
+    if not path.exists():
+        return ""
+    size = path.stat().st_size
+    with path.open("rb") as handle:
+        if size > limit:
+            handle.seek(size - limit)
+            handle.readline()
+        data = handle.read()
+    return data.decode("utf-8", errors="replace")
+
+
+def summarize_pi() -> tuple[str, str]:
+    size = stream_path.stat().st_size if stream_path.exists() else 0
+    err_size = stderr_path.stat().st_size if stderr_path.exists() else 0
+    latest_type = "waiting"
+    assistant_len = 0
+    thinking_len = 0
+    tokens = "pending"
+    snippet = ""
+    lines = [line.strip() for line in tail_text(stream_path).splitlines() if line.strip().startswith("{")]
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except Exception:
+            continue
+        latest_type = str(ev.get("type") or latest_type)
+        msg = None
+        if ev.get("type") == "message_end":
+            msg = ev.get("message")
+        elif ev.get("type") == "message_update":
+            am = ev.get("assistantMessageEvent") or {}
+            msg = am.get("partial") or am.get("message")
+        elif ev.get("type") == "assistantMessageEvent":
+            msg = ev.get("partial") or ev.get("message")
+        if not isinstance(msg, dict):
+            continue
+        usage = msg.get("usage")
+        if isinstance(usage, dict) and usage.get("totalTokens"):
+            tokens = str(usage.get("totalTokens"))
+        if msg.get("role") != "assistant":
+            continue
+        for chunk in msg.get("content", []) or []:
+            if not isinstance(chunk, dict):
+                continue
+            if chunk.get("type") == "text" and chunk.get("text"):
+                text = str(chunk["text"])
+                if len(text) >= assistant_len:
+                    assistant_len = len(text)
+                    snippet = " ".join(text[-240:].split())
+            elif chunk.get("type") == "thinking" and chunk.get("thinking"):
+                thinking_len = max(thinking_len, len(str(chunk["thinking"])))
+    summary = (
+        f"ndjson={fmt_bytes(size)} stderr={fmt_bytes(err_size)} "
+        f"latest={latest_type} assistant={assistant_len} chars "
+        f"reasoning={thinking_len} chars tokens={tokens}"
+    )
+    return summary, snippet
+
+
+def summarize_text() -> tuple[str, str]:
+    size = stream_path.stat().st_size if stream_path.exists() else 0
+    err_size = stderr_path.stat().st_size if stderr_path.exists() else 0
+    text = tail_text(stream_path, limit=32_000)
+    snippet = " ".join(text[-240:].split())
+    summary = f"transcript={fmt_bytes(size)} stderr={fmt_bytes(err_size)}"
+    return summary, snippet
+
+
+print(
+    f"Model progress monitor: watching {stream_path.relative_to(attempt_dir.parent)} "
+    f"every {interval:g}s (set CVEHUNT_MODEL_PROGRESS=0 to disable)",
+    flush=True,
+)
+while True:
+    elapsed = int(time.monotonic() - started)
+    try:
+        summary, snippet = summarize_pi() if harness == "pi" else summarize_text()
+    except Exception as exc:
+        summary, snippet = f"waiting for stream ({exc})", ""
+    line = f"Model progress [{harness} {elapsed}s]: {summary}"
+    if snippet:
+        line += f' | latest: "{snippet}"'
+    if line != last_line:
+        print(line, flush=True)
+        last_line = line
+    time.sleep(interval)
+PY
+  CVEHUNT_MODEL_PROGRESS_PID="$!"
+}
+
+stop_model_progress_monitor() {
+  local pid="${CVEHUNT_MODEL_PROGRESS_PID:-}"
+  if [[ -n "$pid" ]]; then
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill "$pid" >/dev/null 2>&1 || true
+      wait "$pid" >/dev/null 2>&1 || true
+    fi
+  fi
+  CVEHUNT_MODEL_PROGRESS_PID=""
+}
+
 preflight_isolation_dependencies() {
   local backend="${CVEHUNT_ISOLATION_BACKEND:-docker}"
   local execute_poc="${CVEHUNT_EXECUTE_POC:-0}"
@@ -953,10 +1096,12 @@ run_model_attempt() {
           pi_thinking_args=(--thinking "$pi_thinking")
         fi
         printf 'pi -p --no-tools --no-session --mode json %s --model %q < prompt.md\n' "${pi_thinking_args[*]:-}" "$model" > "$command_path"
+        start_model_progress_monitor "$harness" "$attempt_dir" "$ndjson_path" "$stderr_path"
         set +e
         run_with_optional_timeout "$timeout_seconds" pi -p --no-tools --no-session --mode json "${pi_thinking_args[@]}" --model "$model" "$prompt_text" > "$ndjson_path" 2> "$stderr_path"
         exit_code=$?
         set -e
+        stop_model_progress_monitor
         # Parse the NDJSON event stream into a human-readable transcript + response
         # (assistant text) so the CVEHUNT_FILE extractor still works unchanged, and
         # capture the final per-message usage block as usage.json for token accounting.
@@ -1035,10 +1180,12 @@ PIPY
         echo "codex command missing" > "$stderr_path"
       else
         printf 'codex exec --model %q --sandbox read-only --cd %q --output-last-message response.md - < prompt.md\n' "$model" "$run_dir" > "$command_path"
+        start_model_progress_monitor "$harness" "$attempt_dir" "$transcript_path" "$stderr_path"
         set +e
         run_with_optional_timeout "$timeout_seconds" codex exec --model "$model" --sandbox read-only --skip-git-repo-check --cd "$run_dir" --output-last-message "$PWD/$response_path" - < "$prompt_path" > "$transcript_path" 2> "$stderr_path"
         exit_code=$?
         set -e
+        stop_model_progress_monitor
         if [[ ! -s "$response_path" ]]; then
           cp "$transcript_path" "$response_path"
         fi
@@ -1051,10 +1198,12 @@ PIPY
         echo "gemini command missing" > "$stderr_path"
       else
         printf 'gemini --model %q --approval-mode plan --prompt <prompt>\n' "$model" > "$command_path"
+        start_model_progress_monitor "$harness" "$attempt_dir" "$transcript_path" "$stderr_path"
         set +e
         run_with_optional_timeout "$timeout_seconds" gemini --model "$model" --approval-mode plan --prompt "$prompt_text" > "$transcript_path" 2> "$stderr_path"
         exit_code=$?
         set -e
+        stop_model_progress_monitor
         cp "$transcript_path" "$response_path"
       fi
       ;;
@@ -1065,10 +1214,12 @@ PIPY
         echo "claude command missing" > "$stderr_path"
       else
         printf 'claude --model %q --print <prompt>\n' "$model" > "$command_path"
+        start_model_progress_monitor "$harness" "$attempt_dir" "$transcript_path" "$stderr_path"
         set +e
         run_with_optional_timeout "$timeout_seconds" claude --model "$model" --print "$prompt_text" > "$transcript_path" 2> "$stderr_path"
         exit_code=$?
         set -e
+        stop_model_progress_monitor
         cp "$transcript_path" "$response_path"
       fi
       ;;
