@@ -157,6 +157,7 @@ def render_markdown(report: WorkflowReport) -> str:
         f"CVSS: {cve['cvss'] if cve['cvss'] is not None else 'unknown'}",
         f"KEV: {'yes' if cve['kev'] else 'no'}",
         f"Ecosystem: {cve['ecosystem']}",
+        f"CWE: {', '.join(cve.get('cwes') or []) or 'unknown'}",
         f"Run ID: {run['run_id']}",
         f"Model: {run['model']}",
         f"Run score: {run_score['score']}/{run_score['max_score']} ({run_score['percent']:.2f}%)",
@@ -178,6 +179,14 @@ def render_markdown(report: WorkflowReport) -> str:
         f"- Defensive hypothesis: {finding['defensive_hypothesis']}",
         f"- Patch signal: {finding['relevant_patch_signal']}",
     ]
+    if cve.get("references"):
+        lines.extend(
+            [
+                "References:",
+                *[f"- {reference}" for reference in cve["references"][:8]],
+                "",
+            ]
+        )
     if finding["changed_files"]:
         lines.extend(
             [

@@ -119,7 +119,8 @@ def test_known_cve_produces_defensive_signal(monkeypatch, tmp_path) -> None:
     assert any("127.0.0.1" in note for note in report.judgement.safety_notes)
 
 
-def test_unknown_cve_is_not_supported(tmp_path) -> None:
+def test_unknown_cve_is_not_supported(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(agents_module, "fetch_cve", lambda cve_id: None)
     report, _events = CveHuntWorkflow().run_with_trace(
         "CVE-2099-0001",
         artifact_root=tmp_path / "artifacts",
@@ -356,6 +357,59 @@ def test_linux_kernel_cve_selects_qemu_and_requests_artifacts(tmp_path) -> None:
     )
     assert provision["status"] == "blocked_needs_artifact"
     assert "vulnerable_kernel_image" in provision["missing_artifacts"]
+
+
+def test_chromium_v8_cve_selects_browser_engine_contract(tmp_path) -> None:
+    workflow = CveHuntWorkflow()
+    cve = CveRecord(
+        cve_id="CVE-2099-0110",
+        name="Google Chrome / Chromium V8",
+        summary=(
+            "Out of bounds read and write in V8 in Google Chrome prior to "
+            "149.0.7827.103 allowed a remote attacker to execute arbitrary code "
+            "inside a sandbox via a crafted HTML page."
+        ),
+        cvss=8.8,
+        disclosed="2099-02-10",
+        ecosystem="chromium",
+        vulnerable_versions=["google chrome < 149.0.7827.103"],
+        patched_versions=["google chrome 149.0.7827.103"],
+        kev=True,
+        references=[
+            "https://chromereleases.googleblog.com/example",
+            "https://issues.chromium.org/issues/123",
+        ],
+        cwes=["CWE-125", "CWE-787"],
+    )
+    report, _events = workflow.run_with_trace(
+        "CVE-2099-0110",
+        cve_record=cve,
+        artifact_root=tmp_path / "artifacts",
+        execute_poc=True,
+    )
+
+    assert report.finding.vulnerability_class == "memory corruption"
+    assert report.harness is not None
+    assert report.harness.status == "blocked_needs_artifact"
+    assert report.provision is not None
+    assert report.provision.status == "blocked_needs_artifact"
+    assert report.judgement.status == "blocked_needs_artifact"
+    harness_dir = tmp_path / "artifacts" / "harness"
+    target_env = json.loads((harness_dir / "target-environment.json").read_text(encoding="utf-8"))
+    setup_md = (harness_dir / "SETUP.md").read_text(encoding="utf-8")
+    qemu_target = json.loads((harness_dir / "qemu" / "target.json").read_text(encoding="utf-8"))
+
+    assert target_env["target_class"] == "browser_engine"
+    assert target_env["backend"] == "qemu_vm"
+    assert target_env["instrumentation"]["engine"] == "qemu_browser_engine_trace"
+    assert "chromium_or_v8_checkout" in target_env["missing_artifacts"]
+    assert "vulnerable_engine_revision" in target_env["missing_artifacts"]
+    assert "patched_engine_revision" in target_env["missing_artifacts"]
+    assert "browser_guest_image" in target_env["missing_artifacts"]
+    assert qemu_target["guest_os"] == "linux-desktop"
+    assert target_env["cve"]["references"] == cve.references
+    assert "depot_tools" in setup_md
+    assert "https://issues.chromium.org/issues/123" in setup_md
 
 
 def test_windows_driver_cve_requests_vm_and_driver_installers(tmp_path) -> None:

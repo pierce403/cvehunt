@@ -34,6 +34,7 @@ from cvehunt.models import (
     ValidationCheck,
     ValidationPlan,
 )
+from cvehunt.nvd import fetch_cve
 
 
 class SafetyPolicy:
@@ -74,6 +75,13 @@ class CollectorAgent:
     def collect(self, cve_id: str) -> CveRecord:
         record = get_fixture(cve_id)
         if record is None:
+            if os.environ.get("CVEHUNT_OFFLINE", "").lower() not in {"1", "true", "yes"}:
+                try:
+                    live_record = fetch_cve(cve_id)
+                except Exception:
+                    live_record = None
+                if live_record is not None:
+                    return live_record
             return CveRecord(
                 cve_id=cve_id.upper(),
                 name="Unknown",
@@ -141,6 +149,31 @@ class ResearcherAgent:
                     "captures the same input-validation boundary."
                 ),
                 "Look for caller-supplied values being passed as separate query parameters.",
+            )
+        if any(
+            token in normalized
+            for token in (
+                "out of bounds",
+                "out-of-bounds",
+                "heap overflow",
+                "buffer overflow",
+                "type confusion",
+                "use-after-free",
+                "memory corruption",
+                "v8",
+                "chromium",
+                "google chrome",
+            )
+        ):
+            return (
+                "memory corruption",
+                "browser JavaScript engine / renderer process",
+                (
+                    "Resolve the vulnerable and fixed Chromium/V8 revisions from the "
+                    "advisory references, build isolated engine or browser targets, "
+                    "and use crash or behavioral instrumentation before claiming exploitability."
+                ),
+                "Look for the Chromium/V8 change that adds bounds, type, or lifetime checks on the affected path.",
             )
         return (
             "unknown",
@@ -2712,6 +2745,8 @@ def _target_backend_plan(
             finding.impacted_surface,
             " ".join(cve.vulnerable_versions),
             " ".join(cve.patched_versions),
+            " ".join(getattr(cve, "references", [])),
+            " ".join(getattr(cve, "cwes", [])),
         ]
     ).lower()
     if sources.status == "materialized" and cve.ecosystem in {"npm", "pypi"}:
@@ -2753,6 +2788,91 @@ def _target_backend_plan(
                     "The agent responsible for target setup must author the runtime plan "
                     "and instrumentation inside this run directory. CVEHunt does not "
                     "embed CVE- or package-specific wrapper code in the repository."
+                ),
+            },
+        )
+    if (
+        any(token in text for token in ("v8", "google chrome", "chromium"))
+        and any(
+            token in text
+            for token in (
+                "out of bounds",
+                "out-of-bounds",
+                "type confusion",
+                "use-after-free",
+                "memory corruption",
+                "cwe-125",
+                "cwe-787",
+            )
+        )
+    ):
+        return _backend_plan(
+            target_class="browser_engine",
+            backend="qemu_vm",
+            reason=(
+                "Chromium/V8 memory-safety targets need a reproducible engine or "
+                "browser build plus VM isolation for renderer/sandbox behavior."
+            ),
+            safety_boundary=(
+                "QEMU Linux desktop or builder VM with snapshot/rollback; never exercise "
+                "browser memory-corruption primitives in the host browser."
+            ),
+            required_artifacts=[
+                _required_artifact(
+                    "chromium_or_v8_checkout",
+                    "Run-local Chromium or V8 source checkout containing vulnerable and patched revisions.",
+                    how_to_supply=(
+                        "The setup agent should fetch public source with depot_tools into "
+                        "harness/artifacts/source/ inside this run directory."
+                    ),
+                ),
+                _required_artifact(
+                    "vulnerable_engine_revision",
+                    "Exact vulnerable Chromium/V8 revision or release tag resolved from advisory references.",
+                    how_to_supply=(
+                        "Record the revision in harness/artifacts/revisions.json after resolving "
+                        "Chrome release notes, Chromium issue links, or source tags."
+                    ),
+                ),
+                _required_artifact(
+                    "patched_engine_revision",
+                    "Exact patched Chromium/V8 revision or release tag used for the comparison target.",
+                    how_to_supply=(
+                        "Record the fixed revision in harness/artifacts/revisions.json and build it "
+                        "beside the vulnerable revision."
+                    ),
+                ),
+                _required_artifact(
+                    "browser_guest_image",
+                    "Disposable Linux desktop or minimal builder guest image for QEMU execution.",
+                    how_to_supply=(
+                        "Create or place a qcow2 image at harness/artifacts/browser-guest.qcow2; "
+                        "source/build artifacts must remain under the run directory."
+                    ),
+                ),
+                _required_artifact(
+                    "engine_build_dependencies",
+                    "depot_tools, ninja/gn toolchain, and runtime libraries needed to build d8/headless Chromium.",
+                    required=False,
+                    how_to_supply="Install inside the disposable guest or record package bootstrap steps in harness/artifacts/setup-notes.md.",
+                ),
+            ],
+            qemu=_qemu_profile("x86_64", guest_os="linux-desktop", needs_kvm=True),
+            instrumentation={
+                "engine": "qemu_browser_engine_trace",
+                "signals": [
+                    "serial_console",
+                    "qmp_events",
+                    "d8_crash_oracle",
+                    "headless_chromium_logs",
+                    "browser_automation_logs",
+                    "optional_icicle_or_tcg_trace",
+                ],
+                "public_source_expected": True,
+                "functional_oracle": (
+                    "A crafted HTML or d8 testcase produces the CVE-described crash, "
+                    "memory-safety signal, or controlled behavior on the vulnerable build "
+                    "and is absent on the patched build."
                 ),
             },
         )
@@ -3172,6 +3292,14 @@ def _target_environment_spec(
     return {
         "schema_version": 2,
         "cve_id": cve.cve_id,
+        "cve": {
+            "name": cve.name,
+            "summary": cve.summary,
+            "references": getattr(cve, "references", []),
+            "cwes": getattr(cve, "cwes", []),
+            "kev": cve.kev,
+            "known_exploitation_window": cve.known_exploitation_window,
+        },
         "target_class": backend_plan["target_class"],
         "backend": backend,
         "backend_reason": backend_plan["reason"],
@@ -3334,6 +3462,16 @@ def _target_spec_entry(
 def _non_docker_target_entries(backend_plan: dict[str, object]) -> list[dict[str, object]]:
     target_class = str(backend_plan["target_class"])
     backend = str(backend_plan["backend"])
+    shared_artifact_ids = {
+        "guest_rootfs",
+        "node_rootfs",
+        "firmware_image",
+        "windows_base_image",
+        "desktop_guest_image",
+        "browser_guest_image",
+        "chromium_or_v8_checkout",
+        "engine_build_dependencies",
+    }
     readiness = {
         "method": "backend-specific",
         "expected": "guest boot plus declared instrumentation signal",
@@ -3359,7 +3497,7 @@ def _non_docker_target_entries(backend_plan: dict[str, object]) -> list[dict[str
                 artifact["id"]
                 for artifact in backend_plan.get("required_artifacts", [])
                 if "vulnerable" in str(artifact.get("id", ""))
-                or artifact.get("id") in {"guest_rootfs", "node_rootfs", "firmware_image", "windows_base_image", "desktop_guest_image"}
+                or artifact.get("id") in shared_artifact_ids
             ],
             "readiness_probe": readiness,
             "instrumented_probe": backend_plan["instrumentation"],
@@ -3375,7 +3513,7 @@ def _non_docker_target_entries(backend_plan: dict[str, object]) -> list[dict[str
                 artifact["id"]
                 for artifact in backend_plan.get("required_artifacts", [])
                 if "patched" in str(artifact.get("id", ""))
-                or artifact.get("id") in {"guest_rootfs", "node_rootfs", "firmware_image", "windows_base_image", "desktop_guest_image"}
+                or artifact.get("id") in shared_artifact_ids
             ],
             "readiness_probe": readiness,
             "instrumented_probe": backend_plan["instrumentation"],
@@ -3385,6 +3523,7 @@ def _non_docker_target_entries(backend_plan: dict[str, object]) -> list[dict[str
 
 
 def _target_environment_setup_markdown(spec: dict[str, object]) -> str:
+    cve = dict(spec.get("cve") or {})
     package = dict(spec["package"])
     finding = dict(spec["finding"])
     deployment = dict(spec["deployment"])
@@ -3409,44 +3548,59 @@ def _target_environment_setup_markdown(spec: dict[str, object]) -> str:
         f"- Instrumentation engine: {instrumentation.get('engine')}",
         f"- Missing required artifacts: {', '.join(str(item) for item in missing_artifacts) or 'none'}",
         "",
-        "## Dynamic Instrumentation Contract",
+        "## CVE Context",
         "",
-        "CVEHunt does not embed package- or CVE-specific target wrappers in the repository.",
-        "The setup agent for this run must author target instrumentation in the run directory.",
-        f"- Runtime plan: `{dynamic_contract.get('runtime_plan', 'harness/agent-target.json')}`",
-        f"- Runtime driver: `{dynamic_contract.get('runtime_driver', 'harness/agent-runtime.sh')}`",
-        f"- Model plan artifact: `{dynamic_contract.get('model_attempt_plan', 'model_attempt/target_plan.json')}`",
-        f"- Model setup runbook: `{dynamic_contract.get('model_attempt_runbook', 'model_attempt/target_setup.md')}`",
-        "- If the target needs proprietary installers, VM images, firmware, kernels, licenses, or symbols, record the exact missing artifact request instead of inventing setup.",
-        "- A target that only builds, boots, or logs a ready message is not servable until readiness, instrumentation, and a functional oracle all work.",
-        "",
-        "## Package",
-        "",
-        f"- Ecosystem: {package.get('ecosystem')}",
-        f"- Package: {package.get('name')}",
-        f"- Vulnerable version: {package.get('vulnerable_version')}",
-        f"- Patched version: {package.get('patched_version')}",
-        f"- Vulnerable source: `{package.get('vulnerable_source_root')}`",
-        f"- Patched source: `{package.get('patched_source_root')}`",
-        f"- Source diff: `{package.get('source_diff')}`",
-        "",
-        "## Vulnerability Surface",
-        "",
-        f"- Class: {finding.get('vulnerability_class')}",
-        f"- Surface: {finding.get('impacted_surface')}",
-        f"- Patch signal: {finding.get('patch_signal')}",
-        "",
-        "## Commands",
-        "",
-        f"- Build: `{commands.get('build')}`",
-        f"- Start and probe: `{commands.get('up')}`",
-        f"- Re-probe running targets: `{commands.get('probe')}`",
-        f"- Logs: `{commands.get('logs')}`",
-        f"- Stop: `{commands.get('down')}`",
-        "",
-        "## Targets",
-        "",
+        f"- Name: {cve.get('name') or 'unknown'}",
+        f"- Summary: {cve.get('summary') or 'unknown'}",
+        f"- CWE: {', '.join(cve.get('cwes') or []) or 'unknown'}",
+        f"- KEV: {'yes' if cve.get('kev') else 'no'}",
     ]
+    references = cve.get("references") or []
+    if references:
+        lines.extend(["- References:"])
+        lines.extend(f"  - {reference}" for reference in references[:8])
+    lines.extend(
+        [
+            "",
+            "## Dynamic Instrumentation Contract",
+            "",
+            "CVEHunt does not embed package- or CVE-specific target wrappers in the repository.",
+            "The setup agent for this run must author target instrumentation in the run directory.",
+            f"- Runtime plan: `{dynamic_contract.get('runtime_plan', 'harness/agent-target.json')}`",
+            f"- Runtime driver: `{dynamic_contract.get('runtime_driver', 'harness/agent-runtime.sh')}`",
+            f"- Model plan artifact: `{dynamic_contract.get('model_attempt_plan', 'model_attempt/target_plan.json')}`",
+            f"- Model setup runbook: `{dynamic_contract.get('model_attempt_runbook', 'model_attempt/target_setup.md')}`",
+            "- If the target needs proprietary installers, VM images, firmware, kernels, licenses, or symbols, record the exact missing artifact request instead of inventing setup.",
+            "- A target that only builds, boots, or logs a ready message is not servable until readiness, instrumentation, and a functional oracle all work.",
+            "",
+            "## Package",
+            "",
+            f"- Ecosystem: {package.get('ecosystem')}",
+            f"- Package: {package.get('name')}",
+            f"- Vulnerable version: {package.get('vulnerable_version')}",
+            f"- Patched version: {package.get('patched_version')}",
+            f"- Vulnerable source: `{package.get('vulnerable_source_root')}`",
+            f"- Patched source: `{package.get('patched_source_root')}`",
+            f"- Source diff: `{package.get('source_diff')}`",
+            "",
+            "## Vulnerability Surface",
+            "",
+            f"- Class: {finding.get('vulnerability_class')}",
+            f"- Surface: {finding.get('impacted_surface')}",
+            f"- Patch signal: {finding.get('patch_signal')}",
+            "",
+            "## Commands",
+            "",
+            f"- Build: `{commands.get('build')}`",
+            f"- Start and probe: `{commands.get('up')}`",
+            f"- Re-probe running targets: `{commands.get('probe')}`",
+            f"- Logs: `{commands.get('logs')}`",
+            f"- Stop: `{commands.get('down')}`",
+            "",
+            "## Targets",
+            "",
+        ]
+    )
     for target in targets:
         target_map = dict(target)
         readiness = dict(target_map.get("readiness_probe", {}))
