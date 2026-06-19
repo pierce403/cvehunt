@@ -12,7 +12,7 @@ from cvehunt.models import CveRecord
 NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 
-def fetch_cve(cve_id: str, *, timeout: float = 20) -> CveRecord | None:
+def fetch_cve(cve_id: str, *, timeout: float = 60) -> CveRecord | None:
     params = {"cveId": cve_id.upper()}
     payload = _fetch_payload(params, timeout=timeout)
     vulnerabilities = payload.get("vulnerabilities", [])

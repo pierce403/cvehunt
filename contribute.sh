@@ -767,11 +767,13 @@ Persistent harness targets for this run (loopback only; base_port={base_port}):
 {provision_block}
 
 Target setup contract:
+- Read `harness/target-environment.json` and `harness/SETUP.md` first; those are the authoritative first-three-phase setup instructions for this run.
 - Do not assume this repository has CVE-specific target wrappers. It should not.
 - If the current run did not produce a servable target, produce `target_plan.json` and `target_setup.md` describing exactly how to deploy the real vulnerable and patched targets inside the run directory.
 - If you can specify an executable runtime driver, describe it as `harness/agent-runtime.sh` in `target_plan.json`; do not require files under `/tmp` or any path outside this run directory.
 - If the target needs installer files, VM images, firmware, kernels, symbols, licenses, or proprietary media, ask for those exact artifacts instead of inventing setup.
 - A target only counts as servable when the real vulnerable/patched software exposes readiness, instrumentation, and a functional oracle. Synthetic substitute services do not count as exploitability proof.
+- For `target_class=browser_engine`, the expected setup is to resolve the fixing Chromium/V8 revision from advisory references, fetch public Chromium/V8 source into this run directory, build vulnerable and patched engine/browser targets, and expose a runner such as `harness/browser-run-candidate.sh` that loads the exploiter's HTML candidate (`exploiter/candidate.html`) in both variants and records the vulnerable/patched differential.
 
 YOUR PRIMARY DELIVERABLE: `poc.py` - a complete, self-contained, fully weaponized-for-loopback proof-of-concept that demonstrates the attacker capability this CVE makes reachable, against the harness above. This is not optional and not a panel discussion: if there is any reachable loopback surface that can be triggered, deliver it. The PoC will be executed against a fresh rebuild of this run's harness after you finish (see `cvehunt verify-model-poc`), so expect those URLs to be live at execution time.
 
@@ -851,6 +853,18 @@ Reason for refusal.
 
 ```markdown
 {read_excerpt('contribution_audit.md')}
+```
+
+## harness/target-environment.json
+
+```json
+{read_excerpt('harness/target-environment.json')}
+```
+
+## harness/SETUP.md
+
+```markdown
+{read_excerpt('harness/SETUP.md')}
 ```
 
 ## harness/README.md

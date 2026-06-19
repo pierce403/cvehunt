@@ -408,7 +408,22 @@ def test_chromium_v8_cve_selects_browser_engine_contract(tmp_path) -> None:
     assert "browser_guest_image" in target_env["missing_artifacts"]
     assert qemu_target["guest_os"] == "linux-desktop"
     assert target_env["cve"]["references"] == cve.references
+    assert [step["id"] for step in target_env["setup_playbook"]] == [
+        "resolve_fix_revision",
+        "fetch_public_source",
+        "checkout_vulnerable_and_patched",
+        "build_browser_targets",
+        "run_html_candidate",
+    ]
+    assert (
+        target_env["exploiter_candidate_contract"]["primary_input"]
+        == "exploiter/candidate.html"
+    )
+    assert target_env["exploiter_candidate_contract"]["runner"] == "harness/browser-run-candidate.sh"
     assert "depot_tools" in setup_md
+    assert "fetch --nohooks chromium" in setup_md
+    assert "exploiter/candidate.html" in setup_md
+    assert "harness/browser-run-candidate.sh" in setup_md
     assert "https://issues.chromium.org/issues/123" in setup_md
 
 
