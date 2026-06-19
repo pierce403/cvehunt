@@ -32,6 +32,40 @@ from cvehunt.storage import WorkdirStore
 from cvehunt.workflow import CveHuntWorkflow
 
 
+EXPECTED_AGENT_NOTE_SLUGS = [
+    "collector",
+    "researcher",
+    "harness-builder",
+    "exploiter",
+    "harness-runner",
+    "provision",
+    "adversarial-loop",
+    "fix-developer",
+    "validator",
+    "judge",
+]
+
+
+def _assert_run_notes(run_dir: Path) -> None:
+    notes_index = run_dir / "NOTES.md"
+    assert notes_index.exists()
+    index_text = notes_index.read_text(encoding="utf-8")
+    assert "# CVEHunt Run Notes" in index_text
+    assert "Collector" in index_text
+    assert "Harness Builder" in index_text
+    assert "Judge" in index_text
+
+    for slug in EXPECTED_AGENT_NOTE_SLUGS:
+        note_path = run_dir / "agent-notes" / slug / "NOTES.md"
+        assert note_path.exists(), slug
+        note_text = note_path.read_text(encoding="utf-8")
+        assert "Things Discovered" in note_text
+        assert "Things Tried" in note_text
+        assert "Things That Did Not Work / Blockers" in note_text
+        assert "Artifacts" in note_text
+        assert "Next Steps" in note_text
+
+
 def _patch_researcher(monkeypatch) -> None:
     def fake_research(self, cve, artifact_root: Path):
         vulnerable_root = artifact_root / "sources" / "vulnerable" / "package"
@@ -182,6 +216,7 @@ def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:
     assert (run_dir / "report.json").exists()
     assert (run_dir / "report.md").exists()
     assert (run_dir / "pipeline_status.json").exists()
+    _assert_run_notes(run_dir)
     assert (run_dir / "research" / "source_diff.patch").exists()
     assert (run_dir / "harness" / "README.md").exists()
     assert (run_dir / "harness" / "SETUP.md").exists()
@@ -220,6 +255,7 @@ def test_default_artifact_root_is_run_directory(monkeypatch, tmp_path) -> None:
 
     expected = Path("cves") / "CVE-2025-55182" / "runs" / report.run.run_id
     assert workflow.last_artifact_root == expected
+    _assert_run_notes(tmp_path / expected)
     assert (tmp_path / expected / "research" / "source_diff.patch").exists()
     assert (tmp_path / expected / "harness" / "target-environment.json").exists()
     assert report.run.model == "test-model"
