@@ -158,6 +158,7 @@ def render_markdown(report: WorkflowReport) -> str:
         f"KEV: {'yes' if cve['kev'] else 'no'}",
         f"Ecosystem: {cve['ecosystem']}",
         f"CWE: {', '.join(cve.get('cwes') or []) or 'unknown'}",
+        f"Metadata source: {cve.get('metadata_source') or 'unspecified'}",
         f"Run ID: {run['run_id']}",
         f"Model: {run['model']}",
         f"Run score: {run_score['score']}/{run_score['max_score']} ({run_score['percent']:.2f}%)",

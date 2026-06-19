@@ -427,6 +427,48 @@ def test_chromium_v8_cve_selects_browser_engine_contract(tmp_path) -> None:
     assert "https://issues.chromium.org/issues/123" in setup_md
 
 
+def test_collector_metadata_drives_browser_engine_contract(monkeypatch, tmp_path) -> None:
+    cve = CveRecord(
+        cve_id="CVE-2026-11645",
+        name="Google Chrome / Chromium V8",
+        summary=(
+            "Out of bounds read and write in V8 in Google Chrome prior to "
+            "149.0.7827.103 allowed a remote attacker to execute arbitrary code "
+            "inside a sandbox via a crafted HTML page."
+        ),
+        cvss=8.8,
+        disclosed="2026-06-08",
+        ecosystem="chromium",
+        vulnerable_versions=["google chrome < 149.0.7827.103"],
+        patched_versions=["google chrome 149.0.7827.103"],
+        kev=True,
+        references=[
+            "https://chromereleases.googleblog.com/2026/06/stable-channel-update.html",
+            "https://issues.chromium.org/issues/506689381",
+        ],
+        cwes=["CWE-125", "CWE-787"],
+        metadata_source="cve_services",
+    )
+    monkeypatch.setattr(agents_module, "fetch_cve", lambda cve_id, timeout: cve)
+
+    report, _events = CveHuntWorkflow().run_with_trace(
+        "CVE-2026-11645",
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    assert report.cve.metadata_source == "cve_services"
+    assert report.finding.vulnerability_class == "memory corruption"
+    target_env = json.loads(
+        (tmp_path / "artifacts" / "harness" / "target-environment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert target_env["cve"]["metadata_source"] == "cve_services"
+    assert target_env["target_class"] == "browser_engine"
+    assert target_env["backend"] == "qemu_vm"
+    assert "chromium_or_v8_checkout" in target_env["missing_artifacts"]
+
+
 def test_windows_driver_cve_requests_vm_and_driver_installers(tmp_path) -> None:
     workflow = CveHuntWorkflow()
     cve = CveRecord(

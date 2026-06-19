@@ -94,6 +94,7 @@ class CollectorAgent:
                 ecosystem="unknown",
                 vulnerable_versions=[],
                 patched_versions=[],
+                metadata_source="missing",
             )
         return record
 
@@ -3392,6 +3393,7 @@ def _target_environment_spec(
             "summary": cve.summary,
             "references": getattr(cve, "references", []),
             "cwes": getattr(cve, "cwes", []),
+            "metadata_source": getattr(cve, "metadata_source", "unspecified"),
             "kev": cve.kev,
             "known_exploitation_window": cve.known_exploitation_window,
         },
@@ -3651,6 +3653,7 @@ def _target_environment_setup_markdown(spec: dict[str, object]) -> str:
         "",
         f"- Name: {cve.get('name') or 'unknown'}",
         f"- Summary: {cve.get('summary') or 'unknown'}",
+        f"- Metadata source: {cve.get('metadata_source') or 'unspecified'}",
         f"- CWE: {', '.join(cve.get('cwes') or []) or 'unknown'}",
         f"- KEV: {'yes' if cve.get('kev') else 'no'}",
     ]

@@ -38,6 +38,7 @@ class CveRecord:
     safe_fixture: dict[str, str] = field(default_factory=dict)
     references: list[str] = field(default_factory=list)
     cwes: list[str] = field(default_factory=list)
+    metadata_source: str = "unspecified"
 
 
 @dataclass(frozen=True)

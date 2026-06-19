@@ -23,6 +23,7 @@ FIXTURES: dict[str, CveRecord] = {
             "vulnerable_signal": "synthetic unsafe deserialization path reachable",
             "patched_signal": "synthetic own-property guard blocks traversal",
         },
+        metadata_source="fixture",
     ),
     "CVE-2022-42889": CveRecord(
         cve_id="CVE-2022-42889",
@@ -41,6 +42,7 @@ FIXTURES: dict[str, CveRecord] = {
             "vulnerable_signal": "synthetic dangerous lookup prefix accepted",
             "patched_signal": "synthetic dangerous lookup prefix rejected",
         },
+        metadata_source="fixture",
     ),
     "CVE-2026-42208": CveRecord(
         cve_id="CVE-2026-42208",
@@ -60,10 +62,10 @@ FIXTURES: dict[str, CveRecord] = {
             "vulnerable_signal": "synthetic concatenated SQL accepts a crafted Authorization header",
             "patched_signal": "synthetic parameterized query rejects the same crafted header",
         },
+        metadata_source="fixture",
     ),
 }
 
 
 def get_fixture(cve_id: str) -> CveRecord | None:
     return FIXTURES.get(cve_id.upper())
-
