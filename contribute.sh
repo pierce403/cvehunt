@@ -15,8 +15,8 @@ Options:
   --harness HARNESS        Agent harness label, same as CVEHUNT_HARNESS
   --model MODEL            Model name to record, same as CVEHUNT_MODEL
   --run-id RUN-ID          Preallocated run id, same as CVEHUNT_RUN_ID
-  --skip-install           Skip uv/npm dependency installation checks
-  --skip-build             Skip npm run build after the persisted run
+  --skip-install           Skip uv/pnpm dependency installation checks
+  --skip-build             Skip pnpm run build after the persisted run
   --skip-git               Skip automatic git commit/push and PR recommendation
   --dry-run                Print commands without running them
   --execute-poc            Build/run the localhost harness PoC with --execute-poc
@@ -33,8 +33,8 @@ Environment overrides:
   CVEHUNT_HARNESS   Agent harness label to record, for example codex or gemini
   CVEHUNT_MODEL     Model name to record; use the harness' real model slug
   CVEHUNT_RUN_ID    Preallocated run id under cves/<CVE>/runs
-  CVEHUNT_SKIP_INSTALL=1  Skip uv/npm dependency installation checks
-  CVEHUNT_SKIP_BUILD=1  Skip npm run build after the persisted run
+  CVEHUNT_SKIP_INSTALL=1  Skip uv/pnpm dependency installation checks
+  CVEHUNT_SKIP_BUILD=1  Skip pnpm run build after the persisted run
   CVEHUNT_SKIP_GIT=1    Skip automatic git commit/push and PR recommendation
   CVEHUNT_DRY_RUN=1     Print commands without running them
   CVEHUNT_EXECUTE_POC=0 Generate artifacts without building/running the target harness
@@ -504,15 +504,15 @@ ensure_project_dependencies() {
   fi
 
   if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
-    if ! has_command npm; then
-      echo "Missing required command for dashboard build: npm" >&2
+    if ! has_command pnpm; then
+      echo "Missing required command for dashboard build: pnpm" >&2
       echo "Set CVEHUNT_SKIP_BUILD=1 to run only the CVEHunt workflow." >&2
       exit 127
     fi
 
     if [[ ! -d "node_modules" ]]; then
-      if confirm "Node dependencies are not installed. Run npm install now?"; then
-        npm install
+      if confirm "Node dependencies are not installed. Run pnpm install now?"; then
+        pnpm install
       else
         echo "Skipping dashboard build because node dependencies are missing." >&2
         export CVEHUNT_SKIP_BUILD=1
@@ -1878,7 +1878,7 @@ main() {
       printf 'Would invoke external model evaluation via %q using model %q\n' "$harness" "$model"
     fi
     if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
-      echo "Would run: npm run build"
+      echo "Would run: pnpm run build"
     fi
     if [[ "${CVEHUNT_SKIP_GIT:-0}" != "1" ]]; then
       echo "Would commit CVEHunt artifacts, push the current contribution branch, and recommend a PR"
@@ -1928,7 +1928,7 @@ main() {
 
   if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
     echo "Regenerating dashboard data and docs"
-    npm run build
+    pnpm run build
   fi
 
   auto_commit_push_and_recommend_pr "$cve_id" "$model_label"

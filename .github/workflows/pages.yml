@@ -30,23 +30,28 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.1
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "23"
-          cache: npm
+          cache: pnpm
 
       - name: Install Python dependencies
         run: uv sync --dev
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Test
         run: uv run python -m pytest
 
       - name: Build site
-        run: npm run build
+        run: pnpm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

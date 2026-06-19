@@ -25,7 +25,7 @@ Clone your fork and install the Python and web dependencies:
 
 ```bash
 uv sync --dev
-npm install
+pnpm install
 ```
 
 ## Verify Before Opening A PR
@@ -34,7 +34,7 @@ Run the current verification steps from the repo root:
 
 ```bash
 uv run python -m pytest
-npm run build
+pnpm run build
 ```
 
 If you are changing the pipeline, also run at least one CVE end to end:
@@ -52,7 +52,7 @@ You can also use the interactive wrapper:
 ./contribute.sh --cve CVE-2025-55182 --harness codex --model gpt-5.5 --dry-run
 ```
 
-The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs the target-isolation preflight from `ISOLATION.md`, records runs as `<harness>:<model>`, syncs missing Python or Node project dependencies when prompted, runs `uv run cvehunt run ... --persist --json`, executes the Docker/Compose localhost harness by default unless `--skip-execute-poc` or `CVEHUNT_EXECUTE_POC=0` is set, invokes supported model CLIs afterward unless `--skip-model` or `CVEHUNT_SKIP_MODEL=1` is set, extracts safety-checked model-authored artifacts into `model_attempt/`, writes contribution audit artifacts, and rebuilds the public dashboard with `npm run build`. Every `CVEHUNT_*` environment override documented by `./contribute.sh --help` also has an equivalent CLI flag. Use `--base-port` / `CVEHUNT_BASE_PORT` if another local process already occupies the default 4000/4001 pair.
+The wrapper detects installed harness CLIs (`codex`, `gemini`, `claude`, `opencode`, or `pi`), validates model names when the harness exposes a local catalog, runs the target-isolation preflight from `ISOLATION.md`, records runs as `<harness>:<model>`, syncs missing Python or Node project dependencies when prompted, runs `uv run cvehunt run ... --persist --json`, executes the Docker/Compose localhost harness by default unless `--skip-execute-poc` or `CVEHUNT_EXECUTE_POC=0` is set, invokes supported model CLIs afterward unless `--skip-model` or `CVEHUNT_SKIP_MODEL=1` is set, extracts safety-checked model-authored artifacts into `model_attempt/`, writes contribution audit artifacts, and rebuilds the public dashboard with `pnpm run build`. Every `CVEHUNT_*` environment override documented by `./contribute.sh --help` also has an equivalent CLI flag. Use `--base-port` / `CVEHUNT_BASE_PORT` if another local process already occupies the default 4000/4001 pair.
 
 ## Model-Backed Runs
 
@@ -96,7 +96,7 @@ Include these details in your PR body:
 - the model label(s) you used
 - whether you are committing a new run directory
 - test results from `uv run python -m pytest`
-- build result from `npm run build`
+- build result from `pnpm run build`
 
 If the PR includes a new run, point reviewers at the run directory path, for example:
 

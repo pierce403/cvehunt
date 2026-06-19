@@ -1631,7 +1631,7 @@ class ModelPocVerifier:
         # recorded that NOTHING is servable (e.g. CVE-2025-55182's
         # console.log-stub harness). For such runs there is no live surface to
         # bring up — building the containers just wastes minutes on a hung
-        # `npm install` inside an offline container — and the correct outcome
+        # package install inside an offline container — and the correct outcome
         # is for the model PoC to probe the loopback ports and faithfully report
         # `vulnerable_triggered=False`. Always running the model PoC (below) keeps
         # the verdict honest about what the model authored and observed.
@@ -4480,7 +4480,7 @@ def _node_dockerfile(
             "WORKDIR /workspace",
             f"COPY {source_path} /workspace/package",
             "WORKDIR /workspace/package",
-            "RUN npm install --ignore-scripts --include=dev",
+            "RUN corepack enable && corepack prepare pnpm@10.34.1 --activate && pnpm install --ignore-scripts --prod=false",
             (
                 'CMD ["node", "-e", '
                 f'"console.log(\\"{variant} harness ready for {display_package} {display_version}\\")"'
