@@ -69,7 +69,12 @@ class WorkdirStore:
         directory = self.cve_dir(report.cve.cve_id)
         directory.mkdir(parents=True, exist_ok=True)
         run_directory = self.run_dir(report.cve.cve_id, report.run.run_id)
-        run_directory.mkdir(parents=True, exist_ok=False)
+        same_artifact_root = (
+            artifact_root is not None
+            and artifact_root.exists()
+            and artifact_root.resolve() == run_directory.resolve()
+        )
+        run_directory.mkdir(parents=True, exist_ok=same_artifact_root)
         pipeline_status = render_pipeline_status(report, events)
         report_path = self._write_run_artifacts(
             run_directory,
@@ -139,7 +144,8 @@ class WorkdirStore:
         artifact_root: Path | None = None,
     ) -> Path:
         if artifact_root is not None and artifact_root.exists():
-            self._copy_tree(artifact_root, directory)
+            if artifact_root.resolve() != directory.resolve():
+                self._copy_tree(artifact_root, directory)
         (directory / "cve.json").write_text(
             json.dumps(asdict(report.cve), indent=2),
             encoding="utf-8",

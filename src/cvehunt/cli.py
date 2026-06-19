@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from cvehunt.dashboard import serve_dashboard, write_dashboard
+from cvehunt.models import utc_run_id
 from cvehunt.nvd import fetch_recent_cves
 from cvehunt.reporting import render_markdown
 from cvehunt.storage import WorkdirStore
@@ -21,6 +22,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("cve_id", help="CVE identifier, for example CVE-2025-55182")
     run.add_argument("--json", action="store_true", help="Emit structured JSON")
     run.add_argument("--persist", action="store_true", help="Write report and trace to data dir")
+    run.add_argument(
+        "--run-id",
+        default=None,
+        help="Run directory id to use under cves/<CVE>/runs; defaults to current UTC time.",
+    )
     run.add_argument(
         "--model",
         default=None,
@@ -104,8 +110,11 @@ def main() -> None:
     if args.command == "run":
         cve = store.read_cve(args.cve_id)
         workflow = CveHuntWorkflow(model=_model_label(args.model), base_port=args.base_port)
+        run_id = args.run_id or utc_run_id()
+        artifact_root = store.run_dir(args.cve_id, run_id)
         report, events = workflow.run_with_trace(
-            args.cve_id, cve, execute_poc=args.execute_poc,
+            args.cve_id, cve, artifact_root=artifact_root, run_id=run_id,
+            execute_poc=args.execute_poc,
             residual_rounds=args.residual_rounds,
         )
         if args.persist:
@@ -120,7 +129,11 @@ def main() -> None:
         for record in records:
             store.write_cve(record)
             if args.run:
-                report, events = workflow.run_with_trace(record.cve_id, record)
+                run_id = utc_run_id()
+                artifact_root = store.run_dir(record.cve_id, run_id)
+                report, events = workflow.run_with_trace(
+                    record.cve_id, record, artifact_root=artifact_root, run_id=run_id
+                )
                 store.write_report(report, events, artifact_root=workflow.last_artifact_root)
         print(f"Synced {len(records)} CVEs into {store.cves_dir}")
     elif args.command == "dashboard":

@@ -71,6 +71,7 @@ npm run build
 - Keep agent outputs structured. Use plain strings only for human-facing summaries.
 - Preserve safety boundaries in tests when adding workflow behavior.
 - CVE workdirs are stored under `cves/<CVE-ID>/` and are versioned so the public dashboard can link to metadata, traces, and reports in GitHub.
+- Pipeline execution must allocate `cves/<CVE-ID>/runs/<RUN-ID>/` before phase 1 and write run-local artifacts there directly. Do not stage workflow, contribution, or harness files in `/tmp`; if a caller needs a scratch area, create it under the run directory.
 - Each persisted pipeline run should write `cve.json`, `trace.jsonl`, `pipeline_status.json`, `report.json`, and `report.md` under `cves/<CVE-ID>/runs/<RUN-ID>/`.
 - Every persisted run gets a `run_score` in `pipeline_status.json` and `report.md`; 100 requires a vulnerable-target PoC trigger, patched-target block, candidate fix, and candidate fix validation. Lower scores reflect partial progress through source acquisition, harnessing, PoC generation/execution, patch generation, and validation. Reaching 100 is itself not enough to be `defensive_signal_observed` if a residual bypass was later observed — the Judge honors the `NegotiationLog.residual_bypass` flag.
 - Root-level report artifacts under `cves/<CVE-ID>/` are reserved for fully successful end-to-end runs; incomplete runs stay archived under `runs/<RUN-ID>/`.

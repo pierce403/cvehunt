@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,8 +16,7 @@ from cvehunt.agents import (
     ResearcherAgent,
     ValidatorAgent,
 )
-from cvehunt.models import WorkflowReport
-from cvehunt.models import CveRecord, RunMetadata, TraceEvent
+from cvehunt.models import CveRecord, RunMetadata, TraceEvent, WorkflowReport
 
 
 def _now_iso() -> str:
@@ -103,13 +101,20 @@ class CveHuntWorkflow:
         cve_id: str,
         cve_record: CveRecord | None = None,
         artifact_root: Path | None = None,
+        run_id: str | None = None,
         execute_poc: bool = False,
         residual_rounds: int = 0,
     ) -> tuple[WorkflowReport, list[TraceEvent]]:
         events: list[TraceEvent] = []
-        self.last_artifact_root = artifact_root or Path(
-            tempfile.mkdtemp(prefix=f"cvehunt-{cve_id.lower()}-")
+        run = (
+            RunMetadata(model=self.model)
+            if run_id is None
+            else RunMetadata(run_id=run_id, model=self.model)
         )
+        self.last_artifact_root = artifact_root or (
+            Path("cves") / cve_id.upper() / "runs" / run.run_id
+        )
+        self.last_artifact_root.mkdir(parents=True, exist_ok=True)
 
         cve, ev = self._timed_event(
             phase="Collector",
@@ -211,7 +216,7 @@ class CveHuntWorkflow:
         )
         events.append(ev)
         report = WorkflowReport(
-            run=RunMetadata(model=self.model),
+            run=run,
             cve=cve,
             finding=finding,
             sources=sources,

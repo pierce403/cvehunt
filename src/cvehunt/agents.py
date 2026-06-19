@@ -4764,7 +4764,7 @@ def _shim_app_source(vulnerability_class: str, *, variant: str) -> str:
         "\n"
         "from fastapi import FastAPI, Header, HTTPException\n"
         "\n"
-        "DB_PATH = \"/tmp/shim.db\"\n"
+        "DB_PATH = \"/workspace/shim.db\"\n"
         "\n"
         "\n"
         "def _seed_database() -> None:\n"

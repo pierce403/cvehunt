@@ -14,6 +14,7 @@ Options:
   --cve CVE-ID             CVE to run, same as CVEHUNT_CVE
   --harness HARNESS        Agent harness label, same as CVEHUNT_HARNESS
   --model MODEL            Model name to record, same as CVEHUNT_MODEL
+  --run-id RUN-ID          Preallocated run id, same as CVEHUNT_RUN_ID
   --skip-install           Skip uv/npm dependency installation checks
   --skip-build             Skip npm run build after the persisted run
   --skip-git               Skip automatic git commit/push and PR recommendation
@@ -31,6 +32,7 @@ Environment overrides:
   CVEHUNT_CVE       CVE to run when no positional CVE is provided
   CVEHUNT_HARNESS   Agent harness label to record, for example codex or gemini
   CVEHUNT_MODEL     Model name to record; use the harness' real model slug
+  CVEHUNT_RUN_ID    Preallocated run id under cves/<CVE>/runs
   CVEHUNT_SKIP_INSTALL=1  Skip uv/npm dependency installation checks
   CVEHUNT_SKIP_BUILD=1  Skip npm run build after the persisted run
   CVEHUNT_SKIP_GIT=1    Skip automatic git commit/push and PR recommendation
@@ -89,6 +91,14 @@ parse_cli_args() {
         ;;
       --model=*)
         CVEHUNT_MODEL="${1#*=}"
+        ;;
+      --run-id)
+        [[ "$#" -ge 2 ]] || missing_flag_value "$1"
+        shift
+        CVEHUNT_RUN_ID="$1"
+        ;;
+      --run-id=*)
+        CVEHUNT_RUN_ID="${1#*=}"
         ;;
       --skip-install)
         CVEHUNT_SKIP_INSTALL=1
@@ -562,6 +572,33 @@ PY
   fi
 
   printf '%s\n' "$run_id"
+}
+
+preallocate_run_id() {
+  local cve_id="$1"
+  local candidate="${CVEHUNT_RUN_ID:-}"
+
+  if [[ -n "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+
+  candidate="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+  while [[ -e "cves/$cve_id/runs/$candidate" ]]; do
+    sleep 1
+    candidate="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+  done
+  printf '%s\n' "$candidate"
+}
+
+copy_file_if_different() {
+  local source="$1"
+  local target="$2"
+
+  if [[ "$source" == "$target" ]]; then
+    return
+  fi
+  cp "$source" "$target"
 }
 
 write_model_attempt_prompt() {
@@ -1369,9 +1406,9 @@ write_contribution_audit() {
     return
   fi
 
-  cp "$run_json_output" "$run_dir/contribute-output.log"
-  cp "$contribution_log" "$run_dir/contribution-interaction.log"
-  cp "$isolation_preflight_log" "$run_dir/isolation-preflight.log"
+  copy_file_if_different "$run_json_output" "$run_dir/contribute-output.log"
+  copy_file_if_different "$contribution_log" "$run_dir/contribution-interaction.log"
+  copy_file_if_different "$isolation_preflight_log" "$run_dir/isolation-preflight.log"
 
   CVEHUNT_AUDIT_CVE_ID="$cve_id" \
   CVEHUNT_AUDIT_RUN_ID="$run_id" \
@@ -1652,24 +1689,35 @@ main() {
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   cd "$repo_root"
 
+  local cve_id="${CVEHUNT_CVE:-}"
+  if [[ -z "$cve_id" ]]; then
+    cve_id="$(prompt "CVE ID" "$DEFAULT_CVE")"
+  fi
+  cve_id="$(printf '%s' "$cve_id" | tr '[:lower:]' '[:upper:]')"
+
+  local run_id
+  local run_dir
   local contribution_log
   local isolation_preflight_log
-  contribution_log="$(mktemp "${TMPDIR:-/tmp}/cvehunt-contribute.XXXXXX.log")"
-  isolation_preflight_log="$(mktemp "${TMPDIR:-/tmp}/cvehunt-isolation-preflight.XXXXXX.log")"
+  local run_json_output
+  run_id="$(preallocate_run_id "$cve_id")"
+  run_dir="cves/$cve_id/runs/$run_id"
+  mkdir -p "$run_dir"
+  contribution_log="$run_dir/contribution-interaction.log"
+  isolation_preflight_log="$run_dir/isolation-preflight.log"
+  run_json_output="$run_dir/contribute-output.log"
+  : > "$contribution_log"
+  : > "$isolation_preflight_log"
+  : > "$run_json_output"
   exec > >(tee -a "$contribution_log") 2>&1
   echo "Contribution interaction log started at $contribution_log"
+  echo "Run directory: $run_dir"
 
   local detected_harnesses
   detected_harnesses=()
   while IFS= read -r harness; do
     detected_harnesses[${#detected_harnesses[@]}]="$harness"
   done < <(detect_harnesses)
-
-  local cve_id="${CVEHUNT_CVE:-}"
-  if [[ -z "$cve_id" ]]; then
-    cve_id="$(prompt "CVE ID" "$DEFAULT_CVE")"
-  fi
-  cve_id="$(printf '%s' "$cve_id" | tr '[:lower:]' '[:upper:]')"
 
   local harness
   harness="$(select_harness "${detected_harnesses[@]}")"
@@ -1734,12 +1782,12 @@ main() {
     fi
     if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
       if [[ "${CVEHUNT_RESIDUAL_ROUNDS:-0}" != "0" ]]; then
-        printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q --execute-poc --residual-rounds %q\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}" "${CVEHUNT_RESIDUAL_ROUNDS:-0}"
+        printf 'Would run: uv run cvehunt run %q --persist --json --run-id %q --model %q --base-port %q --execute-poc --residual-rounds %q\n' "$cve_id" "$run_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}" "${CVEHUNT_RESIDUAL_ROUNDS:-0}"
       else
-        printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q --execute-poc\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
+        printf 'Would run: uv run cvehunt run %q --persist --json --run-id %q --model %q --base-port %q --execute-poc\n' "$cve_id" "$run_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
       fi
     else
-      printf 'Would run: uv run cvehunt run %q --persist --json --model %q --base-port %q\n' "$cve_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
+      printf 'Would run: uv run cvehunt run %q --persist --json --run-id %q --model %q --base-port %q\n' "$cve_id" "$run_id" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
     fi
     if [[ "${CVEHUNT_SKIP_MODEL:-0}" != "1" ]]; then
       printf 'Would invoke external model evaluation via %q using model %q\n' "$harness" "$model"
@@ -1755,11 +1803,8 @@ main() {
 
   ensure_project_dependencies
 
-  local run_json_output
-  local run_id
   local run_command
-  run_json_output="$(mktemp "${TMPDIR:-/tmp}/cvehunt-run-json.XXXXXX.log")"
-  run_command=(uv run cvehunt run "$cve_id" --persist --json --model "$model_label" --base-port "${CVEHUNT_BASE_PORT:-4000}")
+  run_command=(uv run cvehunt run "$cve_id" --persist --json --run-id "$run_id" --model "$model_label" --base-port "${CVEHUNT_BASE_PORT:-4000}")
   if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
     run_command=("${run_command[@]}" --execute-poc)
     if [[ "${CVEHUNT_RESIDUAL_ROUNDS:-0}" != "0" ]]; then
@@ -1771,7 +1816,12 @@ main() {
   printf ' %q' "${run_command[@]}"
   printf '\n'
   "${run_command[@]}" | tee "$run_json_output"
-  run_id="$(extract_run_id "$run_json_output" "$cve_id")"
+  local observed_run_id
+  observed_run_id="$(extract_run_id "$run_json_output" "$cve_id")"
+  if [[ "$observed_run_id" != "$run_id" ]]; then
+    echo "Run id mismatch: expected $run_id, observed $observed_run_id" >&2
+    exit 1
+  fi
   run_model_attempt "$cve_id" "$run_id" "$harness" "$model" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
   # If the model authored a poc.py, verify it against a fresh rebuild of this
   # run's harness so the dashboard can promote the model PoC from 'authored

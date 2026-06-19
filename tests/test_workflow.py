@@ -119,8 +119,11 @@ def test_known_cve_produces_defensive_signal(monkeypatch, tmp_path) -> None:
     assert any("127.0.0.1" in note for note in report.judgement.safety_notes)
 
 
-def test_unknown_cve_is_not_supported() -> None:
-    report = CveHuntWorkflow().run("CVE-2099-0001")
+def test_unknown_cve_is_not_supported(tmp_path) -> None:
+    report, _events = CveHuntWorkflow().run_with_trace(
+        "CVE-2099-0001",
+        artifact_root=tmp_path / "artifacts",
+    )
 
     assert report.cve.name == "Unknown"
     assert report.judgement.status == "not_supported"
@@ -205,6 +208,41 @@ def test_persisted_run_writes_workdir_artifacts(monkeypatch, tmp_path) -> None:
     assert "PoC vulnerable target: http://127.0.0.1:4000" in report_md
     assert "Real package sources acquired: yes" in report_md
     assert "Source patch generated: yes" in report_md
+
+
+def test_default_artifact_root_is_run_directory(monkeypatch, tmp_path) -> None:
+    _patch_researcher(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    workflow = CveHuntWorkflow(model="test-model")
+
+    report, _events = workflow.run_with_trace("CVE-2025-55182")
+
+    expected = Path("cves") / "CVE-2025-55182" / "runs" / report.run.run_id
+    assert workflow.last_artifact_root == expected
+    assert (tmp_path / expected / "research" / "source_diff.patch").exists()
+    assert (tmp_path / expected / "harness" / "target-environment.json").exists()
+    assert report.run.model == "test-model"
+
+
+def test_persisted_run_can_finalize_in_place(monkeypatch, tmp_path) -> None:
+    _patch_researcher(monkeypatch)
+    store = WorkdirStore(tmp_path)
+    run_id = "2099-01-02T03-04-05Z"
+    run_dir = store.run_dir("CVE-2025-55182", run_id)
+    workflow = CveHuntWorkflow()
+
+    report, events = workflow.run_with_trace(
+        "CVE-2025-55182",
+        artifact_root=run_dir,
+        run_id=run_id,
+    )
+    store.write_report(report, events, artifact_root=workflow.last_artifact_root)
+
+    assert workflow.last_artifact_root == run_dir
+    assert report.run.run_id == run_id
+    assert (run_dir / "research" / "source_diff.patch").exists()
+    assert (run_dir / "trace.jsonl").exists()
+    assert (run_dir / "pipeline_status.json").exists()
 
 
 def test_dashboard_includes_tracked_cves(tmp_path) -> None:
