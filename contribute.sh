@@ -328,18 +328,59 @@ print(", ".join(model.get("slug", "") for model in data.get("models", []) if mod
 ' 2>/dev/null || true
 }
 
+list_codex_model_choices() {
+  if ! has_command codex || ! has_command python3; then
+    return
+  fi
+  codex debug models 2>/dev/null | python3 -c 'import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for model in data.get("models", []):
+    slug = model.get("slug", "")
+    if slug:
+        print(slug)
+' 2>/dev/null || true
+}
+
+list_pi_model_choices() {
+  if ! has_command pi; then
+    return
+  fi
+  pi --list-models 2>/dev/null | awk '
+    NR == 1 && $1 == "provider" { next }
+    NF >= 2 { print $1 "/" $2 }
+  '
+}
+
+model_catalog_for_harness() {
+  case "$1" in
+    codex) list_codex_model_choices ;;
+    pi) list_pi_model_choices ;;
+    *) return ;;
+  esac
+}
+
 pi_model_is_available() {
   local model="$1"
+  local provider=""
   local search="$model"
   local output
   if ! has_command pi; then
     return 2
   fi
   case "$search" in
-    */*) search="${search#*/}" ;;
+    */*)
+      provider="${search%%/*}"
+      search="${search#*/}"
+      ;;
   esac
   output="$(pi --list-models "$search" 2>&1 || true)"
-  printf '%s\n' "$output" | awk -v wanted="$search" 'NR > 1 && $2 == wanted { found = 1 } END { exit found ? 0 : 1 }'
+  printf '%s\n' "$output" | awk -v provider="$provider" -v wanted="$search" '
+    NR > 1 && $2 == wanted && (provider == "" || $1 == provider) { found = 1 }
+    END { exit found ? 0 : 1 }
+  '
 }
 
 validate_model_for_harness() {
@@ -383,6 +424,52 @@ default_model_for_harness() {
     pi) printf '%s\n' "bastet/AEON-7/Gemma-4-31B-it-DECKARD-HERETIC-Uncensored-NVFP4" ;;
     *) printf '%s\n' "" ;;
   esac
+}
+
+select_model() {
+  local harness="$1"
+  local override="${CVEHUNT_MODEL:-}"
+  local default_model
+  local selected
+  local choice
+  local index
+  local choices
+  choices=()
+
+  if [[ -n "$override" ]]; then
+    printf '%s\n' "$override"
+    return
+  fi
+
+  default_model="$(default_model_for_harness "$harness")"
+  while IFS= read -r choice; do
+    if [[ -n "$choice" ]]; then
+      choices[${#choices[@]}]="$choice"
+    fi
+  done < <(model_catalog_for_harness "$harness")
+
+  if [[ "${#choices[@]}" -eq 0 ]]; then
+    selected="$(prompt "Model for $harness" "$default_model")"
+    printf '%s\n' "$selected"
+    return
+  fi
+
+  echo "Available models for $harness:" >&2
+  for index in "${!choices[@]}"; do
+    printf '  %d) %s\n' "$((index + 1))" "${choices[$index]}" >&2
+  done
+
+  selected="$(prompt "Model number or name" "$default_model")"
+  if [[ "$selected" =~ ^[0-9]+$ ]]; then
+    index=$((selected - 1))
+    if (( index < 0 || index >= ${#choices[@]} )); then
+      echo "Model selection out of range: $selected" >&2
+      exit 2
+    fi
+    selected="${choices[$index]}"
+  fi
+
+  printf '%s\n' "$selected"
 }
 
 confirm() {
@@ -1722,10 +1809,8 @@ main() {
   local harness
   harness="$(select_harness "${detected_harnesses[@]}")"
 
-  local model="${CVEHUNT_MODEL:-}"
-  if [[ -z "$model" ]]; then
-    model="$(prompt "Model for $harness" "$(default_model_for_harness "$harness")")"
-  fi
+  local model
+  model="$(select_model "$harness")"
 
   if [[ -z "$model" ]]; then
     echo "Model is required." >&2
