@@ -112,7 +112,7 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
 - **Description**: Build and run the generated localhost Docker/Compose harness and execute the generated PoC.
 - **Implemented**:
   - `uv run cvehunt run <CVE-ID> --persist --json --execute-poc` opts into harness execution for the raw CLI.
-  - `--base-port` / `CVEHUNT_BASE_PORT` selects the localhost vulnerable/patched port pair; patched uses base+1 and shim services use base+10/base+11.
+  - `--base-port` / `CVEHUNT_BASE_PORT` selects the localhost vulnerable/patched port pair; patched uses base+1.
   - The runner falls back to direct `docker build`/`docker run` orchestration when Docker Compose is unavailable.
   - `./contribute.sh` enables harness execution by default and passes `--execute-poc` unless `--skip-execute-poc` or `CVEHUNT_EXECUTE_POC=0` is set.
   - `HarnessRunnerAgent` invokes only generated local scripts and parses `exploiter/outcome.json` when present.
@@ -124,7 +124,7 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
 - **Test Criteria**:
   - [x] CLI exposes `--execute-poc`.
   - [x] Contributor wrapper exposes default execution plus `--skip-execute-poc` and `CVEHUNT_EXECUTE_POC=0` opt-out.
-  - [x] Manual run built Docker images and executed the LiteLLM harness on base port 4100 in an environment without Docker Compose; upstream containers returned 401 while the shim pair produced the expected vulnerable/patched differential.
+  - [x] Harness execution records `not_servable` unless the real vulnerable/patched targets expose readiness plus instrumentation probes.
   - [ ] Automated tests build and run Docker harnesses in CI.
 
 ### Harness-Scoped PoC Generation
@@ -189,14 +189,14 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
 - **Description**: Prove and disprove the bug by running a bounded exploit→defend→residual loop against the provisioned harness, with per-step logs.
 - **Implemented**:
   - `ProvisionAgent` health-checks each started target and records per-target `servable`/`not_servable` in `provision/provision.{json,log}`. The orchestrator (`exploiter/run-poc.sh`) writes the provision record; ProvisionAgent reads it (or does a short best-effort probe fallback); it never rebuilds containers.
-  - `AdversarialLoopAgent` replays observed exploit/defense outcomes as structured rounds, runs an opt-in bounded set of residual/variant primitives against a freshly-started patched shim, and writes `negotiation/exploit-rounds.ndjson`, `negotiation/defense-rounds.ndjson`, `negotiation/residual-rounds.ndjson`, `negotiation/negotiation.log`, and `negotiation/verdict.json` (escalation_achieved, patch_effective, residual_bypass, rounds_total).
-  - The orchestrator no longer `exit 2`-aborts before running the PoC on upstream readiness failure; it records per-target provision health and still runs `exploiter/poc.py` against whatever is servable, so a genuine shim differential is never swallowed by an un-servable upstream.
+  - `AdversarialLoopAgent` replays observed vulnerable/patched exploit/defense outcomes as structured rounds and writes `negotiation/exploit-rounds.ndjson`, `negotiation/defense-rounds.ndjson`, `negotiation/residual-rounds.ndjson`, `negotiation/negotiation.log`, and `negotiation/verdict.json` (escalation_achieved, patch_effective, residual_bypass, rounds_total).
+  - The orchestrator records per-target provision health and still runs `exploiter/poc.py` against whatever is servable. Synthetic shim/demo outcomes are ignored and cannot produce a defensive signal.
   - Workflow emits `provision` and `negotiation` on the `WorkflowReport`; `report.md` and `pipeline_status.json` render Provision and Adversarial Loop sections.
 - **Not Implemented**:
-  - Real LLM/model-driven exploit and defense iteration (the loop currently replays captured outcomes and runs a fixed residual primitive budget; a model-authored generate-attack → generate-fix loop is future work).
-  - Residual rounds are off by default (`residual_rounds_budget=0`) to keep the deterministic loop fast; enable when a real patched target is servable.
+  - Real LLM/model-driven exploit and defense iteration (the loop currently replays captured outcomes; a model-authored generate-attack → generate-fix loop is future work).
+  - Residual rounds need a run-local agent-authored residual plan; CVEHunt no longer embeds fixed target-specific residual primitives.
 - **Test Criteria**:
-  - [x] `test_adversarial_loop_records_rounds_and_verdict` asserts the ndjson logs and `verdict.json` are written and escalate the Judge to the capped shim tier.
+  - [x] `test_adversarial_loop_records_rounds_and_verdict` asserts the ndjson logs and `verdict.json` are written and escalate the Judge only from real vulnerable/patched outcomes.
   - [x] `test_workflow_execute_poc_flag_threads_outcomes_into_judge` asserts `report.negotiation.escalation_achieved`/`patch_effective` are threaded into the judgement.
   - [x] `test_workflow_default_does_not_invoke_runner` confirms no Docker/loop execution occurs without `--execute-poc`.
 
@@ -256,7 +256,7 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
   - `./contribute.sh` records attribution as `<harness>:<model>`.
   - Supported external model harnesses currently include `pi`, `codex`, `gemini`, and best-effort `claude`.
   - External model invocation stores `model_attempt/prompt.md`, `transcript.txt`, `stderr.txt`, `response.md`, `command.txt`, `metadata.json`, and `extracted.json`.
-  - The wrapper extracts allowlisted model-authored files such as `model_attempt/notes.md`, `model_attempt/refusal.md`, `model_attempt/fix.patch`, `model_attempt/poc.py`, `model_attempt/validation_plan.md`, and `model_attempt/safety.md`.
+  - The wrapper extracts allowlisted model-authored files such as `model_attempt/notes.md`, `model_attempt/refusal.md`, `model_attempt/fix.patch`, `model_attempt/poc.py`, `model_attempt/validation_plan.md`, `model_attempt/safety.md`, `model_attempt/target_plan.json`, and `model_attempt/target_setup.md`.
   - Extracted PoC proposals must hardcode loopback targets and must not read target hosts from args, env vars, or input. This is the ONLY enforced boundary on extracted artifacts — it is operational (don't attack a real third party), not a content filter. Attacker-capability vocabulary (reverse shell, bind shell, weaponize, credential exfiltration, persistence, ...) is intentionally NOT blocklisted, because CVEHunt's purpose is to fully characterize what an attacker can do; deleting that vocabulary deletes the evidence. (An earlier prose scanner substring-blocked those phrases in model responses and short-circuited extraction on any hit — it destroyed GLM 5.2's safe outputs because its own safety.md declared "No reverse shell..." and the scanner matched inside the negation. That scanner is removed.)
   - `contribution_audit.md` records external model invocation status and artifacts.
   - The dashboard shows model metadata for latest CVE rows and historical run rows.

@@ -233,8 +233,6 @@ def render_markdown(report: WorkflowReport) -> str:
         f"- Patched tarball SHA-256: {sources['patched_tarball_sha256'] if sources else 'n/a'}",
         f"- PoC vulnerable target: {target_urls.get('vulnerable', 'http://127.0.0.1:4000')}",
         f"- PoC patched target: {target_urls.get('patched', 'http://127.0.0.1:4001')}",
-        f"- PoC shim vulnerable target: {target_urls.get('shim_vulnerable', 'n/a')}",
-        f"- PoC shim patched target: {target_urls.get('shim_patched', 'n/a')}",
     ]
     if exploiter and exploiter.get("outcomes"):
         target_lines.append("- Captured PoC outcomes:")

@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-port",
         type=int,
         default=int(os.environ.get("CVEHUNT_BASE_PORT", "4000")),
-        help="Base localhost port for vulnerable/patched harness targets; patched uses base+1 and shims use base+10/base+11.",
+        help="Base localhost port for vulnerable/patched harness targets; patched uses base+1.",
     )
     run.add_argument(
         "--execute-poc",
@@ -93,7 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--base-port",
         type=int,
         default=int(os.environ.get("CVEHUNT_BASE_PORT", "4000")),
-        help="Base localhost port the run used for vulnerable/patched/shim targets.",
+        help="Base localhost port the run used for vulnerable/patched targets.",
     )
     verify.add_argument("--json", action="store_true", help="Emit the resulting poc_outcome record as JSON")
     return parser

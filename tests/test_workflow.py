@@ -545,7 +545,7 @@ def test_workflow_base_port_updates_harness_and_poc(monkeypatch, tmp_path) -> No
     assert "http://127.0.0.1:4101" in poc
 
 
-def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path) -> None:
+def test_pypi_harness_uses_dynamic_target_contract(monkeypatch, tmp_path) -> None:
     _patch_pypi_researcher(monkeypatch)
     workflow = CveHuntWorkflow(model="test-model")
     workflow.run_with_trace(
@@ -555,41 +555,32 @@ def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path
 
     harness_dir = tmp_path / "artifacts" / "harness"
     vulnerable_dockerfile = (harness_dir / "Dockerfile.vulnerable").read_text(encoding="utf-8")
-    config_yaml = (harness_dir / "config.yaml").read_text(encoding="utf-8")
-    db_init = (harness_dir / "db-init.sql").read_text(encoding="utf-8")
-    target_py = (harness_dir / "instrumented" / "litellm_target.py").read_text(encoding="utf-8")
     compose = (harness_dir / "docker-compose.yml").read_text(encoding="utf-8")
     deploy_script = (harness_dir / "run-targets.sh").read_text(encoding="utf-8")
     setup_md = (harness_dir / "SETUP.md").read_text(encoding="utf-8")
     target_env = json.loads((harness_dir / "target-environment.json").read_text(encoding="utf-8"))
     assert "COPY sources/vulnerable/litellm /workspace/package" in vulnerable_dockerfile
-    assert '"/workspace/package[proxy]"' in vulnerable_dockerfile
-    assert "COPY harness/instrumented/litellm_target.py" in vulnerable_dockerfile
-    assert "master_key: sk-harness-master" in config_yaml
-    assert "database_url: os.environ/DATABASE_URL" in config_yaml
-    assert "CREATE DATABASE litellm_vuln" in db_init
-    assert "CREATE DATABASE litellm_patched" in db_init
-    assert "/__cvehunt/probe" in target_py
-    assert "/key/generate" in target_py
-    assert "postgres:16-alpine" in compose
-    assert "DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_vuln" in compose
-    assert "DATABASE_URL: postgresql://litellm:litellm@db:5432/litellm_patched" in compose
-    assert "CVEHUNT_VARIANT: vulnerable" in compose
-    assert 'command: ["python", "/workspace/instrumented/litellm_target.py"]' in compose
-    assert "condition: service_healthy" in compose
+    assert '"/workspace/package[proxy]"' not in vulnerable_dockerfile
+    assert "COPY harness/instrumented" not in vulnerable_dockerfile
+    assert not (harness_dir / "config.yaml").exists()
+    assert not (harness_dir / "db-init.sql").exists()
+    assert not (harness_dir / "instrumented").exists()
+    assert "postgres:16-alpine" not in compose
+    assert "DATABASE_URL" not in compose
     assert target_env["agent_phase_contract"][0]["phase"] == "Collector"
+    assert target_env["instrumentation"]["engine"] == "agent_authored_http_probe"
+    assert target_env["dynamic_target_contract"]["runtime_plan"] == "harness/agent-target.json"
+    assert target_env["dynamic_target_contract"]["runtime_driver"] == "harness/agent-runtime.sh"
     assert target_env["deployment"]["commands"]["up"] == "bash harness/run-targets.sh up"
     assert target_env["deployment"]["commands"]["down"] == "bash harness/run-targets.sh down"
-    assert {target["name"] for target in target_env["targets"]} == {
-        "vulnerable",
-        "patched",
-        "shim-vulnerable",
-        "shim-patched",
-    }
+    assert {target["name"] for target in target_env["targets"]} == {"vulnerable", "patched"}
+    assert target_env["sidecars"] == []
+    assert "## Dynamic Instrumentation Contract" in setup_md
     assert "## Agent Contract" in setup_md
     assert "not servable unless its declared readiness probe" in setup_md
     assert "case \"${1:-up}\" in" in deploy_script
     assert "build|up|probe|logs|down" in deploy_script
+    assert "harness/agent-runtime.sh" in deploy_script
     assert "/__cvehunt/probe" in deploy_script
     assert "provision/provision.json" in deploy_script
     assert "exploiter/logs/compose.log" in deploy_script
@@ -614,8 +605,8 @@ def _build_exploiter_state(tmp_path: Path) -> tuple[CveRecord, HarnessArtifact, 
         helper_scripts=[
             "harness/build-images.sh",
             "harness/docker-compose.yml",
-            "harness/config.yaml",
-            "harness/db-init.sql",
+            "harness/target-environment.json",
+            "harness/SETUP.md",
             "harness/README.md",
         ],
     )
@@ -725,7 +716,7 @@ def test_workflow_execute_poc_flag_threads_outcomes_into_judge(monkeypatch, tmp_
     assert report.negotiation.residual_bypass is False
 
 
-def test_litellm_harness_emits_shim_artifacts_for_sql_injection(monkeypatch, tmp_path) -> None:
+def test_sql_injection_harness_does_not_emit_synthetic_shim(monkeypatch, tmp_path) -> None:
     _patch_pypi_researcher(monkeypatch)
     workflow = CveHuntWorkflow(model="test-model")
     workflow.run_with_trace(
@@ -733,22 +724,17 @@ def test_litellm_harness_emits_shim_artifacts_for_sql_injection(monkeypatch, tmp
         artifact_root=tmp_path / "artifacts",
     )
     shim_dir = tmp_path / "artifacts" / "harness" / "shim"
-    vuln_app = (shim_dir / "vulnerable" / "app.py").read_text(encoding="utf-8")
-    patched_app = (shim_dir / "patched" / "app.py").read_text(encoding="utf-8")
     compose = (
         tmp_path / "artifacts" / "harness" / "docker-compose.yml"
     ).read_text(encoding="utf-8")
     poc = (tmp_path / "artifacts" / "exploiter" / "poc.py").read_text(encoding="utf-8")
-    assert "f\"SELECT key_alias, user_id FROM api_keys WHERE token = '{token}'" in vuln_app
-    assert "WHERE token = ? LIMIT 1" in patched_app
-    assert "/__cvehunt/probe" in vuln_app
-    assert "127.0.0.1:4010:8000" in compose
-    assert "127.0.0.1:4011:8000" in compose
-    assert "SHIM_VULNERABLE_BASE_URL" in poc
-    assert "127.0.0.1:4010" in poc and "127.0.0.1:4011" in poc
+    assert not shim_dir.exists()
+    assert "shim" not in compose.lower()
+    assert "SHIM_" not in poc
+    assert "127.0.0.1:4010" not in poc and "127.0.0.1:4011" not in poc
 
 
-def test_workflow_shim_outcomes_drive_judge_when_upstream_silent(monkeypatch, tmp_path) -> None:
+def test_synthetic_shim_outcomes_do_not_drive_judge(monkeypatch, tmp_path) -> None:
     _patch_pypi_researcher(monkeypatch)
     monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
 
@@ -791,24 +777,14 @@ def test_workflow_shim_outcomes_drive_judge_when_upstream_silent(monkeypatch, tm
         execute_poc=True,
     )
 
-    shim_triggered = [
+    assert not [
         item for item in report.evidence
-        if item.check_name == "harness shim triggered vulnerable demo surface"
+        if "shim" in item.check_name
     ]
-    shim_blocked = [
-        item for item in report.evidence
-        if item.check_name == "harness shim blocked by patched demo surface"
-    ]
-    assert shim_triggered and shim_triggered[0].passed
-    assert shim_blocked and shim_blocked[0].passed
-    assert report.judgement.status == "defensive_signal_observed"
-    # A shim-only differential proves the class is exercisable but does not
-    # confirm the upstream package has the specific bug: capped at 0.90 and
-    # the rationale must say so.
-    assert report.judgement.confidence == 0.90
-    assert "class-level demonstration" in report.judgement.rationale
+    assert report.judgement.status == "target_not_servable"
+    assert report.judgement.confidence <= 0.50
     assert report.negotiation is not None
-    assert report.negotiation.escalation_achieved is True
+    assert report.negotiation.escalation_achieved is False
     assert report.negotiation.patch_effective is True
 
 
@@ -855,7 +831,7 @@ def test_no_behavior_run_is_not_defensive_signal(monkeypatch, tmp_path) -> None:
     assert report.provision is None
 
 
-def test_react2shell_harness_emits_instrumented_node_target(monkeypatch, tmp_path) -> None:
+def test_npm_harness_uses_dynamic_target_contract(monkeypatch, tmp_path) -> None:
     _patch_researcher(monkeypatch)
     workflow = CveHuntWorkflow(model="test-model")
     report, _events = workflow.run_with_trace(
@@ -868,7 +844,6 @@ def test_react2shell_harness_emits_instrumented_node_target(monkeypatch, tmp_pat
     harness_dir = tmp_path / "artifacts" / "harness"
     vulnerable_dockerfile = (harness_dir / "Dockerfile.vulnerable").read_text(encoding="utf-8")
     patched_dockerfile = (harness_dir / "Dockerfile.patched").read_text(encoding="utf-8")
-    target_js = (harness_dir / "instrumented" / "react2shell-server.js").read_text(encoding="utf-8")
     compose = (harness_dir / "docker-compose.yml").read_text(encoding="utf-8")
     deploy_script = (harness_dir / "run-targets.sh").read_text(encoding="utf-8")
     setup_md = (harness_dir / "SETUP.md").read_text(encoding="utf-8")
@@ -877,20 +852,21 @@ def test_react2shell_harness_emits_instrumented_node_target(monkeypatch, tmp_pat
 
     assert "COPY sources/vulnerable/package /workspace/package" in vulnerable_dockerfile
     assert "COPY sources/patched/package /workspace/package" in patched_dockerfile
-    assert "COPY harness/instrumented/react2shell-server.js" in vulnerable_dockerfile
-    assert 'CMD ["node", "/workspace/instrumented/server.js"]' in vulnerable_dockerfile
-    assert "console.log" not in vulnerable_dockerfile
-    assert "/health/readiness" in target_js
-    assert "/__cvehunt/probe" in target_js
-    assert "/server-function" in target_js
-    assert "Object.prototype.hasOwnProperty.call" in target_js
-    assert "harness-canary" in target_js
+    assert "COPY harness/instrumented" not in vulnerable_dockerfile
+    assert 'CMD ["node", "-e"' in vulnerable_dockerfile
+    assert "corepack enable" in vulnerable_dockerfile
+    assert "pnpm install" in vulnerable_dockerfile
+    assert not (harness_dir / "instrumented").exists()
     assert "127.0.0.1:4000:4000" in compose
     assert {target["name"] for target in target_env["targets"]} == {"vulnerable", "patched"}
+    assert target_env["instrumentation"]["engine"] == "agent_authored_http_probe"
+    assert target_env["dynamic_target_contract"]["runtime_plan"] == "harness/agent-target.json"
     assert target_env["deployment"]["commands"]["up"] == "bash harness/run-targets.sh up"
     assert target_env["agent_phase_contract"][2]["phase"] == "Harness Builder"
+    assert "## Dynamic Instrumentation Contract" in setup_md
     assert "## Agent Contract" in setup_md
     assert "/__cvehunt/probe" in deploy_script
+    assert "harness/agent-runtime.sh" in deploy_script
     assert "bash harness/run-targets.sh up" in runner
 
 
@@ -950,24 +926,23 @@ def test_provision_gate_requires_instrumented_probe(monkeypatch, tmp_path) -> No
 
 
 def test_adversarial_loop_records_rounds_and_verdict(monkeypatch, tmp_path) -> None:
-    """When the shim demonstrates the class (vulnerable triggers, patched
-    blocks), the adversarial loop emits per-round ndjson logs and a
-    verdict.json, and escalates the Judge to defensive_signal_observed at the
-    capped 0.90 shim tier.
+    """When the real vulnerable target triggers and the real patched target
+    blocks, the adversarial loop emits per-round ndjson logs and a verdict.json,
+    and escalates the Judge to defensive_signal_observed.
     """
     _patch_pypi_researcher(monkeypatch)
     monkeypatch.setattr(agents_module, "_docker_available", lambda: True)
     fake_outcome = {
         "cve_id": "CVE-2026-42208",
-        "shim_vulnerable": {
-            "base_url": "http://127.0.0.1:4010",
+        "vulnerable": {
+            "base_url": "http://127.0.0.1:4000",
             "triggered": True,
-            "detail": "/verify returned 200 for Bearer ' OR 1=1--",
+            "detail": "declared functional oracle returned vulnerable escalation",
         },
-        "shim_patched": {
-            "base_url": "http://127.0.0.1:4011",
+        "patched": {
+            "base_url": "http://127.0.0.1:4001",
             "triggered": False,
-            "detail": "/verify returned 401 invalid token",
+            "detail": "declared functional oracle blocked the primitive",
         },
     }
 
@@ -995,7 +970,7 @@ def test_adversarial_loop_records_rounds_and_verdict(monkeypatch, tmp_path) -> N
     assert verdict["residual_bypass"] is False
     assert verdict["verdict"] == "defensive_signal_observed"
     assert report.judgement.status == "defensive_signal_observed"
-    assert report.judgement.confidence == 0.90
+    assert report.judgement.confidence == 0.95
 
 
 def test_residual_bypass_downgrades_verdict(tmp_path) -> None:

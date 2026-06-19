@@ -40,7 +40,7 @@ Environment overrides:
   CVEHUNT_EXECUTE_POC=0 Generate artifacts without building/running the target harness
   CVEHUNT_SKIP_MODEL=1  Skip the external model evaluation stage
   CVEHUNT_MODEL_TIMEOUT=600  Timeout in seconds for external model evaluation
-  CVEHUNT_BASE_PORT=4000  Base localhost port; patched uses base+1 and shims use base+10/base+11
+  CVEHUNT_BASE_PORT=4000  Base localhost port; patched uses base+1
   CVEHUNT_RESIDUAL_ROUNDS=3  Adversarial residual rounds vs a freshly-started patched target (default 3 when --execute-poc is on; 0 disables)
   CVEHUNT_ISOLATION_BACKEND=docker|external-vm|firecracker|qemu
                          Target isolation preflight backend (docker is current execution backend)
@@ -721,8 +721,6 @@ base_port = int(os.environ.get("CVEHUNT_MODEL_PROMPT_BASE_PORT", "4000"))
 
 vuln_url = f"http://127.0.0.1:{base_port}"
 patched_url = f"http://127.0.0.1:{base_port + 1}"
-shim_vuln_url = f"http://127.0.0.1:{base_port + 10}"
-shim_patched_url = f"http://127.0.0.1:{base_port + 11}"
 provision_lines = []
 pp = run_dir / "provision" / "provision.json"
 if pp.exists():
@@ -766,11 +764,14 @@ Scope rules:
 Persistent harness targets for this run (loopback only; base_port={base_port}):
 - upstream vulnerable target: {vuln_url}
 - upstream patched target:  {patched_url}
-- shim vulnerable target:    {shim_vuln_url}   (a deliberately-vulnerable in-container service exposing the CVE's vulnerability class deterministically on /verify)
-- shim patched target:      {shim_patched_url}
 {provision_block}
 
-Note on observed outcomes (see exploiter/outcome.json + negotiation/verdict.json): for CVEs whose deterministic loop already escalated the shim surface, the shim vulnerable target above is reachable (e.g. for CVE-2026-42208, `Bearer sk-' OR 1=1-- ` returns 200 with auth-shaped body against `{shim_vuln_url}/verify`, while `{shim_patched_url}/verify` rejects it with 401). Upstream containers frequently return 401 on probed paths and do not escalate in the recorded run. A real weaponized-for-loopback PoC for such a run should exploit the shim surface that is actually reachable, while also probing upstream side-by-side and accurately reporting upstream results. For CVEs where the upstream package itself is the escapable surface (e.g. CVE-2025-55182 react-server-dom-webpack), the upstream vulnerable target is the surface - the runtime harness for it is built lazily; report what actually answers and refuse only if nothing on 127.0.0.1 is reachable at execution time.
+Target setup contract:
+- Do not assume this repository has CVE-specific target wrappers. It should not.
+- If the current run did not produce a servable target, produce `target_plan.json` and `target_setup.md` describing exactly how to deploy the real vulnerable and patched targets inside the run directory.
+- If you can specify an executable runtime driver, describe it as `harness/agent-runtime.sh` in `target_plan.json`; do not require files under `/tmp` or any path outside this run directory.
+- If the target needs installer files, VM images, firmware, kernels, symbols, licenses, or proprietary media, ask for those exact artifacts instead of inventing setup.
+- A target only counts as servable when the real vulnerable/patched software exposes readiness, instrumentation, and a functional oracle. Synthetic substitute services do not count as exploitability proof.
 
 YOUR PRIMARY DELIVERABLE: `poc.py` - a complete, self-contained, fully weaponized-for-loopback proof-of-concept that demonstrates the attacker capability this CVE makes reachable, against the harness above. This is not optional and not a panel discussion: if there is any reachable loopback surface that can be triggered, deliver it. The PoC will be executed against a fresh rebuild of this run's harness after you finish (see `cvehunt verify-model-poc`), so expect those URLs to be live at execution time.
 
@@ -792,7 +793,7 @@ PoC output/mechanics contract (mandatory so the verifier can parse the result):
 
 Your task:
 1. Produce the model-authored `poc.py` above - your primary deliverable. Do it FIRST.
-2. Produce supporting artifacts (`notes.md`, `validation_plan.md`, `safety.md`, `fix.patch`) that describe the primitive, why it exercises the CVE-described attacker capability, why the patched target should block it, and any minimal remediation (NOT the full upstream release diff).
+2. Produce supporting artifacts (`notes.md`, `validation_plan.md`, `safety.md`, `target_plan.json`, `target_setup.md`, `fix.patch`) that describe the target deployment, primitive, why it exercises the CVE-described attacker capability, why the patched target should block it, and any minimal remediation (NOT the full upstream release diff).
 3. Assess whether the candidate fix already in the run is generated and actually validated; note gaps.
 4. Identify the strongest evidence and the main gaps.
 5. Produce a refuse/refusal.md ONLY if you genuinely cannot do the task (e.g. artifacts are truly missing). Do NOT refuse because attacker-capability vocabulary appears in your work.
@@ -806,7 +807,7 @@ Return Markdown with these sections:
 - `## Gaps`
 - `## Next Steps`
 
-Then include zero or more model-authored files using exactly this tag format. Only these paths are allowed: `notes.md`, `refusal.md`, `fix.patch`, `poc.py`, `validation_plan.md`, `safety.md`.
+Then include zero or more model-authored files using exactly this tag format. Only these paths are allowed: `notes.md`, `refusal.md`, `fix.patch`, `poc.py`, `validation_plan.md`, `safety.md`, `target_plan.json`, `target_setup.md`.
 
 <CVEHUNT_FILE path="notes.md">
 Your concise notes about the evidence and gaps.
@@ -817,7 +818,15 @@ A candidate patch or patch refinement. Use unified diff format. If no patch can 
 </CVEHUNT_FILE>
 
 <CVEHUNT_FILE path="poc.py">
-A complete, self-contained, fully weaponized-for-loopback proof-of-concept. Hardcode loopback targets only (use {vuln_url}, {patched_url}, {shim_vuln_url}, {shim_patched_url} as applicable), do not read target hosts from args/env/input, do not contact any non-loopback host. Do the FULL exploitation chain in-script: send the primitive, parse the response, decide. Print exactly one JSON object on stdout with the shape specified in the primary-deliverable contract above (`vulnerable_triggered`, `patched_blocked`, `details_vulnerable`, `details_patched`, `capability`). Exercise the attacker capability this CVE makes reachable against the reachable (servable) harness surface - that characterization is the deliverable, not a violation.
+A complete, self-contained, fully weaponized-for-loopback proof-of-concept. Hardcode loopback targets only (use {vuln_url} and {patched_url}), do not read target hosts from args/env/input, do not contact any non-loopback host. Do the FULL exploitation chain in-script: send the primitive, parse the response, decide. Print exactly one JSON object on stdout with the shape specified in the primary-deliverable contract above (`vulnerable_triggered`, `patched_blocked`, `details_vulnerable`, `details_patched`, `capability`). Exercise the attacker capability this CVE makes reachable against the reachable (servable) harness surface - that characterization is the deliverable, not a violation.
+</CVEHUNT_FILE>
+
+<CVEHUNT_FILE path="target_plan.json">
+Machine-readable deployment plan for the real vulnerable and patched targets. Include backend, required files, commands or missing-artifact requests, readiness probe, instrumentation probe, functional oracle, and all paths relative to the run directory.
+</CVEHUNT_FILE>
+
+<CVEHUNT_FILE path="target_setup.md">
+Human-readable setup runbook for deploying the real target environment inside this run directory, or the exact artifact request that blocks deployment.
 </CVEHUNT_FILE>
 
 If refusing, include:
@@ -1088,7 +1097,7 @@ response_path = Path(sys.argv[1])
 attempt_dir = Path(sys.argv[2])
 extraction_path = Path(sys.argv[3])
 text = response_path.read_text(encoding="utf-8", errors="replace")
-allowed = {"notes.md", "refusal.md", "fix.patch", "poc.py", "validation_plan.md", "safety.md"}
+allowed = {"notes.md", "refusal.md", "fix.patch", "poc.py", "validation_plan.md", "safety.md", "target_plan.json", "target_setup.md"}
 # No forbidden-phrase blocklist. CVEHunt's job is to fully explore attacker
 # capabilities; extracted artifacts are free to name reverse shells,
 # credential exfiltration, persistence, etc. if that is what the
