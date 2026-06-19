@@ -285,7 +285,7 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
   - Side-by-side diff UI between two selected runs.
   - Client-side filtering by model, score range, or CVE status.
 - **Test Criteria**:
-  - [x] `npm run build` regenerates `web/public/data/cves.json` and `docs/`.
+  - [x] `pnpm run build` regenerates `web/public/data/cves.json` and `docs/`.
   - [x] Dashboard tests cover tracked CVE rendering and repository URL generation.
   - [x] Phase-level state is read from `pipeline_status.json`.
   - [x] Generated site data includes historical runs and run scores.

@@ -21,7 +21,7 @@ uv run cvehunt run CVE-2025-55182 --persist --model codex:gpt-5.5
 uv run cvehunt sync-recent --days 7 --limit 25
 uv run cvehunt serve
 uv run python -m pytest
-npm run build
+pnpm run build
 ./contribute.sh CVE-2025-55182
 ```
 
@@ -86,7 +86,7 @@ Every persisted run receives a run score out of 100. A score of 100 means the wo
 The public site is a React/Vite app generated into `docs/` for GitHub Pages:
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 The build reads `cves/`, emits `web/public/data/cves.json`, and exposes both the latest CVE state and an all-runs leaderboard sorted by run score before bundling the site. GitHub Actions runs the same build and deploys Pages on commits to `main`.
