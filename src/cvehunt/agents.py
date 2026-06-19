@@ -437,7 +437,17 @@ class HarnessBuilderAgent:
         artifact_root: Path,
         base_port: int = 4000,
     ) -> tuple[HarnessArtifact, ValidationPlan]:
+        backend_plan = _target_backend_plan(cve, finding, sources)
         if sources.status != "materialized" or not sources.package:
+            if backend_plan["backend"] in {"qemu_vm", "manual_artifact_required"}:
+                return self._build_backend_contract(
+                    cve,
+                    finding,
+                    sources,
+                    artifact_root,
+                    backend_plan=backend_plan,
+                    base_port=base_port,
+                )
             plan = ValidationPlan(
                 runtime=f"fixture-only validation for {cve.ecosystem}",
                 isolation="offline defensive triage only",
@@ -575,6 +585,7 @@ class HarnessBuilderAgent:
             sources=sources,
             include_shim=shim_emitted,
             base_port=base_port,
+            backend_plan=backend_plan,
         )
         target_env_path.write_text(
             json.dumps(target_environment, indent=2) + "\n",
@@ -590,6 +601,7 @@ class HarnessBuilderAgent:
                 package=sources.package,
                 include_shim=shim_emitted,
                 base_port=base_port,
+                backend_plan=backend_plan,
             ),
             encoding="utf-8",
         )
@@ -673,6 +685,120 @@ class HarnessBuilderAgent:
                 notes=[
                     "Generated Docker build definitions for vulnerable and patched package variants.",
                     "Generated docker-compose orchestration with localhost-only port bindings.",
+                ],
+            ),
+            plan,
+        )
+
+    def _build_backend_contract(
+        self,
+        cve: CveRecord,
+        finding: ResearchFinding,
+        sources: SourceBundle,
+        artifact_root: Path,
+        *,
+        backend_plan: dict[str, object],
+        base_port: int,
+    ) -> tuple[HarnessArtifact, ValidationPlan]:
+        harness_dir = artifact_root / "harness"
+        harness_dir.mkdir(parents=True, exist_ok=True)
+        deploy_script = harness_dir / "run-targets.sh"
+        target_env_path = harness_dir / "target-environment.json"
+        setup_md_path = harness_dir / "SETUP.md"
+        readme = harness_dir / "README.md"
+        target_environment = _target_environment_spec(
+            cve=cve,
+            finding=finding,
+            sources=sources,
+            include_shim=False,
+            base_port=base_port,
+            backend_plan=backend_plan,
+        )
+        target_env_path.write_text(
+            json.dumps(target_environment, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        setup_md_path.write_text(
+            _target_environment_setup_markdown(target_environment),
+            encoding="utf-8",
+        )
+        deploy_script.write_text(
+            _target_deploy_script(
+                cve_id=cve.cve_id,
+                package=sources.package or _fallback_package_name(cve),
+                include_shim=False,
+                base_port=base_port,
+                backend_plan=backend_plan,
+            ),
+            encoding="utf-8",
+        )
+        deploy_script.chmod(0o755)
+        helper_paths = [deploy_script, target_env_path, setup_md_path]
+        if backend_plan["backend"] == "qemu_vm":
+            qemu_dir = harness_dir / "qemu"
+            qemu_dir.mkdir(parents=True, exist_ok=True)
+            qemu_target_path = qemu_dir / "target.json"
+            qemu_target_path.write_text(
+                json.dumps(target_environment.get("qemu", {}), indent=2) + "\n",
+                encoding="utf-8",
+            )
+            helper_paths.append(qemu_target_path)
+        readme.write_text(
+            _backend_contract_readme(cve, finding, sources, backend_plan),
+            encoding="utf-8",
+        )
+        helper_paths.append(readme)
+        missing = _missing_artifacts(backend_plan)
+        status: str = "blocked_needs_artifact" if missing else "backend_unavailable"
+        plan = ValidationPlan(
+            runtime=f"{backend_plan['backend']} setup contract for {backend_plan['target_class']}",
+            isolation=str(backend_plan["safety_boundary"]),
+            checks=[
+                ValidationCheck(
+                    name="target environment contract generated",
+                    purpose="Verify that the first three phases emitted a backend-specific setup contract.",
+                    safe_method="Inspect the generated target-environment.json and SETUP.md artifacts.",
+                    expected_vulnerable_signal="harness/target-environment.json",
+                    expected_patched_signal=str(backend_plan["backend"]),
+                    artifact="harness/target-environment.json",
+                ),
+                ValidationCheck(
+                    name="required target artifacts enumerated",
+                    purpose="Verify that missing target artifacts are explicitly requested instead of guessed.",
+                    safe_method="Inspect required_artifacts in target-environment.json.",
+                    expected_vulnerable_signal=", ".join(missing) or "no missing artifacts",
+                    expected_patched_signal=str(backend_plan["target_class"]),
+                    artifact="harness/target-environment.json",
+                ),
+                ValidationCheck(
+                    name="patched-vs-vulnerable differential check",
+                    purpose="Confirm the local fixture still exposes a vulnerable/patched differential.",
+                    safe_method="Run only local synthetic checks. No external targets or proof-of-concept execution.",
+                    expected_vulnerable_signal=cve.safe_fixture.get(
+                        "vulnerable_signal", "no vulnerable fixture signal available"
+                    ),
+                    expected_patched_signal=cve.safe_fixture.get(
+                        "patched_signal", "no patched fixture signal available"
+                    ),
+                ),
+            ],
+            forbidden_outputs=[
+                "instructions for real third-party targets",
+                "payloads aimed outside the generated lab",
+                "claims of exploitability before the target is provisioned",
+            ],
+        )
+        return (
+            HarnessArtifact(
+                status=status,
+                runtime=plan.runtime,
+                isolation=plan.isolation,
+                workspace=".",
+                helper_scripts=[_relpath(path, artifact_root) for path in helper_paths],
+                notes=[
+                    f"Selected backend {backend_plan['backend']} for target class {backend_plan['target_class']}.",
+                    str(backend_plan["reason"]),
+                    *[f"Missing required artifact: {artifact_id}" for artifact_id in missing],
                 ],
             ),
             plan,
@@ -929,6 +1055,28 @@ class ProvisionAgent:
         log_lines: list[str] = [f"[provision] {cve.cve_id} class={finding.vulnerability_class}"]
 
         if harness is None or harness.status != "built":
+            if harness is not None and harness.status in {"blocked_needs_artifact", "backend_unavailable"}:
+                payload = _read_target_environment(artifact_root)
+                status = harness.status
+                missing = payload.get("missing_artifacts", []) if isinstance(payload, dict) else []
+                backend = payload.get("backend", "unknown") if isinstance(payload, dict) else "unknown"
+                target_class = payload.get("target_class", "unknown") if isinstance(payload, dict) else "unknown"
+                note = (
+                    f"{backend} setup for {target_class} is blocked; missing artifacts: "
+                    f"{', '.join(str(item) for item in missing) or 'none'}"
+                    if status == "blocked_needs_artifact"
+                    else f"{backend} setup for {target_class} is unavailable in this implementation."
+                )
+                log_lines.append(f"[provision] {note}")
+                self._write_provision(
+                    json_path, log_path, log_lines, status=status, note=note, targets=[]
+                )
+                return ProvisionArtifact(
+                    status=status,
+                    note=note,
+                    log_path=_relpath(log_path, artifact_root),
+                    json_path=_relpath(json_path, artifact_root),
+                )
             note = "Harness was not built; no target to provision."
             log_lines.append(f"[provision] {note}")
             self._write_provision(
@@ -1252,6 +1400,9 @@ class AdversarialLoopAgent:
         elif not escalation_achieved and (exploiter and exploiter.outcomes):
             verdict = "target_not_servable"
             rationale = "The observability rounds produced no escalation; the vulnerable surface was not demonstrably exploitable in this harness."
+        elif provision is not None and provision.status in {"blocked_needs_artifact", "backend_unavailable"}:
+            verdict = provision.status
+            rationale = provision.note
         elif provision is not None and provision.status == "not_servable":
             verdict = "target_not_servable"
             rationale = ("The harness target surface never became servable during provisioning, "
@@ -1855,6 +2006,38 @@ class ValidatorAgent:
                     )
                 )
                 continue
+            if check.name == "target environment contract generated":
+                passed = bool(
+                    harness
+                    and any(path == "harness/target-environment.json" for path in harness.helper_scripts)
+                    and any(path == "harness/SETUP.md" for path in harness.helper_scripts)
+                )
+                evidence.append(
+                    Evidence(
+                        check_name=check.name,
+                        vulnerable_signal=check.expected_vulnerable_signal,
+                        patched_signal=check.expected_patched_signal,
+                        passed=passed,
+                        artifact=check.artifact,
+                    )
+                )
+                continue
+            if check.name == "required target artifacts enumerated":
+                passed = bool(
+                    harness
+                    and harness.status in {"built", "blocked_needs_artifact", "backend_unavailable"}
+                    and any("target-environment.json" in path for path in harness.helper_scripts)
+                )
+                evidence.append(
+                    Evidence(
+                        check_name=check.name,
+                        vulnerable_signal=check.expected_vulnerable_signal,
+                        patched_signal=check.expected_patched_signal,
+                        passed=passed,
+                        artifact=check.artifact,
+                    )
+                )
+                continue
             if check.name == "patched-vs-vulnerable differential check":
                 # The differential check is behavioral, not lexical. Passing on
                 # "the two cve.safe_fixture strings differ" would credit the
@@ -2057,6 +2240,40 @@ class JudgeAgent:
                 remediation_notes=["Add a safe fixture before running automated assessment."],
                 safety_notes=["No exploit code or external target interaction was attempted."],
             )
+        if harness is not None and harness.status in {"blocked_needs_artifact", "backend_unavailable"}:
+            missing_notes = [
+                note.replace("Missing required artifact: ", "")
+                for note in harness.notes
+                if note.startswith("Missing required artifact: ")
+            ]
+            status = harness.status
+            confidence = 0.20 if status == "blocked_needs_artifact" else 0.15
+            rationale = (
+                f"The first three phases selected {harness.runtime} but did not produce a "
+                "runnable target environment. "
+            )
+            if status == "blocked_needs_artifact":
+                rationale += (
+                    "Required target artifacts are missing, so CVEHunt cannot honestly "
+                    "claim exploitability or remediation evidence."
+                )
+            else:
+                rationale += (
+                    "The selected backend is not executable in this implementation, so "
+                    "CVEHunt cannot honestly claim exploitability or remediation evidence."
+                )
+            remediation_notes = (
+                [f"Provide required artifact: {item}" for item in missing_notes]
+                if missing_notes
+                else ["Provide the backend artifacts listed in harness/target-environment.json."]
+            )
+            remediation_notes.append("Re-run with --execute-poc only after the generated SETUP.md is satisfiable.")
+            safety_notes = [
+                harness.isolation,
+                "No exploit behavior was credited because the target environment was not provisioned.",
+                "Do not substitute a live third-party target for the generated lab.",
+            ]
+            return self._judgement(status, confidence, rationale, remediation_notes, safety_notes)
 
         # Behavioral (outcome-derived) evidence describes what happened when
         # the adversarial loop ran. It can legitimately fail — e.g., the target
@@ -2752,6 +2969,420 @@ def _image_names(cve_id: str, package: str) -> dict[str, str]:
     }
 
 
+def _fallback_package_name(cve: CveRecord) -> str:
+    for spec in [*cve.vulnerable_versions, *cve.patched_versions]:
+        parsed = _parse_version_spec(spec)
+        if parsed is not None:
+            return parsed[0]
+    return re.sub(r"[^a-z0-9_.-]+", "-", cve.name.lower()).strip("-") or "unknown-target"
+
+
+def _target_backend_plan(
+    cve: CveRecord,
+    finding: ResearchFinding,
+    sources: SourceBundle,
+) -> dict[str, object]:
+    text = " ".join(
+        [
+            cve.name,
+            cve.summary,
+            cve.ecosystem,
+            finding.vulnerability_class,
+            finding.impacted_surface,
+            " ".join(cve.vulnerable_versions),
+            " ".join(cve.patched_versions),
+        ]
+    ).lower()
+    if sources.status == "materialized" and cve.ecosystem in {"npm", "pypi"}:
+        return _backend_plan(
+            target_class="userland_service",
+            backend="docker",
+            reason="Published package sources were materialized for a userland service target.",
+            safety_boundary="localhost-only Docker service harness; Docker is not a kernel isolation boundary.",
+            required_artifacts=[
+                _required_artifact(
+                    "vulnerable_source_tree",
+                    "Extracted vulnerable package source tree.",
+                    provided=True,
+                    path=sources.vulnerable_root,
+                    how_to_supply="Researcher materializes this from the package registry.",
+                ),
+                _required_artifact(
+                    "patched_source_tree",
+                    "Extracted patched package source tree.",
+                    provided=True,
+                    path=sources.patched_root,
+                    how_to_supply="Researcher materializes this from the package registry.",
+                ),
+            ],
+            qemu=None,
+            instrumentation={"engine": "http_probe", "signals": ["/health/readiness", "/__cvehunt/probe"]},
+        )
+    if any(token in text for token in ("windows driver", "win32 driver", "kernel-mode driver", ".sys driver")):
+        return _backend_plan(
+            target_class="windows_driver",
+            backend="qemu_vm",
+            reason="Windows driver targets require a disposable Windows guest and supplied driver artifacts.",
+            safety_boundary="QEMU Windows VM with snapshot/rollback; never install drivers on the host.",
+            required_artifacts=[
+                _required_artifact(
+                    "windows_base_image",
+                    "Licensed Windows guest image or installer ISO suitable for QEMU.",
+                    how_to_supply="Place the image at harness/artifacts/windows-base.qcow2 or document the ISO path in target-environment.json.",
+                ),
+                _required_artifact(
+                    "vulnerable_driver_installer",
+                    "Installer or .sys package for the vulnerable driver build.",
+                    how_to_supply="Place the installer under harness/artifacts/vulnerable/.",
+                ),
+                _required_artifact(
+                    "patched_driver_installer",
+                    "Installer or .sys package for the patched driver build.",
+                    how_to_supply="Place the installer under harness/artifacts/patched/.",
+                ),
+                _required_artifact(
+                    "driver_symbols",
+                    "Optional PDB/symbol package for instrumentation and crash triage.",
+                    required=False,
+                    how_to_supply="Place symbols under harness/artifacts/symbols/ when available.",
+                ),
+            ],
+            qemu=_qemu_profile("x86_64", guest_os="windows", needs_kvm=True),
+            instrumentation={
+                "engine": "qemu_gdb_stub",
+                "signals": ["serial_console", "qmp_events", "crash_dump", "gdb_stub"],
+            },
+        )
+    if any(token in text for token in ("container escape", "runc", "containerd", "docker daemon", "namespace escape")):
+        return _backend_plan(
+            target_class="container_escape",
+            backend="qemu_vm",
+            reason="Container/runtime escape validation must run the vulnerable runtime inside a disposable VM.",
+            safety_boundary="QEMU Linux VM with nested container runtime; host Docker must not be the target boundary.",
+            required_artifacts=[
+                _required_artifact(
+                    "guest_rootfs",
+                    "Linux guest root filesystem with container runtime support.",
+                    how_to_supply="Place a qcow2/rootfs image at harness/artifacts/linux-rootfs.qcow2.",
+                ),
+                _required_artifact(
+                    "vulnerable_runtime_package",
+                    "Vulnerable runc/containerd/Docker package or source build.",
+                    how_to_supply="Place package/source under harness/artifacts/vulnerable/.",
+                ),
+                _required_artifact(
+                    "patched_runtime_package",
+                    "Patched runc/containerd/Docker package or source build.",
+                    how_to_supply="Place package/source under harness/artifacts/patched/.",
+                ),
+            ],
+            qemu=_qemu_profile("x86_64", guest_os="linux", needs_kvm=True),
+            instrumentation={
+                "engine": "qemu_trace",
+                "signals": ["serial_console", "qmp_events", "guest_runtime_logs"],
+            },
+        )
+    if any(token in text for token in ("kubernetes", "k8s", "node escape", "cluster escape")):
+        return _backend_plan(
+            target_class="kubernetes",
+            backend="qemu_vm",
+            reason="Kubernetes/node escape validation needs VM-backed nodes, not a host-only kind cluster.",
+            safety_boundary="QEMU Linux node VM(s) with snapshot/rollback and isolated host-only networking.",
+            required_artifacts=[
+                _required_artifact(
+                    "node_rootfs",
+                    "Linux node root filesystem with Kubernetes runtime dependencies.",
+                    how_to_supply="Place node image at harness/artifacts/k8s-node.qcow2.",
+                ),
+                _required_artifact(
+                    "cluster_manifest",
+                    "Version-pinned Kubernetes or workload manifest for vulnerable and patched nodes.",
+                    how_to_supply="Place manifests under harness/artifacts/cluster/.",
+                ),
+            ],
+            qemu=_qemu_profile("x86_64", guest_os="linux", needs_kvm=True),
+            instrumentation={
+                "engine": "qemu_trace",
+                "signals": ["serial_console", "qmp_events", "kubelet_logs"],
+            },
+        )
+    if any(token in text for token in ("firmware", "mmio", "bootloader", "router firmware", "uefi")):
+        return _backend_plan(
+            target_class="firmware",
+            backend="qemu_vm",
+            reason="Firmware-style targets require an architecture-aware VM/rehosting setup and explicit memory-map inputs.",
+            safety_boundary="QEMU full-system emulation or Icicle-style rehosting with synthetic devices only.",
+            required_artifacts=[
+                _required_artifact(
+                    "firmware_image",
+                    "Vulnerable and patched firmware images or extracted binaries.",
+                    how_to_supply="Place images under harness/artifacts/firmware/.",
+                ),
+                _required_artifact(
+                    "architecture",
+                    "CPU architecture and machine profile.",
+                    how_to_supply="Record arch/machine in harness/qemu/target.json.",
+                ),
+                _required_artifact(
+                    "memory_map",
+                    "Entrypoint/reset vector, load addresses, and MMIO ranges.",
+                    how_to_supply="Place memory-map.json under harness/artifacts/firmware/.",
+                ),
+            ],
+            qemu=_qemu_profile("unknown", guest_os="firmware", needs_kvm=False),
+            instrumentation={
+                "engine": "icicle_rehost",
+                "signals": ["basic_block_trace", "coverage", "crash_oracle", "mmio_stubs"],
+            },
+        )
+    if any(token in text for token in ("kernel", "ebpf", "eBPF".lower(), "filesystem", "io_uring", "netfilter", "driver", "namespace")) or cve.ecosystem in {"linux", "linux-kernel", "kernel"}:
+        return _backend_plan(
+            target_class="linux_kernel",
+            backend="qemu_vm",
+            reason="Kernel, eBPF, filesystem, namespace, and driver CVEs need a disposable Linux VM with rollback.",
+            safety_boundary="QEMU Linux VM with snapshot/rollback; never exercise kernel primitives on the host.",
+            required_artifacts=[
+                _required_artifact(
+                    "vulnerable_kernel_image",
+                    "Bootable vulnerable kernel image or build inputs.",
+                    how_to_supply="Place bzImage/vmlinuz under harness/artifacts/vulnerable/.",
+                ),
+                _required_artifact(
+                    "patched_kernel_image",
+                    "Bootable patched kernel image or build inputs.",
+                    how_to_supply="Place bzImage/vmlinuz under harness/artifacts/patched/.",
+                ),
+                _required_artifact(
+                    "guest_rootfs",
+                    "Minimal Linux root filesystem with test dependencies.",
+                    how_to_supply="Place rootfs/qcow2 image at harness/artifacts/linux-rootfs.qcow2.",
+                ),
+                _required_artifact(
+                    "kernel_config",
+                    "Kernel .config or distro config used for both variants.",
+                    required=False,
+                    how_to_supply="Place config under harness/artifacts/config/ when available.",
+                ),
+            ],
+            qemu=_qemu_profile("x86_64", guest_os="linux", needs_kvm=True),
+            instrumentation={
+                "engine": "qemu_trace",
+                "signals": ["serial_console", "qmp_events", "gdb_stub", "optional_tcg_plugin"],
+            },
+        )
+    if any(token in text for token in ("browser", "chromium", "firefox", "webkit", "safari", "edge")):
+        return _backend_plan(
+            target_class="browser_client",
+            backend="qemu_vm",
+            reason="Browser/client targets need a disposable GUI-capable VM and snapshot rollback.",
+            safety_boundary="QEMU desktop VM with host-only networking and browser automation inside the guest.",
+            required_artifacts=[
+                _required_artifact(
+                    "desktop_guest_image",
+                    "Linux or Windows desktop guest image with automation support.",
+                    how_to_supply="Place guest image at harness/artifacts/browser-guest.qcow2.",
+                ),
+                _required_artifact(
+                    "vulnerable_browser_installer",
+                    "Vulnerable browser build or installer.",
+                    how_to_supply="Place installer under harness/artifacts/vulnerable/.",
+                ),
+                _required_artifact(
+                    "patched_browser_installer",
+                    "Patched browser build or installer.",
+                    how_to_supply="Place installer under harness/artifacts/patched/.",
+                ),
+            ],
+            qemu=_qemu_profile("x86_64", guest_os="desktop", needs_kvm=True),
+            instrumentation={
+                "engine": "qemu_trace",
+                "signals": ["serial_console", "qmp_events", "browser_automation_logs"],
+            },
+        )
+    if any(token in text for token in ("proprietary", "closed source", "license", "appliance", "installer")):
+        return _backend_plan(
+            target_class="proprietary_app",
+            backend="manual_artifact_required",
+            reason="The target appears proprietary or installer-based; CVEHunt needs operator-supplied media.",
+            safety_boundary="Operator-supplied disposable VM or installer lab; no third-party live target access.",
+            required_artifacts=[
+                _required_artifact(
+                    "vulnerable_installer_or_image",
+                    "Vulnerable installer, appliance image, or VM snapshot.",
+                    how_to_supply="Place under harness/artifacts/vulnerable/.",
+                ),
+                _required_artifact(
+                    "patched_installer_or_image",
+                    "Patched installer, appliance image, or VM snapshot.",
+                    how_to_supply="Place under harness/artifacts/patched/.",
+                ),
+                _required_artifact(
+                    "license_or_activation_material",
+                    "License material needed to run the product in an authorized lab.",
+                    required=False,
+                    how_to_supply="Record the operator-controlled license path in target-environment.json.",
+                ),
+            ],
+            qemu=None,
+            instrumentation={"engine": "operator_defined", "signals": ["installer_logs", "service_health", "crash_oracle"]},
+        )
+    return _backend_plan(
+        target_class="userland_service" if finding.vulnerability_class != "unknown" else "unknown",
+        backend="manual_artifact_required",
+        reason=(
+            f"Source acquisition for ecosystem {cve.ecosystem} is not implemented; "
+            "the agent must request source, package, installer, or VM artifacts instead of guessing setup."
+        ),
+        safety_boundary="No execution until vulnerable and patched artifacts are supplied for an isolated lab.",
+        required_artifacts=[
+            _required_artifact(
+                "vulnerable_target_artifact",
+                "Vulnerable source/package/container image/installer for the affected target.",
+                how_to_supply="Place under harness/artifacts/vulnerable/.",
+            ),
+            _required_artifact(
+                "patched_target_artifact",
+                "Patched source/package/container image/installer for the affected target.",
+                how_to_supply="Place under harness/artifacts/patched/.",
+            ),
+            _required_artifact(
+                "setup_instructions",
+                "Target-specific install, configuration, and health-check instructions.",
+                how_to_supply="Place as harness/artifacts/setup-notes.md.",
+            ),
+        ],
+        qemu=None,
+        instrumentation={"engine": "operator_defined", "signals": ["readiness_probe", "functional_oracle"]},
+    )
+
+
+def _backend_plan(
+    *,
+    target_class: str,
+    backend: str,
+    reason: str,
+    safety_boundary: str,
+    required_artifacts: list[dict[str, object]],
+    qemu: dict[str, object] | None,
+    instrumentation: dict[str, object],
+) -> dict[str, object]:
+    missing = [artifact["id"] for artifact in required_artifacts if artifact.get("required", True) and not artifact.get("provided")]
+    return {
+        "target_class": target_class,
+        "backend": backend,
+        "reason": reason,
+        "safety_boundary": safety_boundary,
+        "required_artifacts": required_artifacts,
+        "missing_artifacts": missing,
+        "qemu": qemu,
+        "instrumentation": instrumentation,
+    }
+
+
+def _required_artifact(
+    artifact_id: str,
+    role: str,
+    *,
+    how_to_supply: str,
+    provided: bool = False,
+    path: str | None = None,
+    required: bool = True,
+) -> dict[str, object]:
+    return {
+        "id": artifact_id,
+        "role": role,
+        "required": required,
+        "provided": provided,
+        "path": path,
+        "how_to_supply": how_to_supply,
+    }
+
+
+def _qemu_profile(arch: str, *, guest_os: str, needs_kvm: bool) -> dict[str, object]:
+    return {
+        "arch": arch,
+        "guest_os": guest_os,
+        "accelerator_preference": ["kvm", "tcg"] if needs_kvm else ["tcg", "kvm"],
+        "cpu": "host" if needs_kvm else "max",
+        "memory_mb": 2048,
+        "disk_mode": "qcow2 overlay snapshot",
+        "network": "user-mode hostfwd bound to 127.0.0.1 only",
+        "control": {
+            "qmp_socket": "harness/qemu/qmp.sock",
+            "serial_log": "harness/logs/qemu-serial.log",
+            "gdb_stub": "127.0.0.1:1234",
+        },
+        "rollback": "discard overlay after each run",
+    }
+
+
+def _missing_artifacts(backend_plan: dict[str, object]) -> list[str]:
+    return [str(item) for item in backend_plan.get("missing_artifacts", [])]
+
+
+def _read_target_environment(artifact_root: Path) -> dict[str, object]:
+    path = artifact_root / "harness" / "target-environment.json"
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _backend_contract_readme(
+    cve: CveRecord,
+    finding: ResearchFinding,
+    sources: SourceBundle,
+    backend_plan: dict[str, object],
+) -> str:
+    missing = _missing_artifacts(backend_plan)
+    lines = [
+        f"# Target Setup Contract: {cve.cve_id}",
+        "",
+        f"- Target class: {backend_plan['target_class']}",
+        f"- Backend: {backend_plan['backend']}",
+        f"- Reason: {backend_plan['reason']}",
+        f"- Safety boundary: {backend_plan['safety_boundary']}",
+        f"- Source status: {sources.status}",
+        f"- Vulnerability class: {finding.vulnerability_class}",
+        "",
+        "This harness is intentionally blocked until the required target artifacts",
+        "or backend adapter are present. Do not substitute Docker or a live third-party",
+        "target unless the generated target-environment.json explicitly allows it.",
+        "",
+        "## Missing Required Artifacts",
+        "",
+    ]
+    if missing:
+        for artifact in backend_plan.get("required_artifacts", []):
+            artifact_map = dict(artifact)
+            if artifact_map.get("provided") or not artifact_map.get("required", True):
+                continue
+            lines.extend(
+                [
+                    f"- `{artifact_map.get('id')}`",
+                    f"  - Role: {artifact_map.get('role')}",
+                    f"  - Supply: {artifact_map.get('how_to_supply')}",
+                ]
+            )
+    else:
+        lines.append("- None recorded; backend execution adapter is not implemented yet.")
+    lines.extend(
+        [
+            "",
+            "## Commands",
+            "",
+            "- `bash harness/run-targets.sh up` records the current blocked state.",
+            "- `bash harness/run-targets.sh probe` rewrites `provision/provision.json`.",
+            "- `bash harness/run-targets.sh logs` prints backend preflight notes.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _target_environment_spec(
     *,
     cve: CveRecord,
@@ -2759,66 +3390,73 @@ def _target_environment_spec(
     sources: SourceBundle,
     include_shim: bool,
     base_port: int,
+    backend_plan: dict[str, object] | None = None,
 ) -> dict[str, object]:
     package = sources.package or "unknown-package"
-    images = _image_names(cve.cve_id, package)
-    targets: list[dict[str, object]] = [
-        _target_spec_entry(
-            name="vulnerable",
-            role="vulnerable upstream target",
-            variant="vulnerable",
-            image=images["vulnerable"],
-            dockerfile="harness/Dockerfile.vulnerable",
-            source_root=sources.vulnerable_root,
-            host_port=base_port,
-            container_port=4000,
-            vulnerability_class=finding.vulnerability_class,
-            ecosystem=cve.ecosystem,
-        ),
-        _target_spec_entry(
-            name="patched",
-            role="patched upstream target",
-            variant="patched",
-            image=images["patched"],
-            dockerfile="harness/Dockerfile.patched",
-            source_root=sources.patched_root,
-            host_port=base_port + 1,
-            container_port=4000,
-            vulnerability_class=finding.vulnerability_class,
-            ecosystem=cve.ecosystem,
-        ),
-    ]
-    if include_shim:
-        targets.extend(
-            [
-                _target_spec_entry(
-                    name="shim-vulnerable",
-                    role="vulnerable class-demonstration shim",
-                    variant="shim_vulnerable",
-                    image=images["shim_vulnerable"],
-                    dockerfile="harness/shim/vulnerable/Dockerfile",
-                    source_root="harness/shim/vulnerable",
-                    host_port=base_port + 10,
-                    container_port=8000,
-                    vulnerability_class=finding.vulnerability_class,
-                    ecosystem="shim",
-                ),
-                _target_spec_entry(
-                    name="shim-patched",
-                    role="patched class-demonstration shim",
-                    variant="shim_patched",
-                    image=images["shim_patched"],
-                    dockerfile="harness/shim/patched/Dockerfile",
-                    source_root="harness/shim/patched",
-                    host_port=base_port + 11,
-                    container_port=8000,
-                    vulnerability_class=finding.vulnerability_class,
-                    ecosystem="shim",
-                ),
-            ]
-        )
+    backend_plan = backend_plan or _target_backend_plan(cve, finding, sources)
+    backend = str(backend_plan["backend"])
+    targets: list[dict[str, object]]
+    if backend == "docker":
+        images = _image_names(cve.cve_id, package)
+        targets = [
+            _target_spec_entry(
+                name="vulnerable",
+                role="vulnerable upstream target",
+                variant="vulnerable",
+                image=images["vulnerable"],
+                dockerfile="harness/Dockerfile.vulnerable",
+                source_root=sources.vulnerable_root,
+                host_port=base_port,
+                container_port=4000,
+                vulnerability_class=finding.vulnerability_class,
+                ecosystem=cve.ecosystem,
+            ),
+            _target_spec_entry(
+                name="patched",
+                role="patched upstream target",
+                variant="patched",
+                image=images["patched"],
+                dockerfile="harness/Dockerfile.patched",
+                source_root=sources.patched_root,
+                host_port=base_port + 1,
+                container_port=4000,
+                vulnerability_class=finding.vulnerability_class,
+                ecosystem=cve.ecosystem,
+            ),
+        ]
+        if include_shim:
+            targets.extend(
+                [
+                    _target_spec_entry(
+                        name="shim-vulnerable",
+                        role="vulnerable class-demonstration shim",
+                        variant="shim_vulnerable",
+                        image=images["shim_vulnerable"],
+                        dockerfile="harness/shim/vulnerable/Dockerfile",
+                        source_root="harness/shim/vulnerable",
+                        host_port=base_port + 10,
+                        container_port=8000,
+                        vulnerability_class=finding.vulnerability_class,
+                        ecosystem="shim",
+                    ),
+                    _target_spec_entry(
+                        name="shim-patched",
+                        role="patched class-demonstration shim",
+                        variant="shim_patched",
+                        image=images["shim_patched"],
+                        dockerfile="harness/shim/patched/Dockerfile",
+                        source_root="harness/shim/patched",
+                        host_port=base_port + 11,
+                        container_port=8000,
+                        vulnerability_class=finding.vulnerability_class,
+                        ecosystem="shim",
+                    ),
+                ]
+            )
+    else:
+        targets = _non_docker_target_entries(backend_plan)
     sidecars: list[dict[str, object]] = []
-    if cve.ecosystem == "pypi" and package == "litellm":
+    if backend == "docker" and cve.ecosystem == "pypi" and package == "litellm":
         sidecars.append(
             {
                 "name": "db",
@@ -2833,9 +3471,17 @@ def _target_environment_spec(
                 "healthcheck": "pg_isready -U litellm -d litellm",
             }
         )
+    requirements = ["python3"]
+    if backend == "docker":
+        requirements.extend(["docker", "curl", "docker compose or the generated direct-docker fallback"])
+    elif backend == "qemu_vm":
+        requirements.extend(["qemu-system-* for the selected architecture", "qemu-img", "python3"])
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "cve_id": cve.cve_id,
+        "target_class": backend_plan["target_class"],
+        "backend": backend,
+        "backend_reason": backend_plan["reason"],
         "package": {
             "ecosystem": cve.ecosystem,
             "name": package,
@@ -2851,49 +3497,48 @@ def _target_environment_spec(
             "patch_signal": finding.relevant_patch_signal,
             "changed_files": finding.changed_files,
         },
+        "required_artifacts": backend_plan["required_artifacts"],
+        "missing_artifacts": backend_plan["missing_artifacts"],
+        "qemu": backend_plan.get("qemu"),
+        "instrumentation": backend_plan["instrumentation"],
         "agent_phase_contract": [
             {
                 "phase": "Collector",
                 "must_provide": [
                     "exact CVE id",
                     "ecosystem",
-                    "one vulnerable package coordinate",
-                    "one patched package coordinate",
+                    "target OS/runtime/hardware hints when available",
+                    "vulnerable and patched coordinates or explicit missing-artifact requests",
                 ],
-                "failure_mode": "If coordinates are missing or ambiguous, return not_supported/failed instead of inventing setup steps.",
+                "failure_mode": "If coordinates or media are missing, emit required_artifacts instead of inventing setup steps.",
             },
             {
                 "phase": "Researcher",
                 "must_provide": [
-                    "materialized vulnerable source tree",
-                    "materialized patched source tree",
-                    "unified source diff",
+                    "materialized source trees when publicly retrievable",
+                    "explicit artifact requests when the target requires installers, images, kernels, or proprietary media",
                     "patch signal tied to real changed source when possible",
                 ],
-                "failure_mode": "If source acquisition fails, do not emit a runnable target environment.",
+                "failure_mode": "If acquisition fails, do not claim a runnable target environment.",
             },
             {
                 "phase": "Harness Builder",
                 "must_provide": [
-                    "vulnerable and patched Dockerfiles that copy the acquired source roots",
-                    "localhost-only compose file",
-                    "instrumented target endpoint at /__cvehunt/probe",
-                    "deployment script that can build, start, probe, log, and stop the target stack",
+                    "backend selection appropriate to the target class",
+                    "localhost-only Docker orchestration for Docker-safe targets",
+                    "QEMU VM profile and snapshot/rollback requirements for OS-bound targets",
+                    "deployment script that can build/start/probe/log/down or write a structured blocked state",
                 ],
-                "failure_mode": "Readiness without /__cvehunt/probe is not a servable target.",
+                "failure_mode": "Boot/readiness without the declared instrumentation or functional oracle is not a servable target.",
             },
         ],
         "deployment": {
-            "isolation_backend": "docker",
-            "loopback_only": True,
-            "host": "127.0.0.1",
+            "isolation_backend": backend,
+            "target_class": backend_plan["target_class"],
+            "loopback_only": backend == "docker",
+            "host": "127.0.0.1" if backend == "docker" else None,
             "base_port": base_port,
-            "requirements": [
-                "docker",
-                "curl",
-                "python3",
-                "docker compose or the generated direct-docker fallback",
-            ],
+            "requirements": requirements,
             "commands": {
                 "build": "bash harness/run-targets.sh build",
                 "up": "bash harness/run-targets.sh up",
@@ -2916,10 +3561,10 @@ def _target_environment_spec(
             "harness/SETUP.md",
         ],
         "safety_boundaries": [
-            "all published ports bind to 127.0.0.1",
-            "target probes use only localhost URLs",
-            "no provider credentials or external service calls are required for setup",
-            "instrumentation uses harness-local synthetic seed data only",
+            str(backend_plan["safety_boundary"]),
+            "target probes must use only generated lab endpoints",
+            "no real third-party infrastructure may be targeted",
+            "instrumentation must produce host-visible evidence before behavior is credited",
         ],
     }
 
@@ -2993,18 +3638,82 @@ def _target_spec_entry(
     }
 
 
+def _non_docker_target_entries(backend_plan: dict[str, object]) -> list[dict[str, object]]:
+    target_class = str(backend_plan["target_class"])
+    backend = str(backend_plan["backend"])
+    readiness = {
+        "method": "backend-specific",
+        "expected": "guest boot plus declared instrumentation signal",
+    }
+    if backend == "qemu_vm":
+        readiness = {
+            "method": "serial/qmp/guest probe",
+            "expected": "QEMU guest boots to a known readiness marker and keeps snapshot rollback available",
+        }
+    functional_probe = {
+        "method": "backend-specific",
+        "expected_vulnerable": "CVE-described vulnerable behavior is observed inside the generated lab",
+        "expected_patched": "same primitive is blocked by the patched target",
+    }
+    return [
+        {
+            "name": "vulnerable",
+            "role": f"vulnerable {target_class} target",
+            "variant": "vulnerable",
+            "backend": backend,
+            "base_url": None,
+            "artifact_requirements": [
+                artifact["id"]
+                for artifact in backend_plan.get("required_artifacts", [])
+                if "vulnerable" in str(artifact.get("id", ""))
+                or artifact.get("id") in {"guest_rootfs", "node_rootfs", "firmware_image", "windows_base_image", "desktop_guest_image"}
+            ],
+            "readiness_probe": readiness,
+            "instrumented_probe": backend_plan["instrumentation"],
+            "functional_probe": functional_probe,
+        },
+        {
+            "name": "patched",
+            "role": f"patched {target_class} target",
+            "variant": "patched",
+            "backend": backend,
+            "base_url": None,
+            "artifact_requirements": [
+                artifact["id"]
+                for artifact in backend_plan.get("required_artifacts", [])
+                if "patched" in str(artifact.get("id", ""))
+                or artifact.get("id") in {"guest_rootfs", "node_rootfs", "firmware_image", "windows_base_image", "desktop_guest_image"}
+            ],
+            "readiness_probe": readiness,
+            "instrumented_probe": backend_plan["instrumentation"],
+            "functional_probe": functional_probe,
+        },
+    ]
+
+
 def _target_environment_setup_markdown(spec: dict[str, object]) -> str:
     package = dict(spec["package"])
     finding = dict(spec["finding"])
     deployment = dict(spec["deployment"])
     commands = dict(deployment["commands"])
     targets = list(spec["targets"])
+    required_artifacts = list(spec.get("required_artifacts", []))
+    missing_artifacts = list(spec.get("missing_artifacts", []))
+    instrumentation = dict(spec.get("instrumentation") or {})
     lines = [
         f"# Target Environment: {spec['cve_id']}",
         "",
         "This runbook is generated by the first three CVEHunt phases. It is the",
         "contract later agents use to deploy the vulnerable and patched targets",
         "without guessing at package setup.",
+        "",
+        "## Backend",
+        "",
+        f"- Target class: {spec.get('target_class')}",
+        f"- Backend: {spec.get('backend')}",
+        f"- Reason: {spec.get('backend_reason')}",
+        f"- Instrumentation engine: {instrumentation.get('engine')}",
+        f"- Missing required artifacts: {', '.join(str(item) for item in missing_artifacts) or 'none'}",
         "",
         "## Package",
         "",
@@ -3035,17 +3744,48 @@ def _target_environment_setup_markdown(spec: dict[str, object]) -> str:
     ]
     for target in targets:
         target_map = dict(target)
+        readiness = dict(target_map.get("readiness_probe", {}))
+        instrumented = dict(target_map.get("instrumented_probe", {}))
         lines.extend(
             [
                 f"### {target_map.get('name')}",
                 "",
                 f"- Role: {target_map.get('role')}",
-                f"- Image: `{target_map.get('image')}`",
-                f"- Dockerfile: `{target_map.get('dockerfile')}`",
+                f"- Backend: `{target_map.get('backend', spec.get('backend'))}`",
+                f"- Image: `{target_map.get('image', 'n/a')}`",
+                f"- Dockerfile: `{target_map.get('dockerfile', 'n/a')}`",
                 f"- Source root: `{target_map.get('source_root')}`",
                 f"- Base URL: `{target_map.get('base_url')}`",
-                f"- Readiness: `{dict(target_map.get('readiness_probe', {})).get('url')}`",
-                f"- Instrumented probe: `{dict(target_map.get('instrumented_probe', {})).get('url')}`",
+                f"- Readiness: `{readiness.get('url') or readiness.get('method')}`",
+                f"- Instrumented probe: `{instrumented.get('url') or instrumented.get('engine')}`",
+                "",
+            ]
+        )
+    if required_artifacts:
+        lines.extend(["## Required Artifacts", ""])
+        for artifact in required_artifacts:
+            artifact_map = dict(artifact)
+            status = "provided" if artifact_map.get("provided") else "missing"
+            optional = "" if artifact_map.get("required", True) else " (optional)"
+            lines.extend(
+                [
+                    f"- `{artifact_map.get('id')}`{optional}: {status}",
+                    f"  - Role: {artifact_map.get('role')}",
+                    f"  - Supply: {artifact_map.get('how_to_supply')}",
+                ]
+            )
+        lines.append("")
+    if spec.get("qemu"):
+        qemu = dict(spec["qemu"])
+        lines.extend(
+            [
+                "## QEMU Profile",
+                "",
+                f"- Guest OS: {qemu.get('guest_os')}",
+                f"- Architecture: {qemu.get('arch')}",
+                f"- Accelerator preference: {', '.join(qemu.get('accelerator_preference', []))}",
+                f"- Disk mode: {qemu.get('disk_mode')}",
+                f"- Control: {json.dumps(qemu.get('control', {}), sort_keys=True)}",
                 "",
             ]
         )
@@ -3053,9 +3793,9 @@ def _target_environment_setup_markdown(spec: dict[str, object]) -> str:
         [
             "## Agent Contract",
             "",
-            "A target is not servable unless `/health/readiness` answers and",
-            "`/__cvehunt/probe` returns JSON containing `instrumented: true`.",
-            "If source roots, Dockerfiles, compose, or this runbook are missing,",
+            "A target is not servable unless its declared readiness probe and",
+            "instrumentation probe both return the expected response shape.",
+            "If required artifacts, backend files, or this runbook are missing,",
             "later agents should stop and report the harness as incomplete rather",
             "than inventing deployment steps.",
             "",
@@ -3070,7 +3810,19 @@ def _target_deploy_script(
     package: str,
     include_shim: bool,
     base_port: int,
+    backend_plan: dict[str, object] | None = None,
 ) -> str:
+    backend_plan = backend_plan or _backend_plan(
+        target_class="userland_service",
+        backend="docker",
+        reason="default Docker target plan",
+        safety_boundary="localhost-only Docker service harness",
+        required_artifacts=[],
+        qemu=None,
+        instrumentation={"engine": "http_probe", "signals": ["/__cvehunt/probe"]},
+    )
+    if backend_plan["backend"] != "docker":
+        return _non_docker_target_deploy_script(cve_id=cve_id, backend_plan=backend_plan)
     project_slug = f"cvehunt_{cve_id.lower().replace('-', '_')}_{base_port}"
     has_shim = "1" if include_shim else "0"
     return "\n".join(
@@ -3199,6 +3951,75 @@ def _target_deploy_script(
             "  probe) probe_all ;;",
             "  logs) capture_logs ;;",
             "  down) stop_targets ;;",
+            "  *) echo 'usage: bash harness/run-targets.sh [build|up|probe|logs|down]' >&2; exit 2 ;;",
+            "esac",
+            "",
+        ]
+    )
+
+
+def _non_docker_target_deploy_script(
+    *,
+    cve_id: str,
+    backend_plan: dict[str, object],
+) -> str:
+    missing = _missing_artifacts(backend_plan)
+    status = "blocked_needs_artifact" if missing else "backend_unavailable"
+    note = (
+        f"{backend_plan['backend']} setup for {backend_plan['target_class']} is blocked; "
+        f"missing artifacts: {', '.join(missing)}"
+        if missing
+        else f"{backend_plan['backend']} execution adapter is not implemented yet for {backend_plan['target_class']}."
+    )
+    payload = {
+        "status": status,
+        "note": note,
+        "targets": [],
+        "backend": backend_plan["backend"],
+        "target_class": backend_plan["target_class"],
+        "missing_artifacts": missing,
+        "required_artifacts": backend_plan["required_artifacts"],
+        "instrumentation": backend_plan["instrumentation"],
+    }
+    payload_json = json.dumps(payload, indent=2)
+    qemu_preflight = "qemu-system-x86_64" if backend_plan["backend"] == "qemu_vm" else ""
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "# Generated by HarnessBuilderAgent. This target requires a non-Docker",
+            "# backend or operator-supplied artifacts; it records an honest blocked state.",
+            "set -euo pipefail",
+            f'CVE_ID="{cve_id}"',
+            f'BACKEND="{backend_plan["backend"]}"',
+            f'TARGET_CLASS="{backend_plan["target_class"]}"',
+            f'QEMU_PREFLIGHT="{qemu_preflight}"',
+            'ROOT="$(cd "$(dirname "$0")/.." && pwd)"',
+            'cd "$ROOT"',
+            "mkdir -p harness/logs provision",
+            "write_blocked() {",
+            "  cat > provision/provision.json <<'PROVISIONJSON'",
+            payload_json,
+            "PROVISIONJSON",
+            "  python3 - <<'PROVISIONLOG'",
+            "import json",
+            "payload=json.load(open('provision/provision.json'))",
+            "open('provision/provision.log','w').write(f\"[provision] {payload['status']}: {payload['note']}\\n\")",
+            "print(f\"provision: {payload['status']} ({payload['note']})\")",
+            "PROVISIONLOG",
+            "}",
+            "preflight_backend() {",
+            "  if [ -n \"$QEMU_PREFLIGHT\" ] && ! command -v \"$QEMU_PREFLIGHT\" >/dev/null 2>&1; then",
+            "    echo \"[cvehunt] $QEMU_PREFLIGHT not found; QEMU execution unavailable\" > harness/logs/target-stack.log",
+            "  else",
+            "    echo \"[cvehunt] $BACKEND target is not executable until required artifacts/backend adapter are present\" > harness/logs/target-stack.log",
+            "  fi",
+            "}",
+            "case \"${1:-up}\" in",
+            "  build) preflight_backend; write_blocked ;;",
+            "  up) preflight_backend; write_blocked ;;",
+            "  probe) write_blocked ;;",
+            "  logs) cat harness/logs/target-stack.log 2>/dev/null || true ;;",
+            "  down) true ;;",
             "  *) echo 'usage: bash harness/run-targets.sh [build|up|probe|logs|down]' >&2; exit 2 ;;",
             "esac",
             "",

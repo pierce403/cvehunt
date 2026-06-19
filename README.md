@@ -34,15 +34,15 @@ PoC artifacts in this repository are scoped to the local CVEHunt harness only:
 - `SafetyPolicy.assert_localhost_scoped` rejects any PoC content that would reach a non-loopback host.
 - The pipeline does not exfiltrate credentials, target real third-party deployments, or fetch weaponized public exploit code.
 
-The PoC validates the harness, not real services. See `ISOLATION.md` for the target-environment policy: Docker is the current implemented userland harness backend, while kernel, Kubernetes escape, container escape, browser, and runtime-boundary CVEs should use disposable VM or microVM backends such as QEMU/KVM, Firecracker, Cloud Hypervisor, or Kata Containers when those backends are implemented.
+The PoC validates the harness, not real services. See `ISOLATION.md` for the target-environment policy: Docker is one backend for userland service CVEs, while kernel, Kubernetes escape, container escape, browser, Windows driver, firmware, and runtime-boundary CVEs default to a QEMU-oriented setup contract. If required media is unavailable, the run records `blocked_needs_artifact` and asks for exact files instead of inventing deployment steps.
 
 ## Current Pipeline
 
 The pipeline is an adversarial exploit/defend loop. Artifacts existing are not evidence; only observed behavior counts.
 
 - `CollectorAgent`: loads CVE metadata from fixtures.
-- `ResearcherAgent`: derives defensive hypotheses, downloads supported package releases (npm and pypi), and writes a real source diff.
-- `HarnessBuilderAgent`: generates Dockerfiles plus a localhost-only `docker-compose.yml` for the vulnerable and patched variants (and a class-level `shim` mini-service for `sql injection`).
+- `ResearcherAgent`: derives defensive hypotheses, downloads supported package releases (npm and pypi), writes a real source diff when possible, and otherwise records required target artifacts.
+- `HarnessBuilderAgent`: generates Dockerfiles plus a localhost-only `docker-compose.yml` for Docker-safe vulnerable/patched variants, or emits a backend-agnostic `harness/target-environment.json`, `harness/SETUP.md`, and `harness/run-targets.sh` contract for QEMU/manual-artifact targets.
 - `ProvisionAgent` (with `--execute-poc`): builds and starts the harness, health-checks each target, and records per-target `servable`/`not_servable` in `provision/provision.json`. The vulnerable surface must be servable before exploit development proceeds.
 - `ExploiterAgent`: emits a localhost-scoped PoC (`exploiter/poc.py`) and runner (`exploiter/run-poc.sh`) keyed on the inferred vulnerability class.
 - `HarnessRunnerAgent` (with `--execute-poc`): runs the orchestrator and tees `exploiter/outcome.json`.

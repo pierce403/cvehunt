@@ -250,10 +250,140 @@ def test_unsupported_ecosystem_without_fixture_fails_differential_check(tmp_path
     assert report.sources is not None
     assert report.sources.status == "not_supported"
     assert report.harness is not None
-    assert report.harness.status == "not_supported"
+    assert report.harness.status == "blocked_needs_artifact"
     assert report.exploiter is not None
     assert report.exploiter.status == "not_supported"
-    assert report.judgement.status == "insufficient_evidence"
+    assert report.judgement.status == "blocked_needs_artifact"
+    target_env = json.loads(
+        (tmp_path / "artifacts" / "harness" / "target-environment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert target_env["backend"] == "manual_artifact_required"
+    assert target_env["target_class"] == "userland_service"
+    assert "vulnerable_target_artifact" in target_env["missing_artifacts"]
+    assert (tmp_path / "artifacts" / "harness" / "SETUP.md").exists()
+    assert (tmp_path / "artifacts" / "harness" / "run-targets.sh").exists()
+
+
+def test_linux_kernel_cve_selects_qemu_and_requests_artifacts(tmp_path) -> None:
+    workflow = CveHuntWorkflow()
+    cve = CveRecord(
+        cve_id="CVE-2099-0100",
+        name="LinuxKernelBug",
+        summary="A Linux kernel eBPF use-after-free can trigger privilege escalation.",
+        cvss=9.8,
+        disclosed="2099-02-01",
+        ecosystem="linux-kernel",
+        vulnerable_versions=["linux 6.1.0"],
+        patched_versions=["linux 6.1.1"],
+    )
+    report, _events = workflow.run_with_trace(
+        "CVE-2099-0100",
+        cve_record=cve,
+        artifact_root=tmp_path / "artifacts",
+        execute_poc=True,
+    )
+
+    assert report.harness is not None
+    assert report.harness.status == "blocked_needs_artifact"
+    assert report.provision is not None
+    assert report.provision.status == "blocked_needs_artifact"
+    assert report.judgement.status == "blocked_needs_artifact"
+    harness_dir = tmp_path / "artifacts" / "harness"
+    target_env = json.loads((harness_dir / "target-environment.json").read_text(encoding="utf-8"))
+    qemu_target = json.loads((harness_dir / "qemu" / "target.json").read_text(encoding="utf-8"))
+    deploy_script = (harness_dir / "run-targets.sh").read_text(encoding="utf-8")
+    setup_md = (harness_dir / "SETUP.md").read_text(encoding="utf-8")
+    assert target_env["target_class"] == "linux_kernel"
+    assert target_env["backend"] == "qemu_vm"
+    assert target_env["instrumentation"]["engine"] == "qemu_trace"
+    assert "vulnerable_kernel_image" in target_env["missing_artifacts"]
+    assert qemu_target["guest_os"] == "linux"
+    assert "qemu-system-x86_64" in deploy_script
+    assert "blocked_needs_artifact" in deploy_script
+    assert "QEMU Profile" in setup_md
+    assert "vulnerable_kernel_image" in setup_md
+    subprocess.run(
+        ["bash", str(harness_dir / "run-targets.sh"), "up"],
+        cwd=tmp_path / "artifacts",
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    provision = json.loads(
+        (tmp_path / "artifacts" / "provision" / "provision.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert provision["status"] == "blocked_needs_artifact"
+    assert "vulnerable_kernel_image" in provision["missing_artifacts"]
+
+
+def test_windows_driver_cve_requests_vm_and_driver_installers(tmp_path) -> None:
+    workflow = CveHuntWorkflow()
+    cve = CveRecord(
+        cve_id="CVE-2099-0101",
+        name="WindowsDriverBug",
+        summary="A Windows driver kernel-mode driver flaw allows local privilege escalation.",
+        cvss=8.8,
+        disclosed="2099-02-02",
+        ecosystem="windows",
+        vulnerable_versions=["Vendor Driver 1.0"],
+        patched_versions=["Vendor Driver 1.1"],
+    )
+    report, _events = workflow.run_with_trace(
+        "CVE-2099-0101",
+        cve_record=cve,
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    target_env = json.loads(
+        (tmp_path / "artifacts" / "harness" / "target-environment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report.harness is not None
+    assert report.harness.status == "blocked_needs_artifact"
+    assert report.judgement.status == "blocked_needs_artifact"
+    assert target_env["target_class"] == "windows_driver"
+    assert target_env["backend"] == "qemu_vm"
+    assert target_env["qemu"]["guest_os"] == "windows"
+    assert "windows_base_image" in target_env["missing_artifacts"]
+    assert "vulnerable_driver_installer" in target_env["missing_artifacts"]
+    assert "patched_driver_installer" in target_env["missing_artifacts"]
+
+
+def test_container_escape_requires_qemu_not_host_docker(tmp_path) -> None:
+    workflow = CveHuntWorkflow()
+    cve = CveRecord(
+        cve_id="CVE-2099-0102",
+        name="ContainerEscapeBug",
+        summary="A runc container escape reaches the host namespace from a crafted container.",
+        cvss=9.8,
+        disclosed="2099-02-03",
+        ecosystem="container-runtime",
+        vulnerable_versions=["runc 1.0.0"],
+        patched_versions=["runc 1.0.1"],
+    )
+    report, _events = workflow.run_with_trace(
+        "CVE-2099-0102",
+        cve_record=cve,
+        artifact_root=tmp_path / "artifacts",
+    )
+
+    target_env = json.loads(
+        (tmp_path / "artifacts" / "harness" / "target-environment.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report.harness is not None
+    assert report.harness.status == "blocked_needs_artifact"
+    assert target_env["target_class"] == "container_escape"
+    assert target_env["backend"] == "qemu_vm"
+    assert target_env["deployment"]["isolation_backend"] == "qemu_vm"
+    assert target_env["deployment"]["loopback_only"] is False
+    assert "host Docker must not be the target boundary" in target_env["safety_boundaries"][0]
 
 
 def _patch_pypi_researcher(monkeypatch) -> None:
@@ -419,7 +549,7 @@ def test_litellm_harness_emits_config_and_postgres_sidecar(monkeypatch, tmp_path
         "shim-patched",
     }
     assert "## Agent Contract" in setup_md
-    assert "not servable unless `/health/readiness` answers" in setup_md
+    assert "not servable unless its declared readiness probe" in setup_md
     assert "case \"${1:-up}\" in" in deploy_script
     assert "build|up|probe|logs|down" in deploy_script
     assert "/__cvehunt/probe" in deploy_script

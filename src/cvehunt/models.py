@@ -18,6 +18,8 @@ ExploitabilityStatus = Literal[
     "patch_verified",
     "residual_bypass_found",
     "target_not_servable",
+    "blocked_needs_artifact",
+    "backend_unavailable",
 ]
 
 
@@ -54,7 +56,7 @@ class ChangedFile:
     patch_signal: str | None = None
 
 
-SourceStatus = Literal["materialized", "not_supported", "failed"]
+SourceStatus = Literal["materialized", "not_supported", "failed", "blocked_needs_artifact"]
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,13 @@ class ValidationPlan:
     forbidden_outputs: list[str]
 
 
-HarnessStatus = Literal["built", "not_supported", "failed"]
+HarnessStatus = Literal[
+    "built",
+    "not_supported",
+    "failed",
+    "blocked_needs_artifact",
+    "backend_unavailable",
+]
 
 
 @dataclass(frozen=True)
@@ -128,6 +136,8 @@ ProvisionStatus = Literal[
     "partially_servable",
     "not_servable",
     "skipped",
+    "blocked_needs_artifact",
+    "backend_unavailable",
 ]
 
 
