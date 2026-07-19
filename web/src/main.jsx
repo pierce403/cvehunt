@@ -411,6 +411,9 @@ function InlineRunDetails({ item }) {
             <Artifact href={item.artifacts.source_diff_url} label="source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
             <Artifact href={item.artifacts.harness_readme_url} label="harness/README.md" disabled={!item.artifacts.harness_readme_exists} />
             <Artifact href={item.artifacts.exploiter_stub_url} label="exploiter/README.md" disabled={!item.artifacts.exploiter_stub_exists} />
+            <Artifact href={item.artifacts.full_chain_poc_url} label="exploiter/full-chain-poc.py" disabled={!item.artifacts.full_chain_poc_exists} />
+            <Artifact href={item.artifacts.full_chain_runner_url} label="exploiter/run-full-chain.sh" disabled={!item.artifacts.full_chain_runner_exists} />
+            <Artifact href={item.artifacts.full_chain_readme_url} label="exploiter/FULL_CHAIN.md" disabled={!item.artifacts.full_chain_readme_exists} />
             <Artifact href={item.artifacts.exploiter_investigation_url} label="exploiter/investigation.md" disabled={!item.artifacts.exploiter_investigation_exists} />
           </div>
         </section>
@@ -462,6 +465,29 @@ function Detail({ item, data }) {
         <Info label="Model" value={item.model_title || item.report?.run?.model || item.pipeline_status?.model || 'none'} />
         <Info label="Model label" value={item.model_label || item.report?.run?.model || 'none'} />
       </section>
+
+      {exploiter?.full_chain_verified && item.artifacts.full_chain_poc_exists && (
+        <section className="panel">
+          <div className="panelTitle">
+            <ShieldCheck size={18} />
+            Complete exploit chain — verified
+          </div>
+          <div className="pocVerdict ok">
+            <strong>Pre-authentication RCE reproduced on WordPress 6.9.4 and blocked on WordPress 6.9.5</strong>
+          </div>
+          <p>{exploiter.message}</p>
+          <p className="mutedText">
+            CVE-2026-63030 chained with {(exploiter.related_cves || []).join(', ')}. The published PoC is restricted to the fixed loopback-only disposable harness and exact benign command canary.
+          </p>
+          <div className="artifactGrid">
+            <Artifact href={item.artifacts.full_chain_poc_url} label="Complete full-chain PoC" />
+            <Artifact href={item.artifacts.full_chain_runner_url} label="Affected/patched replay runner" disabled={!item.artifacts.full_chain_runner_exists} />
+            <Artifact href={item.artifacts.full_chain_outcome_url} label="Executed affected/patched result" disabled={!item.artifacts.full_chain_outcome_exists} />
+            <Artifact href={item.artifacts.full_chain_readme_url} label="Replay and safety documentation" disabled={!item.artifacts.full_chain_readme_exists} />
+            <Artifact href={item.artifacts.full_chain_license_url} label="Third-party MIT license" disabled={!item.artifacts.full_chain_license_exists} />
+          </div>
+        </section>
+      )}
 
       <CveRunsPanel item={item} currentRunId={item.run_id} />
       <ModelAttemptPanel item={item} />
@@ -670,6 +696,9 @@ function Detail({ item, data }) {
           <Artifact href={item.artifacts.source_diff_url} label="research/source_diff.patch" disabled={!item.artifacts.source_diff_exists} />
           <Artifact href={item.artifacts.harness_readme_url} label="harness/README.md" disabled={!item.artifacts.harness_readme_exists} />
           <Artifact href={item.artifacts.exploiter_stub_url} label="exploiter/README.md" disabled={!item.artifacts.exploiter_stub_exists} />
+          <Artifact href={item.artifacts.full_chain_poc_url} label="exploiter/full-chain-poc.py" disabled={!item.artifacts.full_chain_poc_exists} />
+          <Artifact href={item.artifacts.full_chain_runner_url} label="exploiter/run-full-chain.sh" disabled={!item.artifacts.full_chain_runner_exists} />
+          <Artifact href={item.artifacts.full_chain_readme_url} label="exploiter/FULL_CHAIN.md" disabled={!item.artifacts.full_chain_readme_exists} />
           <Artifact href={item.artifacts.exploiter_investigation_url} label="exploiter/investigation.md" disabled={!item.artifacts.exploiter_investigation_exists} />
           <Artifact href={item.artifacts.exploiter_investigation_json_url} label="exploiter/investigation.json" disabled={!item.artifacts.exploiter_investigation_json_exists} />
         </div>
