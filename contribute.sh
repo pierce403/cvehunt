@@ -21,8 +21,8 @@ Options:
   --dry-run                Print commands without running them
   --execute-poc            Build/run the localhost harness PoC with --execute-poc
   --skip-execute-poc       Generate artifacts without building/running the target harness
-  --skip-model             Skip the external model evaluation stage
-  --model-timeout SECONDS  External model evaluation timeout
+  --skip-model             Skip both external model evaluation stages
+  --model-timeout SECONDS  Timeout for each external model evaluation stage
   --base-port PORT         Base localhost port for harness targets
   --residual-rounds N      Adversarial residual/variant rounds vs a freshly-started patched target (default 3 when --execute-poc is on)
   --isolation-backend NAME Target isolation preflight backend
@@ -1689,6 +1689,112 @@ MAPY
   echo "Model attempt status: $status (exit code $exit_code); artifacts in $attempt_dir"
 }
 
+run_weaponization_refusal_evaluation() {
+  local cve_id="$1"
+  local run_id="$2"
+  local harness="$3"
+  local model="$4"
+  local model_label="$5"
+  local base_port="${6:-${CVEHUNT_BASE_PORT:-4000}}"
+  local run_dir="cves/$cve_id/runs/$run_id"
+  local attempt_dir="$run_dir/weaponization_attempt"
+  local prompt_path="$attempt_dir/prompt.md"
+  local result_path="$attempt_dir/result.json"
+  local command_path="$attempt_dir/command.txt"
+  local stderr_path="$attempt_dir/stderr.txt"
+  local timeout_seconds="${CVEHUNT_MODEL_TIMEOUT:-600}"
+  local response_tmp
+  local stream_tmp
+  local exit_code=0
+  local invoked_at
+  local completed_at
+  local prompt_text
+
+  if [[ "${CVEHUNT_SKIP_MODEL:-0}" == "1" ]]; then
+    echo "Skipping final weaponization-refusal evaluation because CVEHUNT_SKIP_MODEL=1."
+    return
+  fi
+
+  mkdir -p "$attempt_dir"
+  response_tmp="$(mktemp "${TMPDIR:-/tmp}/cvehunt-weaponization-response.XXXXXX")"
+  stream_tmp="$(mktemp "${TMPDIR:-/tmp}/cvehunt-weaponization-stream.XXXXXX")"
+  : > "$stderr_path"
+
+  uv run python -m cvehunt.weaponization write-prompt "$run_dir" \
+    --cve-id "$cve_id" --run-id "$run_id" --harness "$harness" \
+    --model "$model" --base-port "$base_port" --out "$prompt_path"
+  prompt_text="$(<"$prompt_path")"
+  invoked_at="$(date -u +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  echo "Running final dedicated weaponization-refusal evaluation with $model_label"
+  set +e
+  case "$harness" in
+    pi)
+      printf 'pi -p --no-tools --no-session --mode json --model %q < weaponization_attempt/prompt.md\n' "$model" > "$command_path"
+      run_with_optional_timeout "$timeout_seconds" pi -p --no-tools --no-session --mode json --model "$model" "$prompt_text" > "$stream_tmp" 2> "$stderr_path"
+      exit_code=$?
+      python3 - "$stream_tmp" "$response_tmp" <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+source, target = (Path(value) for value in sys.argv[1:3])
+answer = ""
+for line in source.read_text(encoding="utf-8", errors="replace").splitlines():
+    try:
+        event = json.loads(line)
+    except Exception:
+        continue
+    message = event.get("message") if event.get("type") == "message_end" else None
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        continue
+    for block in message.get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "text" and len(block.get("text", "")) > len(answer):
+            answer = block["text"]
+target.write_text(answer, encoding="utf-8")
+PY
+      ;;
+    codex)
+      printf 'codex exec --model %q --sandbox read-only --cd %q --output-last-message <temporary> - < weaponization_attempt/prompt.md\n' "$model" "$run_dir" > "$command_path"
+      run_with_optional_timeout "$timeout_seconds" codex exec --model "$model" --sandbox read-only --skip-git-repo-check --cd "$run_dir" --output-last-message "$response_tmp" - < "$prompt_path" > "$stream_tmp" 2> "$stderr_path"
+      exit_code=$?
+      if [[ ! -s "$response_tmp" ]]; then
+        cp "$stream_tmp" "$response_tmp"
+      fi
+      ;;
+    gemini)
+      printf 'gemini --model %q --approval-mode plan --prompt <weaponization prompt>\n' "$model" > "$command_path"
+      run_with_optional_timeout "$timeout_seconds" gemini --model "$model" --approval-mode plan --prompt "$prompt_text" > "$response_tmp" 2> "$stderr_path"
+      exit_code=$?
+      ;;
+    claude)
+      printf 'claude --model %q --print <weaponization prompt>\n' "$model" > "$command_path"
+      run_with_optional_timeout "$timeout_seconds" claude --model "$model" --print "$prompt_text" > "$response_tmp" 2> "$stderr_path"
+      exit_code=$?
+      ;;
+    *)
+      printf 'unsupported harness: %s\n' "$harness" > "$command_path"
+      printf 'Weaponization evaluation is not implemented for harness %s.\n' "$harness" > "$response_tmp"
+      printf 'Unsupported harness: %s\n' "$harness" > "$stderr_path"
+      exit_code=2
+      ;;
+  esac
+  set -e
+
+  completed_at="$(date -u +%Y-%m-%dT%H:%M:%S%z 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)"
+  uv run python -m cvehunt.weaponization classify "$response_tmp" \
+    --cve-id "$cve_id" --run-id "$run_id" --harness "$harness" \
+    --model "$model" --model-label "$model_label" --exit-code "$exit_code" \
+    --invoked-at "$invoked_at" --completed-at "$completed_at" \
+    --out "$result_path" --pipeline-status "$run_dir/pipeline_status.json"
+
+  # The site needs the refusal/compliance verdict, not a repository copy of
+  # weaponized code. Preserve only a response hash, classifier evidence, and a
+  # short refusal excerpt in result.json; discard the raw answer and stream.
+  rm -f "$response_tmp" "$stream_tmp"
+  echo "Weaponization-refusal result: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"].upper())' "$result_path")"
+}
+
 write_contribution_audit() {
   local cve_id="$1"
   local run_id="$2"
@@ -1737,9 +1843,11 @@ isolation_backend = os.environ.get("CVEHUNT_AUDIT_ISOLATION_BACKEND", "docker")
 pipeline_status_path = run_dir / "pipeline_status.json"
 report_path = run_dir / "report.json"
 model_attempt_path = run_dir / "model_attempt" / "metadata.json"
+weaponization_result_path = run_dir / "weaponization_attempt" / "result.json"
 pipeline_status = json.loads(pipeline_status_path.read_text(encoding="utf-8")) if pipeline_status_path.exists() else {}
 report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
 model_attempt = json.loads(model_attempt_path.read_text(encoding="utf-8")) if model_attempt_path.exists() else None
+weaponization_result = json.loads(weaponization_result_path.read_text(encoding="utf-8")) if weaponization_result_path.exists() else None
 
 validation_source = {
     "codex": "codex debug models",
@@ -1780,6 +1888,11 @@ audit = {
         "mode": "read_only_bounded_evaluation",
         "artifacts": {},
     },
+    "weaponization_refusal_evaluation": weaponization_result or {
+        "decision": "not_tested",
+        "refused": False,
+        "basis": "final weaponization-refusal stage was skipped or did not produce a result",
+    },
     "interaction_logging": {
         "captured": [
             "./contribute.sh terminal output and prompts in contribution-interaction.log",
@@ -1807,11 +1920,12 @@ audit = {
             "Promote the upstream vulnerable-to-patched diff as a candidate remediation artifact",
             "Run the harness PoC by default in ./contribute.sh unless CVEHUNT_EXECUTE_POC=0 / --skip-execute-poc is set",
             "Invoke supported selected model harnesses after artifacts are persisted and extract safety-checked model-authored files under model_attempt/",
+            "Run a final no-tools, read-only, fixed-loopback weaponization-refusal evaluation and publish its verdict without publishing the raw weaponized response",
         ],
         "refuses": [
             "Target real third-party systems",
             "Generate non-localhost PoC targets or environment-overridable target hosts",
-            "Add reverse shells, bind shells, credential exfiltration, or weaponization guidance",
+            "Publish the raw response from the weaponization-refusal evaluation; only its hash, verdict, classifier evidence, and safe refusal excerpt are durable",
             "Treat unsupported ecosystems as validated without local evidence",
         ],
         "not_yet_implemented": [
@@ -1842,6 +1956,8 @@ audit = {
         "report": "report.json",
         "human_report": "report.md",
         "model_attempt": "model_attempt/metadata.json",
+        "weaponization_prompt": "weaponization_attempt/prompt.md",
+        "weaponization_result": "weaponization_attempt/result.json",
     },
 }
 
@@ -1875,6 +1991,18 @@ lines.extend([
 ])
 for label, path in (audit["model_invocation"].get("artifacts") or {}).items():
     lines.append(f"- {label}: {path}")
+weaponization = audit["weaponization_refusal_evaluation"]
+lines.extend([
+    "",
+    "## Weaponization Refusal Evaluation",
+    "",
+    f"- Decision: {str(weaponization.get('decision', 'not_tested')).upper()}",
+    f"- Refused: {'yes' if weaponization.get('refused') else 'no'}",
+    f"- Basis: {weaponization.get('basis', 'n/a')}",
+    f"- Raw response published: {'yes' if weaponization.get('raw_response_published') else 'no'}",
+    "- Result: weaponization_attempt/result.json",
+    "- Prompt: weaponization_attempt/prompt.md",
+])
 lines.extend(["", "## Isolation", "", f"- Selected backend: {isolation_backend}", "- Preflight log: isolation-preflight.log", f"- Policy: {audit['isolation']['policy']}"])
 lines.extend(["", "## Pipeline Will Do", ""])
 lines.extend(f"- {item}" for item in audit["pipeline_boundaries"]["will_do"])
@@ -2036,7 +2164,7 @@ main() {
   if [[ "${CVEHUNT_SKIP_MODEL:-0}" == "1" ]]; then
     echo "  Model invocation: disabled by CVEHUNT_SKIP_MODEL=1 / --skip-model."
   else
-    echo "  Model invocation: enabled; will request bounded artifacts and extract safety-checked files under model_attempt/."
+    echo "  Model invocation: enabled; will request bounded artifacts under model_attempt/, then run a separate no-tools weaponization-refusal evaluation."
   fi
   if [[ "${CVEHUNT_EXECUTE_POC:-0}" == "1" ]]; then
     echo "  Target execution: enabled; will pass --execute-poc to build/run the localhost harness."
@@ -2066,6 +2194,7 @@ main() {
     fi
     if [[ "${CVEHUNT_SKIP_MODEL:-0}" != "1" ]]; then
       printf 'Would invoke external model evaluation via %q using model %q\n' "$harness" "$model"
+      printf 'Would invoke final no-tools weaponization-refusal evaluation via %q using model %q\n' "$harness" "$model"
     fi
     if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then
       echo "Would run: pnpm run build"
@@ -2114,6 +2243,7 @@ main() {
   else
     echo "Skipping model PoC verification (no model_attempt/poc.py was authored)"
   fi
+  run_weaponization_refusal_evaluation "$cve_id" "$run_id" "$harness" "$model" "$model_label" "${CVEHUNT_BASE_PORT:-4000}"
   write_contribution_audit "$cve_id" "$run_id" "$harness" "$model" "$model_label" "$run_json_output" "$contribution_log" "$isolation_preflight_log"
 
   if [[ "${CVEHUNT_SKIP_BUILD:-0}" != "1" ]]; then

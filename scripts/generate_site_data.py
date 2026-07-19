@@ -249,6 +249,10 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     model_attempt_reasoning_path = artifact_dir / "model_attempt" / "reasoning.md"
     model_attempt_raw_response_path = artifact_dir / "model_attempt" / "raw_response.md"
     model_attempt_redaction_path = artifact_dir / "model_attempt" / "redaction_notice.md"
+    weaponization_prompt_path = artifact_dir / "weaponization_attempt" / "prompt.md"
+    weaponization_result_path = artifact_dir / "weaponization_attempt" / "result.json"
+    weaponization_command_path = artifact_dir / "weaponization_attempt" / "command.txt"
+    weaponization_stderr_path = artifact_dir / "weaponization_attempt" / "stderr.txt"
     exploiter_investigation_path = artifact_dir / "exploiter" / "investigation.md"
     exploiter_investigation_json_path = artifact_dir / "exploiter" / "investigation.json"
     report = read_json(report_path)
@@ -257,6 +261,7 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
     progress = summarize_progress(report, trace, pipeline_status)
     model_attempt_meta = read_json(model_attempt_metadata_path)
     model_attempt_summary = _model_attempt_summary(model_attempt_meta, artifact_dir)
+    weaponization_evaluation = read_json(weaponization_result_path)
     artifact_dir_rel = artifact_dir.relative_to(ROOT).as_posix()
     latest_run_rel = run_directory.relative_to(ROOT).as_posix() if run_directory else None
     run_id = None
@@ -278,6 +283,7 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
         "model_label": (report or {}).get("run", {}).get("model") if isinstance(report, dict) else None,
         "model_title": pretty_model_label((report or {}).get("run", {}).get("model") if isinstance(report, dict) else None),
         "model_attempt": model_attempt_summary,
+        "weaponization_evaluation": weaponization_evaluation,
         "artifacts": {
             "workdir": directory.relative_to(ROOT).as_posix(),
             "latest_run": latest_run_rel,
@@ -309,6 +315,10 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_reasoning_url": repo_url(model_attempt_reasoning_path),
             "model_attempt_raw_response_url": repo_url(model_attempt_raw_response_path),
             "model_attempt_redaction_url": repo_url(model_attempt_redaction_path),
+            "weaponization_prompt_url": repo_url(weaponization_prompt_path),
+            "weaponization_result_url": repo_url(weaponization_result_path),
+            "weaponization_command_url": repo_url(weaponization_command_path),
+            "weaponization_stderr_url": repo_url(weaponization_stderr_path),
             "sources_url": repo_url(artifact_dir / "sources", tree=True),
             "source_diff_url": repo_url(artifact_dir / "research" / "source_diff.patch"),
             "harness_readme_url": repo_url(artifact_dir / "harness" / "README.md"),
@@ -352,6 +362,10 @@ def build_item(directory: Path, artifact_dir: Path, run_directory: Path | None) 
             "model_attempt_reasoning_exists": model_attempt_reasoning_path.exists(),
             "model_attempt_raw_response_exists": model_attempt_raw_response_path.exists(),
             "model_attempt_redaction_exists": model_attempt_redaction_path.exists(),
+            "weaponization_prompt_exists": weaponization_prompt_path.exists(),
+            "weaponization_result_exists": weaponization_result_path.exists(),
+            "weaponization_command_exists": weaponization_command_path.exists(),
+            "weaponization_stderr_exists": weaponization_stderr_path.exists(),
             "source_diff_exists": (artifact_dir / "research" / "source_diff.patch").exists(),
             "harness_readme_exists": (artifact_dir / "harness" / "README.md").exists(),
             "exploiter_stub_exists": (artifact_dir / "exploiter" / "README.md").exists(),
@@ -414,6 +428,8 @@ def _compact_run_for_cve_list(item: dict[str, object]) -> dict[str, object]:
     ma = item.get("model_attempt") or {}
     poc = ma.get("poc") or {}
     a = item.get("artifacts") or {}
+    weaponization_value = item.get("weaponization_evaluation")
+    weaponization = weaponization_value if isinstance(weaponization_value, dict) else {}
     is_model_backed = bool(ma.get("harness") or ma.get("model_label"))
     return {
         "run_id": item.get("run_id"),
@@ -427,6 +443,9 @@ def _compact_run_for_cve_list(item: dict[str, object]) -> dict[str, object]:
         "vulnerable_triggered": bool(poc.get("vulnerable_triggered")),
         "patched_blocked": bool(poc.get("patched_blocked")),
         "refusal_detected": bool(ma.get("refusal_detected")),
+        "weaponization_decision": weaponization.get("decision") or "not_tested",
+        "weaponization_refused": bool(weaponization.get("refused")),
+        "weaponization_basis": weaponization.get("basis"),
         "tokens_used": ma.get("tokens_used"),
         "duration_seconds": ma.get("duration_seconds"),
         "run_score": item.get("run_score") or {"score": 0, "max_score": 100, "percent": 0.0},
@@ -520,6 +539,16 @@ def build() -> dict[str, object]:
             "not_analyzed": len(cves) - len(analyzed),
             "high": sum(1 for item in cves if (item["cve"].get("cvss") or 0) >= 7),
             "runs": len(visible_runs),
+            "weaponization_tested": sum(
+                1 for item in visible_runs
+                if isinstance(item.get("weaponization_evaluation"), dict)
+                and item["weaponization_evaluation"].get("decision") not in {None, "not_tested"}
+            ),
+            "weaponization_refused": sum(
+                1 for item in visible_runs
+                if isinstance(item.get("weaponization_evaluation"), dict)
+                and item["weaponization_evaluation"].get("decision") == "refused"
+            ),
         },
         "cves": cves,
         "runs": visible_runs,

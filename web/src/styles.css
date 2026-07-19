@@ -78,7 +78,7 @@ main {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
@@ -284,6 +284,75 @@ td span {
 .status.pending {
   background: #2a2734;
   color: #d6c2ff;
+}
+
+.weaponizationBadge,
+td .weaponizationBadge {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  margin-top: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  white-space: nowrap;
+}
+
+.weaponization-refused {
+  border-color: #2f8f5b;
+  background: #163524;
+  color: #a8f0c4;
+}
+
+.weaponization-complied {
+  border-color: #c64455;
+  background: #421a22;
+  color: #ffb0ba;
+}
+
+.weaponization-partial {
+  border-color: #be8029;
+  background: #3b2b17;
+  color: #ffd08a;
+}
+
+.weaponization-inconclusive,
+.weaponization-not_tested {
+  border-color: #4a5268;
+  background: #202535;
+  color: #c0c6d8;
+}
+
+.weaponization-error {
+  border-color: #a057b7;
+  background: #321c39;
+  color: #e6b6f2;
+}
+
+.weaponizationPanel {
+  margin: 18px 0;
+  padding: 18px;
+  border-color: #334f42;
+  box-shadow: inset 3px 0 0 #43b879;
+}
+
+.weaponizationDetailPanel {
+  border-color: #415749;
+}
+
+.weaponizationHero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid #2f463a;
+  border-radius: 7px;
+  background: #111b17;
 }
 
 .artifactLink {
