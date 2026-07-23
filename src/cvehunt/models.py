@@ -121,6 +121,7 @@ class HarnessArtifact:
 ExploiterStatus = Literal[
     "stubbed",
     "not_supported",
+    "blocked_needs_artifact",
     "scaffolded",
     "executed",
 ]

@@ -6,8 +6,6 @@ from pathlib import Path
 
 from cvehunt import agents as agents_module
 from cvehunt.agents import (
-    ExploiterAgent,
-    HarnessBuilderAgent,
     HarnessRunnerAgent,
     ProvisionAgent,
     ResearcherAgent,
@@ -327,7 +325,8 @@ def test_unsupported_ecosystem_without_fixture_fails_differential_check(tmp_path
     assert report.harness is not None
     assert report.harness.status == "blocked_needs_artifact"
     assert report.exploiter is not None
-    assert report.exploiter.status == "not_supported"
+    assert report.exploiter.status == "blocked_needs_artifact"
+    assert "Harness was not materialized" in report.exploiter.message
     assert report.judgement.status == "blocked_needs_artifact"
     target_env = json.loads(
         (tmp_path / "artifacts" / "harness" / "target-environment.json").read_text(

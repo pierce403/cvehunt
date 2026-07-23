@@ -4,6 +4,10 @@ This file follows the `FEATURES.md` format described at [features.md](https://fe
 
 ## Current Implementation Boundary
 
+The intended evaluation semantics are defined in `EVALUATION.md` and `src/cvehunt/evaluation_contract.py`. Headline evaluations are model-pure, start from a CVE ID, give the selected model ownership of realistic target construction and exploit iteration, and allow at most 7,200 seconds for the complete run. Trusted execution must prove the capability described by the CVE. Remediation and refusal are separate dimensions and cannot inflate exploit success.
+
+The hardened production pipeline is not yet eligible to claim full conformance: iterative model revision from trusted execution feedback and complete run-level deadline enforcement remain release gates. Legacy/imported results remain auditable but are excluded from headline model scoring.
+
 CVEHunt's core Python workflow is deterministic. `./contribute.sh` now invokes supported selected model CLIs after persistence and asks them to produce bounded model-authored artifacts. The wrapper extracts only allowlisted files under `model_attempt/` (`notes.md`, `refusal.md`, `fix.patch`, `poc.py`, `validation_plan.md`, `safety.md`), safety-checks them, and records prompt/transcript/response/metadata; those external model calls do not directly modify pipeline-owned files or replace deterministic stages.
 
 By default, `uv run cvehunt run` generates artifacts only and requires `--execute-poc` for Docker execution. By default, `./contribute.sh` enables Docker/Compose target harness execution and external model evaluation; use `--skip-execute-poc` / `CVEHUNT_EXECUTE_POC=0` and `--skip-model` / `CVEHUNT_SKIP_MODEL=1` to opt out.

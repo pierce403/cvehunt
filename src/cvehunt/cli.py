@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 from cvehunt.dashboard import serve_dashboard, write_dashboard
+from cvehunt.evaluation_contract import DEFAULT_RUN_TIMEOUT_SECONDS
 from cvehunt.models import utc_run_id
 from cvehunt.nvd import fetch_recent_cves
 from cvehunt.reporting import render_markdown
@@ -58,6 +59,38 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    agent_run = subcommands.add_parser(
+        "agent-run", help="Run the fail-closed production model pipeline for a CVE"
+    )
+    agent_run.add_argument("cve_id", help="Canonical CVE identifier")
+    agent_run.add_argument("--run-id", default=None)
+    agent_run.add_argument("--provider", default="pi")
+    agent_run.add_argument("--model", required=True)
+    agent_run.add_argument("--runtime-policy", default="/etc/cvehunt/runtime-policy.json")
+    agent_run.add_argument("--research-policy", default="/etc/cvehunt/research-policy.json")
+    agent_run.add_argument(
+        "--oracle",
+        default=None,
+        help="Hidden oracle (defaults to ~/.config/cvehunt/oracles/<CVE>.json)",
+    )
+    agent_run.add_argument(
+        "--target-policy",
+        default=None,
+        help=(
+            "Pinned target identity policy (required for CVE-specific trusted "
+            "capability adapters; defaults to ~/.config/cvehunt/targets/<CVE>.json)"
+        ),
+    )
+    agent_run.add_argument("--pi-models", default="~/.pi/agent/models.json")
+    agent_run.add_argument("--pi-auth", default="~/.pi/agent/auth.json")
+    agent_run.add_argument(
+        "--timeout",
+        type=float,
+        default=float(DEFAULT_RUN_TIMEOUT_SECONDS),
+        help="Complete evaluation run wall-clock budget in seconds (default: 7200)",
+    )
+    agent_run.add_argument("--json", action="store_true", help="Emit compact JSON")
+
     sync = subcommands.add_parser("sync-recent", help="Fetch recent CVEs from NVD")
     sync.add_argument("--days", type=int, default=7, help="Publication lookback window")
     sync.add_argument("--limit", type=int, default=50, help="Maximum CVEs to fetch")
@@ -105,6 +138,23 @@ def _model_label(value: str | None) -> str:
 
 def main() -> None:
     args = build_parser().parse_args()
+    # Agent preflight must precede WorkdirStore.ensure(): invalid prerequisites
+    # must not create a cves tree or a run directory.
+    if args.command == "agent-run":
+        from cvehunt.agent_entry import AgentEntryError, config_from_args, run_agent
+
+        try:
+            summary = run_agent(config_from_args(args))
+        except AgentEntryError as exc:
+            failure = {
+                "schema": "cvehunt.agent-run-summary/v1",
+                "status": "failed",
+                "error_code": exc.code,
+            }
+            print(json.dumps(failure, indent=None if args.json else 2, sort_keys=True))
+            raise SystemExit(1) from None
+        print(json.dumps(summary, indent=None if args.json else 2, sort_keys=True))
+        return
     store = WorkdirStore(args.data_dir)
     store.ensure()
     if args.command == "run":
