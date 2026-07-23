@@ -36,6 +36,8 @@ cves/*/runs/*/callbacks/
 cves/*/runs/*/envelopes/
 cves/*/runs/*/handoffs/
 cves/*/runs/*/objects/
+cves/*/runs/*/adaptive-feedback/
+cves/*/runs/*/pipeline-ledger.json
 cves/*/runs/*/oracle/
 cves/*/runs/*/oracles/
 cves/*/runs/*/candidates/

@@ -7,6 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from cvehunt.agent_entry import (
+    PUBLIC_RESULT_FIELDS,
+    PUBLIC_STAGE_FIELDS,
+    PUBLIC_TOP_LEVEL_FIELDS,
+)
+from cvehunt.evaluation_contract import EVALUATION_CONTRACT_SCHEMA
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -104,32 +110,54 @@ def _agent_run_fixture(tmp_path: Path) -> tuple[Path, Path]:
     cve_dir = tmp_path / "CVE-2026-63030"
     run_dir = cve_dir / "runs" / "agent-run-1"
     _write_json(cve_dir / "cve.json", {"cve_id": "CVE-2026-63030"})
-    stage_fields = [
-        "stage", "status", "outcome", "authorship", "duration_ms",
-        "input_tokens", "output_tokens", "refusal", "error_code",
-    ]
+    stage_fields = list(PUBLIC_STAGE_FIELDS)
     stages = []
     for stage in (
         "collector", "researcher", "harness_builder", "exploiter",
         "provision_execution", "adversarial_loop", "adversarial_execution",
         "fix_developer", "fix_execution", "validator", "judge", "official_score",
     ):
-        entry = {key: None for key in stage_fields}
-        entry.update(stage=stage, status="completed", outcome="success", authorship="model")
+        entry: dict[str, object] = {key: None for key in stage_fields}
+        entry.update(
+            stage=stage, status="completed", outcome="success",
+            authorship=("model" if stage in {
+                "collector", "researcher", "harness_builder", "exploiter",
+                "adversarial_loop", "fix_developer", "validator", "judge",
+            } else "deterministic"),
+            refusal=False,
+        )
         stages.append(entry)
     result = {
         "schema": "cvehunt.dimensioned-result/v1",
         "implementation_status": "pre_conformance",
         "headline_eligible": False,
         "termination_reason": "trusted_capability_not_proved",
-        "primary_exploit": {"status": "not_proved", "trusted_capability_receipts": []},
-        "defensive_remediation": {"status": "not_attempted"},
+        "run_boundary": {
+            "kind": "wall_clock", "limit_seconds": 7200.0,
+            "elapsed_seconds": 1.0, "deadline_exhausted": False,
+        },
+        "target": {"realism_status": "model_claim_unverified", "identity_commitment": None},
+        "attempts": [],
+        "primary_exploit": {
+            "status": "not_proved", "trusted_capability_receipts": [],
+            "time_to_proof_seconds": None,
+        },
+        "defensive_remediation": {
+            "status": "not_attempted", "fix_commitment": None,
+            "validation_receipts": [],
+        },
+        "safety_refusal": {"status": "not_observed"},
+        "infrastructure": {"disposition": "no_error_observed"},
     }
     public = {
         "schema": "cvehunt.public-pipeline/v1", "run_id": "agent-run-1",
         "cve_id": "CVE-2026-63030",
         "model": {"provider": "pi", "model": "venice/test", "harness": "StageHarness"},
-        "evaluation_contract": {"sha256": site_data.evaluation_contract_sha256()},
+        "evaluation_contract": {
+            "schema": EVALUATION_CONTRACT_SCHEMA,
+            "sha256": site_data.evaluation_contract_sha256(),
+            "run_timeout_seconds": 7200.0,
+        },
         "result": result, "stages": stages,
     }
     public_path = run_dir / "public-pipeline.json"
@@ -143,8 +171,10 @@ def _agent_run_fixture(tmp_path: Path) -> tuple[Path, Path]:
         "exports": [{
             "artifact_id": "public-pipeline", "relative_path": "public-pipeline.json",
             "sha256": hashlib.sha256(public_bytes).hexdigest(), "bytes": len(public_bytes),
-            "classification": "public_summary", "top_level_fields": list(public),
+            "classification": "public_summary",
+            "top_level_fields": list(PUBLIC_TOP_LEVEL_FIELDS),
             "stage_fields": stage_fields,
+            "result_fields": list(PUBLIC_RESULT_FIELDS),
         }],
     })
     return cve_dir, run_dir

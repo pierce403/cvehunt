@@ -9,22 +9,20 @@ an explicit operator step after repository-wide verification.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 from pathlib import Path
 from typing import Mapping
 
-EXPORT_SCHEMA = "cvehunt.public-export-manifest/v1"
-PUBLIC_SCHEMA = "cvehunt.public-pipeline/v1"
-DIMENSIONED_SCHEMA = "cvehunt.dimensioned-result/v1"
+from cvehunt.agent_entry import AgentEntryError, validate_public_export_bundle
+
 _CVE = re.compile(r"^CVE-[0-9]{4}-[0-9]{4,19}$")
 _RUN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-_SHA = re.compile(r"^[0-9a-f]{64}$")
 _MAX_PUBLIC_BYTES = 1024 * 1024
 
 
@@ -33,13 +31,43 @@ class WorkerError(RuntimeError):
 
 
 def _read_regular(path: Path, limit: int = _MAX_PUBLIC_BYTES) -> bytes:
-    info = path.lstat()
-    if path.is_symlink() or not path.is_file() or info.st_nlink != 1 or info.st_size > limit:
-        raise WorkerError("unsafe export file")
-    data = path.read_bytes()
-    if len(data) != info.st_size:
-        raise WorkerError("export changed while reading")
-    return data
+    try:
+        info = path.lstat()
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_size > limit
+        ):
+            raise WorkerError("unsafe export file")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except WorkerError:
+        raise
+    except OSError:
+        raise WorkerError("unsafe export file") from None
+    try:
+        opened = os.fstat(fd)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)
+        ):
+            raise WorkerError("export changed while opening")
+        data = bytearray()
+        while True:
+            block = os.read(fd, min(64 * 1024, limit - len(data) + 1))
+            if not block:
+                break
+            data.extend(block)
+            if len(data) > limit:
+                raise WorkerError("unsafe export file")
+        if len(data) != info.st_size:
+            raise WorkerError("export changed while reading")
+        return bytes(data)
+    except OSError:
+        raise WorkerError("unsafe export file") from None
+    finally:
+        os.close(fd)
 
 
 def _json(path: Path) -> Mapping[str, object]:
@@ -62,57 +90,16 @@ def validate_export_bundle(run_dir: Path, *, cve_id: str, run_id: str) -> tuple[
     manifest = _json(manifest_path)
     public_bytes = _read_regular(public_path)
     public = _json(public_path)
-    expected_manifest_keys = {
-        "schema", "run_id", "cve_id", "disposition",
-        "evaluation_contract_sha256", "headline_eligible", "exports",
-    }
-    if (
-        set(manifest) != expected_manifest_keys
-        or manifest.get("schema") != EXPORT_SCHEMA
-        or manifest.get("cve_id") != cve_id
-        or manifest.get("run_id") != run_id
-        or manifest.get("disposition") not in {"completed", "refused"}
-        or manifest.get("headline_eligible") is not False
-        or not _SHA.fullmatch(str(manifest.get("evaluation_contract_sha256", "")))
-    ):
-        raise WorkerError("export manifest identity or policy mismatch")
-    exports = manifest.get("exports")
-    if not isinstance(exports, list) or len(exports) != 1:
-        raise WorkerError("export manifest must declassify exactly one artifact")
-    export = exports[0]
-    if not isinstance(export, dict) or set(export) != {
-        "artifact_id", "relative_path", "sha256", "bytes", "classification",
-        "top_level_fields", "stage_fields",
-    }:
-        raise WorkerError("invalid export declaration")
-    if (
-        export.get("artifact_id") != "public-pipeline"
-        or export.get("relative_path") != "public-pipeline.json"
-        or export.get("classification") != "public_summary"
-        or export.get("sha256") != hashlib.sha256(public_bytes).hexdigest()
-        or export.get("bytes") != len(public_bytes)
-    ):
-        raise WorkerError("public projection does not match export manifest")
-    top_level = export.get("top_level_fields")
-    if not isinstance(top_level, list) or set(top_level) != set(public):
-        raise WorkerError("public top-level declassification scope mismatch")
-    result = public.get("result")
-    if (
-        public.get("schema") != PUBLIC_SCHEMA
-        or public.get("cve_id") != cve_id
-        or public.get("run_id") != run_id
-        or not isinstance(result, dict)
-        or result.get("schema") != DIMENSIONED_SCHEMA
-        or result.get("implementation_status") != "pre_conformance"
-        or result.get("headline_eligible") is not False
-    ):
-        raise WorkerError("public projection is not a valid pre-conformance result")
-    stage_fields = export.get("stage_fields")
-    stages = public.get("stages")
-    if not isinstance(stage_fields, list) or not isinstance(stages, list) or any(
-        not isinstance(stage, dict) or set(stage) != set(stage_fields) for stage in stages
-    ):
-        raise WorkerError("stage declassification scope mismatch")
+    try:
+        validate_public_export_bundle(
+            manifest,
+            public,
+            public_bytes,
+            expected_cve_id=cve_id,
+            expected_run_id=run_id,
+        )
+    except AgentEntryError:
+        raise WorkerError("invalid public export bundle") from None
     return public_bytes, manifest_bytes
 
 

@@ -46,6 +46,9 @@ _SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
 _ACTIVE_RUN_DEADLINE: ContextVar[float | None] = ContextVar(
     "cvehunt_active_run_deadline", default=None
 )
+_ACTIVE_CLEANUP_RESERVE: ContextVar[float] = ContextVar(
+    "cvehunt_active_cleanup_reserve", default=0.0
+)
 _ENV_SAFE = re.compile(r"^[\x20-\x7e]{0,1024}$")
 _MAX_PLAN_BYTES = 64 * 1024
 _MAX_RESULT_BYTES = 16 * 1024
@@ -77,10 +80,13 @@ def _runtime_deadline(remaining_seconds: float):
         or not 0 < float(remaining_seconds)
     ):
         raise RuntimeValidationError("run deadline is exhausted or invalid")
-    token = _ACTIVE_RUN_DEADLINE.set(time.monotonic() + float(remaining_seconds))
+    seconds = float(remaining_seconds)
+    token = _ACTIVE_RUN_DEADLINE.set(time.monotonic() + seconds)
+    reserve_token = _ACTIVE_CLEANUP_RESERVE.set(min(30.0, seconds * 0.2))
     try:
         yield
     finally:
+        _ACTIVE_CLEANUP_RESERVE.reset(reserve_token)
         _ACTIVE_RUN_DEADLINE.reset(token)
 
 
@@ -913,14 +919,16 @@ class ContainerExecutor:
     def _command(
         self, argv: Sequence[str], audit: list[dict[str, object]], *,
         timeout_seconds: float | None = None, input_data: bytes | None = None,
+        cleanup: bool = False,
     ) -> CommandResult:
         requested_timeout = timeout_seconds or self.command_timeout_seconds
         deadline = _ACTIVE_RUN_DEADLINE.get()
         if deadline is not None:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            available = remaining if cleanup else remaining - _ACTIVE_CLEANUP_RESERVE.get()
+            if available <= 0:
                 raise CommandExecutionError("run deadline exhausted before command")
-            requested_timeout = min(requested_timeout, remaining)
+            requested_timeout = min(requested_timeout, available)
         result = self.runner.run(
             argv,
             timeout_seconds=requested_timeout,
@@ -945,7 +953,10 @@ class ContainerExecutor:
         self, argv: Sequence[str], kind: str, failures: list[str], audit: list[dict[str, object]]
     ) -> None:
         try:
-            self._command(argv, audit, timeout_seconds=min(self.command_timeout_seconds, 30.0))
+            self._command(
+                argv, audit, timeout_seconds=min(self.command_timeout_seconds, 30.0),
+                cleanup=True,
+            )
         except BaseException:
             failures.append(kind)
 

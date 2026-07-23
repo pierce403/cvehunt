@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+import cvehunt.pipeline_runtime as pipeline_runtime
+
 from cvehunt.agent_pipeline import TrustedCallbackContext, TrustedInput
 from cvehunt.pipeline_runtime import (
     CAPABILITY_RECEIPT_SCHEMA,
@@ -310,6 +312,36 @@ def test_complete_attempt_deadline_caps_every_executor_command(tmp_path: Path) -
     )
     assert fake.calls
     assert all(0 < call[2] <= 0.05 for call in fake.calls)
+
+
+def test_runtime_reserves_deadline_budget_for_bounded_cleanup(monkeypatch) -> None:
+    class Clock:
+        value = 100.0
+
+        def __call__(self):
+            return self.value
+
+    clock = Clock()
+    monkeypatch.setattr(pipeline_runtime.time, "monotonic", clock)
+    fake = FakeRunner()
+    bounded = executor(fake)
+    audit = []
+
+    with pipeline_runtime._runtime_deadline(100.0):
+        bounded._command(("docker", "info"), audit)
+        assert fake.calls[-1][2] == pytest.approx(80.0)
+        clock.value = 181.0
+        with pytest.raises(pipeline_runtime.CommandExecutionError, match="deadline"):
+            bounded._command(("docker", "info"), audit)
+        before_cleanup = len(fake.calls)
+        failures = []
+        bounded._cleanup(
+            ("docker", "rm", "--force", "opaque"), "container", failures, audit,
+        )
+
+    assert len(fake.calls) == before_cleanup + 1
+    assert 0 < fake.calls[-1][2] <= 19.0
+    assert failures == []
 
 
 @pytest.mark.parametrize("remaining", [0, -1, float("nan"), float("inf")])

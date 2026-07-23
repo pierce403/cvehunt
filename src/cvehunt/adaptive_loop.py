@@ -123,6 +123,11 @@ def run_adaptive_exploit_loop(
         request = RevisionRequest(cve_id, attempt, remaining, tuple(feedback))
         try:
             revision = revise(request)
+        except (StageContractError, AdaptiveLoopError) as exc:
+            return AdaptiveLoopResult(
+                "model_or_contract_failure", attempt - 1, tuple(feedback), None,
+                error_code=type(exc).__name__,
+            )
         except Exception as exc:
             return AdaptiveLoopResult(
                 "infrastructure_error", attempt - 1, tuple(feedback), None,

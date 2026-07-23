@@ -186,7 +186,12 @@ class FakePipeline:
         public = root / "public-pipeline.json"
         public.write_text(json.dumps({
             "schema": "cvehunt.public-pipeline/v1", "run_id": run_id,
-            "cve_id": cve_id, "model": {},
+            "cve_id": cve_id,
+            "model": {
+                "provider": self.kwargs.get("provider", "pi"),
+                "model": self.kwargs.get("model", "venice/test"),
+                "harness": "StageHarness",
+            },
             "evaluation_contract": evaluation_contract, "result": dimensioned_result,
             "stages": public_entries,
         }))
@@ -341,6 +346,11 @@ def test_success_wires_shared_adapters_and_returns_only_relative_safe_summary(tm
             "stage", "status", "outcome", "authorship", "duration_ms",
             "input_tokens", "output_tokens", "refusal", "error_code",
         ],
+        "result_fields": [
+            "schema", "implementation_status", "headline_eligible", "termination_reason",
+            "run_boundary", "target", "attempts", "primary_exploit",
+            "defensive_remediation", "safety_refusal", "infrastructure",
+        ],
     }]
     serialized = json.dumps(result)
     assert "do-not-persist" not in serialized
@@ -351,6 +361,8 @@ def test_success_wires_shared_adapters_and_returns_only_relative_safe_summary(tm
     assert pipeline.kwargs["enforce_callback_process_boundary"] is True
     assert pipeline.kwargs["adaptive_exploit"] is True
     assert pipeline.kwargs["executor"].kwargs["runner"] is runner
+    assert pipeline.kwargs["executor"].kwargs["max_artifact_bytes"] == 32 * 1024 * 1024
+    assert pipeline.kwargs["executor"].kwargs["max_total_context_bytes"] == 128 * 1024 * 1024
     assert pipeline.kwargs["executor"].kwargs["capability_oracle"] is None
     assert pipeline.kwargs["executor"].kwargs["target_identity_validator"] is None
     stage_harness = pipeline.kwargs["harness_factory"](tmp_path / "stage")

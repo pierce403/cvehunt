@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from cvehunt.agent_entry import AgentEntryError, validate_public_export_bundle
 from cvehunt.evaluation_contract import (
     DEFAULT_RUN_TIMEOUT_SECONDS,
     EVALUATION_CONTRACT_SCHEMA,
@@ -994,6 +995,12 @@ def _agent_run_projection(directory: Path, artifact_dir: Path) -> dict[str, obje
     public = read_json(artifact_dir / "public-pipeline.json")
     if not isinstance(manifest, dict) or not isinstance(public, dict):
         return None
+    public_path = artifact_dir / "public-pipeline.json"
+    try:
+        public_bytes = public_path.read_bytes()
+        validate_public_export_bundle(manifest, public, public_bytes)
+    except (OSError, AgentEntryError):
+        return None
     if set(manifest) != {
         "schema", "run_id", "cve_id", "disposition",
         "evaluation_contract_sha256", "headline_eligible", "exports",
@@ -1002,7 +1009,6 @@ def _agent_run_projection(directory: Path, artifact_dir: Path) -> dict[str, obje
     cve_id = str(manifest.get("cve_id") or "")
     run_id = str(manifest.get("run_id") or "")
     exports = manifest.get("exports")
-    public_path = artifact_dir / "public-pipeline.json"
     if (
         not cve_id.startswith("CVE-")
         or not run_id or "/" in run_id or ".." in run_id
@@ -1017,7 +1023,7 @@ def _agent_run_projection(directory: Path, artifact_dir: Path) -> dict[str, obje
     public_bytes = public_path.read_bytes()
     if not isinstance(export, dict) or set(export) != {
         "artifact_id", "relative_path", "sha256", "bytes", "classification",
-        "top_level_fields", "stage_fields",
+        "top_level_fields", "stage_fields", "result_fields",
     } or (
         export.get("artifact_id") != "public-pipeline"
         or export.get("relative_path") != "public-pipeline.json"

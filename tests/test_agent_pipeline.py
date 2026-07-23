@@ -370,6 +370,21 @@ def test_agent_pipeline_repeats_same_model_with_bounded_host_feedback(tmp_path):
     assert set(feedback) == {"schema", "cve_id", "attempt", "receipts"}
     assert len(feedback["receipts"]) == 1
     assert "candidate_stdout" not in json.dumps(feedback)
+    adversarial_request = next(
+        item for item in factory.requests if item.stage == "adversarial_loop"
+    )
+    revised_packet_input = next(
+        item for item in adversarial_request.inputs
+        if item.destination == "predecessors/exploiter.json"
+    )
+    revised_packet = json.loads(revised_packet_input.source.read_text())
+    original_envelope = json.loads(
+        (result.ledger_path.parent / "envelopes" / "exploiter.json").read_text()
+    )
+    assert revised_packet["invocation_id"] != original_envelope["invocation_id"]
+    assert revised_packet["envelope_sha256"] != hashlib.sha256(
+        json.dumps(original_envelope, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     dimensioned = json.loads(result.ledger_path.read_text())["result"]
     assert dimensioned["primary_exploit"]["status"] == "proved"
     provision_attempts = [
@@ -377,6 +392,80 @@ def test_agent_pipeline_repeats_same_model_with_bounded_host_feedback(tmp_path):
         if item["stage"] == "provision_execution"
     ]
     assert [item["trusted_result"] for item in provision_attempts] == [False, True]
+
+
+def test_adaptive_revision_limit_is_preserved_as_dimensioned_termination(tmp_path):
+    class UnprovedExecutor(FakeExecutor):
+        def provision_and_execute(self, *, context, output_dir):
+            del context, output_dir
+            self.calls += 1
+            payload = json.loads(json.dumps(PAYLOADS["provision_execution"]))
+            observed = capability_receipt(trusted=False)
+            observed["oracle_digest"] = "4" * 64
+            payload["candidate_runs"] = [observed]
+            return TrustedStageOutput(payload)
+
+    target = tmp_path / "target.json"
+    target.write_text('{"schema":"cvehunt.target/v1","cve_id":"CVE-2026-12345"}')
+    pipeline = AgentPipeline(
+        tmp_path / "runs", harness_factory=FakeFactory(), executor=UnprovedExecutor(),
+        scorer=FakeScorer(), provider="pi", model="evaluated/model",
+        adaptive_exploit=True, max_revision_attempts=1,
+    )
+
+    result = pipeline.run(
+        run_id="run", cve_id="CVE-2026-12345", target_contract=target,
+    )
+    dimensioned = json.loads(result.ledger_path.read_text())["result"]
+
+    assert result.completed
+    assert dimensioned["termination_reason"] == "revision_limit_exhausted"
+    assert dimensioned["primary_exploit"]["status"] == "not_proved"
+
+
+def test_adaptive_malformed_revision_is_contract_failure_not_infrastructure(tmp_path):
+    class MalformedRevisionHarness(FakeHarness):
+        def run(self, request):
+            prior_exploiter_calls = sum(
+                item.stage == "exploiter" for item in self.owner.requests
+            )
+            if request.stage == "exploiter" and prior_exploiter_calls == 1:
+                self.owner.behavior["exploiter"] = "malformed"
+            return super().run(request)
+
+    class MalformedRevisionFactory(FakeFactory):
+        def __call__(self, root):
+            self.roots.append(root)
+            return MalformedRevisionHarness(root, self)
+
+    class UnprovedExecutor(FakeExecutor):
+        def provision_and_execute(self, *, context, output_dir):
+            del context, output_dir
+            self.calls += 1
+            payload = json.loads(json.dumps(PAYLOADS["provision_execution"]))
+            observed = capability_receipt(trusted=False)
+            observed["oracle_digest"] = "4" * 64
+            payload["candidate_runs"] = [observed]
+            return TrustedStageOutput(payload)
+
+    target = tmp_path / "target.json"
+    target.write_text('{"schema":"cvehunt.target/v1","cve_id":"CVE-2026-12345"}')
+    pipeline = AgentPipeline(
+        tmp_path / "runs", harness_factory=MalformedRevisionFactory(),
+        executor=UnprovedExecutor(), scorer=FakeScorer(), provider="pi",
+        model="evaluated/model", adaptive_exploit=True, max_revision_attempts=2,
+    )
+
+    result = pipeline.run(
+        run_id="run", cve_id="CVE-2026-12345", target_contract=target,
+    )
+    ledger = json.loads(result.ledger_path.read_text())
+    failed = ledger["stages"][4]
+
+    assert result.failed_stage == "provision_execution"
+    assert failed["status"] == "invalid_output"
+    assert failed["error_code"] == "StageContractError"
+    assert ledger["result"]["termination_reason"] == "model_or_contract_failure"
 
 
 def test_remediation_is_scored_independently_and_cannot_change_primary(tmp_path):

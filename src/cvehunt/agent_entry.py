@@ -38,7 +38,7 @@ from .pipeline_runtime import (
     HiddenOracleScorer,
     SubprocessCommandRunner,
 )
-from .stage_contracts import CAPABILITY_RECEIPT_SCHEMA, MODEL_STAGES, STAGES
+from .stage_contracts import CAPABILITY_RECEIPT_SCHEMA, MODEL_STAGES, OUTCOMES, STAGES
 from .stage_harness import StageHarness
 
 RUNTIME_POLICY_SCHEMA = "cvehunt.runtime-policy/v1"
@@ -46,6 +46,18 @@ SUMMARY_SCHEMA = "cvehunt.agent-run-summary/v1"
 LEDGER_SCHEMA = "cvehunt.pipeline-ledger/v1"
 PUBLIC_SCHEMA = "cvehunt.public-pipeline/v1"
 PUBLIC_EXPORT_MANIFEST_SCHEMA = "cvehunt.public-export-manifest/v1"
+PUBLIC_TOP_LEVEL_FIELDS = (
+    "schema", "run_id", "cve_id", "model", "evaluation_contract", "result", "stages",
+)
+PUBLIC_STAGE_FIELDS = (
+    "stage", "status", "outcome", "authorship", "duration_ms",
+    "input_tokens", "output_tokens", "refusal", "error_code",
+)
+PUBLIC_RESULT_FIELDS = (
+    "schema", "implementation_status", "headline_eligible", "termination_reason",
+    "run_boundary", "target", "attempts", "primary_exploit",
+    "defensive_remediation", "safety_refusal", "infrastructure",
+)
 _MAX_JSON = 1024 * 1024
 _CVE = re.compile(r"^CVE-[0-9]{4}-[0-9]{4,19}$")
 _RUN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -417,7 +429,9 @@ def validate_publishable_result(
         or _digest(result.ledger_path) != result.ledger_sha256
     ):
         raise AgentEntryError("invalid_pipeline_ledger")
-    _validate_dimensioned_result(ledger.get("result"), run_timeout)
+    _validate_dimensioned_result(
+        ledger.get("result"), run_timeout, expected_cve_id=cve_id,
+    )
     refusal_at: int | None = None
     for index, (stage, entry) in enumerate(zip(STAGES, ledger["stages"], strict=True)):
         projection = public["stages"][index]
@@ -484,13 +498,11 @@ def validate_publishable_result(
     return "refused"
 
 
-def _validate_dimensioned_result(value: object, run_timeout: object) -> None:
+def _validate_dimensioned_result(
+    value: object, run_timeout: object, *, expected_cve_id: str | None = None,
+) -> None:
     """Validate independent dimensions without allowing self-report success."""
-    if not isinstance(value, dict) or set(value) != {
-        "schema", "implementation_status", "headline_eligible", "termination_reason",
-        "run_boundary", "target", "attempts", "primary_exploit",
-        "defensive_remediation", "safety_refusal", "infrastructure",
-    }:
+    if not isinstance(value, dict) or set(value) != set(PUBLIC_RESULT_FIELDS):
         raise AgentEntryError("invalid_pipeline_ledger")
     boundary = value.get("run_boundary")
     target = value.get("target")
@@ -555,6 +567,10 @@ def _validate_dimensioned_result(value: object, run_timeout: object) -> None:
             or attempt["ordinal"] <= 0
             or attempt.get("schema") != CAPABILITY_RECEIPT_SCHEMA
             or not isinstance(attempt.get("cve_id"), str)
+            or (
+                expected_cve_id is not None
+                and attempt.get("cve_id") != expected_cve_id
+            )
             or not isinstance(attempt.get("variant"), str)
             or not _SHA.fullmatch(str(attempt.get("candidate_commitment", "")))
             or not _SHA.fullmatch(str(attempt.get("target_digest", "")))
@@ -632,6 +648,176 @@ def _validate_dimensioned_result(value: object, run_timeout: object) -> None:
         raise AgentEntryError("invalid_pipeline_ledger")
 
 
+def validate_public_export_bundle(
+    manifest: object,
+    public: object,
+    public_bytes: bytes,
+    *,
+    expected_cve_id: str | None = None,
+    expected_run_id: str | None = None,
+) -> None:
+    """Validate the complete declassification scope and dimensioned projection."""
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "schema", "run_id", "cve_id", "disposition",
+        "evaluation_contract_sha256", "headline_eligible", "exports",
+    }:
+        raise AgentEntryError("invalid_public_export_manifest")
+    cve_id = manifest.get("cve_id")
+    run_id = manifest.get("run_id")
+    if (
+        manifest.get("schema") != PUBLIC_EXPORT_MANIFEST_SCHEMA
+        or not isinstance(cve_id, str)
+        or not _CVE.fullmatch(cve_id)
+        or not isinstance(run_id, str)
+        or not _RUN.fullmatch(run_id)
+        or (expected_cve_id is not None and cve_id != expected_cve_id)
+        or (expected_run_id is not None and run_id != expected_run_id)
+        or manifest.get("disposition") not in {"completed", "refused"}
+        or manifest.get("headline_eligible") is not False
+        or manifest.get("evaluation_contract_sha256") != evaluation_contract_sha256()
+    ):
+        raise AgentEntryError("invalid_public_export_manifest")
+    exports = manifest.get("exports")
+    if not isinstance(exports, list) or len(exports) != 1:
+        raise AgentEntryError("invalid_public_export_manifest")
+    export = exports[0]
+    if not isinstance(export, dict) or set(export) != {
+        "artifact_id", "relative_path", "sha256", "bytes", "classification",
+        "top_level_fields", "stage_fields", "result_fields",
+    }:
+        raise AgentEntryError("invalid_public_export_manifest")
+    if (
+        export.get("artifact_id") != "public-pipeline"
+        or export.get("relative_path") != "public-pipeline.json"
+        or export.get("classification") != "public_summary"
+        or export.get("sha256") != hashlib.sha256(public_bytes).hexdigest()
+        or export.get("bytes") != len(public_bytes)
+        or export.get("top_level_fields") != list(PUBLIC_TOP_LEVEL_FIELDS)
+        or export.get("stage_fields") != list(PUBLIC_STAGE_FIELDS)
+        or export.get("result_fields") != list(PUBLIC_RESULT_FIELDS)
+    ):
+        raise AgentEntryError("invalid_public_export_manifest")
+    if not isinstance(public, dict) or set(public) != set(PUBLIC_TOP_LEVEL_FIELDS):
+        raise AgentEntryError("invalid_public_pipeline")
+    model = public.get("model")
+    if (
+        not isinstance(model, dict)
+        or set(model) != {"provider", "model", "harness"}
+        or any(
+            not isinstance(model.get(field), str)
+            or not model[field].strip()
+            or len(model[field].encode("utf-8")) > 512
+            or any(ord(character) < 32 for character in model[field])
+            for field in ("provider", "model", "harness")
+        )
+    ):
+        raise AgentEntryError("invalid_public_pipeline")
+    contract = public.get("evaluation_contract")
+    timeout = contract.get("run_timeout_seconds") if isinstance(contract, dict) else None
+    if (
+        public.get("schema") != PUBLIC_SCHEMA
+        or public.get("cve_id") != cve_id
+        or public.get("run_id") != run_id
+        or contract != {
+            "schema": EVALUATION_CONTRACT_SCHEMA,
+            "sha256": evaluation_contract_sha256(),
+            "run_timeout_seconds": timeout,
+        }
+        or not isinstance(timeout, (int, float))
+        or isinstance(timeout, bool)
+        or not 0 < float(timeout) <= DEFAULT_RUN_TIMEOUT_SECONDS
+    ):
+        raise AgentEntryError("invalid_public_pipeline")
+    stages = public.get("stages")
+    if (
+        not isinstance(stages, list)
+        or len(stages) != len(STAGES)
+        or any(
+            not isinstance(item, dict)
+            or set(item) != set(PUBLIC_STAGE_FIELDS)
+            or item.get("stage") != stage
+            or item.get("status") not in {
+                "completed", "refused", "not_run", "timeout", "provider_error",
+                "harness_error", "execution_error", "transport_refusal", "invalid_output",
+            }
+            or not isinstance(item.get("outcome"), str)
+            or item.get("outcome") not in OUTCOMES
+            or (
+                item.get("status") not in {"completed", "refused"}
+                and item.get("outcome") != "none"
+            )
+            or (
+                item.get("status") == "refused"
+                and item.get("outcome") not in {"none", "partial"}
+            )
+            or item.get("authorship") not in {"model", "deterministic", None}
+            or not isinstance(item.get("refusal"), bool)
+            or (
+                item.get("duration_ms") is not None
+                and (
+                    not isinstance(item.get("duration_ms"), (int, float))
+                    or isinstance(item.get("duration_ms"), bool)
+                    or not math.isfinite(float(item["duration_ms"]))
+                    or item["duration_ms"] < 0
+                )
+            )
+            or any(
+                item.get(field) is not None
+                and (
+                    type(item.get(field)) is not int
+                    or item[field] < 0
+                )
+                for field in ("input_tokens", "output_tokens")
+            )
+            or (
+                item.get("error_code") is not None
+                and (
+                    not isinstance(item.get("error_code"), str)
+                    or not _RUN.fullmatch(item["error_code"])
+                )
+            )
+            for stage, item in zip(STAGES, stages, strict=True)
+        )
+    ):
+        raise AgentEntryError("invalid_public_pipeline")
+    refusal_index: int | None = None
+    for index, (stage, item) in enumerate(zip(STAGES, stages, strict=True)):
+        status = item["status"]
+        if refusal_index is None and status == "completed":
+            expected_authorship = "model" if stage in MODEL_STAGES else "deterministic"
+            if (
+                item["authorship"] != expected_authorship
+                or item["refusal"] is not False
+                or item["error_code"] is not None
+            ):
+                raise AgentEntryError("invalid_public_pipeline")
+            continue
+        if refusal_index is None and status == "refused" and stage in MODEL_STAGES:
+            if (
+                item["authorship"] != "model"
+                or item["refusal"] is not True
+                or item["error_code"] is not None
+            ):
+                raise AgentEntryError("invalid_public_pipeline")
+            refusal_index = index
+            continue
+        if refusal_index is not None and status == "not_run":
+            if (
+                item["authorship"] is not None
+                or item["refusal"] is not False
+                or item["error_code"] != "blocked_by_predecessor"
+            ):
+                raise AgentEntryError("invalid_public_pipeline")
+            continue
+        raise AgentEntryError("invalid_public_pipeline")
+    expected_disposition = "refused" if refusal_index is not None else "completed"
+    if manifest.get("disposition") != expected_disposition:
+        raise AgentEntryError("invalid_public_export_manifest")
+    _validate_dimensioned_result(
+        public.get("result"), timeout, expected_cve_id=cve_id,
+    )
+
+
 def write_public_export_manifest(
     result: PipelineResult, *, run_id: str, cve_id: str, disposition: str,
 ) -> Path:
@@ -658,14 +844,9 @@ def write_public_export_manifest(
             "sha256": _digest(result.public_path),
             "bytes": len(_read_file(result.public_path, limit=_MAX_JSON)),
             "classification": "public_summary",
-            "top_level_fields": [
-                "schema", "run_id", "cve_id", "model",
-                "evaluation_contract", "result", "stages",
-            ],
-            "stage_fields": [
-                "stage", "status", "outcome", "authorship", "duration_ms",
-                "input_tokens", "output_tokens", "refusal", "error_code",
-            ],
+            "top_level_fields": [*PUBLIC_TOP_LEVEL_FIELDS],
+            "stage_fields": [*PUBLIC_STAGE_FIELDS],
+            "result_fields": [*PUBLIC_RESULT_FIELDS],
         }],
     }
     encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -679,8 +860,20 @@ def write_public_export_manifest(
             os.fsync(stream.fileno())
     except OSError:
         raise AgentEntryError("public_export_manifest_failed") from None
-    if _json(_read_file(destination, limit=_MAX_JSON), "invalid_public_export_manifest") != manifest:
+    persisted = _json(
+        _read_file(destination, limit=_MAX_JSON), "invalid_public_export_manifest",
+    )
+    if persisted != manifest:
         raise AgentEntryError("invalid_public_export_manifest")
+    validate_public_export_bundle(
+        persisted,
+        _json(
+            _read_file(result.public_path, limit=_MAX_JSON), "invalid_public_pipeline",
+        ),
+        _read_file(result.public_path, limit=_MAX_JSON),
+        expected_cve_id=cve_id,
+        expected_run_id=run_id,
+    )
     return destination
 
 
@@ -866,6 +1059,12 @@ def _run_agent_verified(
             python_runner_image=policy.python_runner_image,
             runner=runner,
             docker_binary=deps.docker_binary,
+            # Match StageHarness's bounded artifact envelope so the model can
+            # carry both official WordPress release archives into the trusted
+            # provenance validator. ContainerExecutor still reads every file
+            # with no-follow, per-file, and aggregate limits before Docker.
+            max_artifact_bytes=32 * 1024 * 1024,
+            max_total_context_bytes=128 * 1024 * 1024,
             capability_oracle=capability_oracle,
             target_identity_validator=target_identity_validator,
         )
@@ -949,5 +1148,6 @@ __all__ = [
     "AgentDependencies", "AgentEntryError", "AgentRunConfig", "PiCredential",
     "RuntimePolicy", "config_from_args", "load_pi_credential", "load_runtime_policy",
     "load_target", "preflight_docker", "run_agent", "validate_identity",
-    "validate_oracle", "validate_publishable_result", "write_public_export_manifest",
+    "validate_oracle", "validate_public_export_bundle", "validate_publishable_result",
+    "write_public_export_manifest",
 ]

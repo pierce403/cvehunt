@@ -9,7 +9,7 @@ from cvehunt.adaptive_loop import (
     TrustedExecution,
     run_adaptive_exploit_loop,
 )
-from cvehunt.stage_contracts import sha256_bytes
+from cvehunt.stage_contracts import StageContractError, sha256_bytes
 
 CVE = "CVE-2026-63030"
 IDENTITY = ModelIdentity("pi", "venice/test", "StageHarness")
@@ -255,6 +255,23 @@ def test_provider_or_executor_exception_is_infrastructure_error() -> None:
     )
     assert executor.termination_reason == "infrastructure_error"
     assert executor.error_code == "OSError"
+
+
+def test_malformed_revision_is_contract_failure_not_infrastructure_error() -> None:
+    result = run_adaptive_exploit_loop(
+        cve_id=CVE,
+        selected_identity=IDENTITY,
+        deadline=110.0,
+        revise=lambda _request: (_ for _ in ()).throw(
+            StageContractError("malformed model revision")
+        ),
+        execute=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError()),
+        monotonic=Clock(),
+    )
+
+    assert result.termination_reason == "model_or_contract_failure"
+    assert result.error_code == "StageContractError"
+    assert result.attempts == 0
 
 
 def test_positive_receipt_rejects_empty_host_observation_commitment() -> None:
