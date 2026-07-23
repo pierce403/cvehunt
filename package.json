@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "generate:data": "uv run python scripts/generate_site_data.py",
-    "build": "pnpm run generate:data && vite build",
-    "dev": "pnpm run generate:data && vite --host 127.0.0.1"
+    "build": "uv run python scripts/generate_site_data.py && vite build",
+    "dev": "uv run python scripts/generate_site_data.py && vite --host 127.0.0.1"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.2",

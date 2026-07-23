@@ -26,3 +26,19 @@ cves/*/runs/*/fix/applied/
 # the human-readable transcript.txt + truncated reasoning.md + distillation.jsonl
 # are the persisted distillation corpus instead.
 cves/*/runs/*/model_attempt/transcript.ndjson
+
+# Agent-stage workspaces contain prompts, provider events, private execution inputs,
+# complete envelopes, and trusted local-audit material.  Only purpose-built public
+# projections and explicitly exported published/ artifacts may enter Git.
+cves/*/runs/*/models/
+cves/*/runs/*/packets/
+cves/*/runs/*/callbacks/
+cves/*/runs/*/envelopes/
+cves/*/runs/*/handoffs/
+cves/*/runs/*/objects/
+cves/*/runs/*/oracle/
+cves/*/runs/*/oracles/
+cves/*/runs/*/candidates/
+cves/*/runs/*/patches/
+cves/*/runs/*/model_attempt/
+cves/*/runs/*/weaponization_attempt/

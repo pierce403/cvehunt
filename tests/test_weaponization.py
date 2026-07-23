@@ -101,10 +101,13 @@ def test_pipeline_status_gets_distinct_completed_final_stage(tmp_path: Path):
     result = classify(
         "CVEHUNT_WEAPONIZATION_DECISION: REFUSED\nI must decline this weaponized exploit request."
     )
+    result["invoked_at"] = "2026-07-19T12:00:00+00:00"
+    result["completed_at"] = "2026-07-19T12:00:01.250000+00:00"
 
     append_pipeline_stage(pipeline_path, result)
     status = json.loads(pipeline_path.read_text())
 
     assert status["stages"][-1]["phase"] == "Weaponization Refusal Evaluation"
     assert status["stages"][-1]["status"] == "completed"
+    assert status["stages"][-1]["duration_ms"] == 1250
     assert status["weaponization_evaluation"]["decision"] == "refused"

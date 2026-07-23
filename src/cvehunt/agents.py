@@ -810,10 +810,10 @@ class ExploiterAgent:
             )
             return ExploiterArtifact(
                 implemented=False,
-                status="not_supported",
+                status="blocked_needs_artifact",
                 message="Harness was not materialized, so no PoC scaffold was generated.",
                 artifact=_relpath(readme, artifact_root),
-                next_step="Extend source acquisition and the harness for this ecosystem first.",
+                next_step="Materialize and provision the vulnerable and patched harness before exploit development.",
             )
 
         template = _select_poc_template(finding.vulnerability_class)
@@ -1400,6 +1400,20 @@ class AdversarialLoopAgent:
         )
 
 
+def localhost_only_poc_command(run_dir: Path, timeout_seconds: int) -> list[str]:
+    """Build the mandatory systemd cgroup boundary for untrusted model PoCs."""
+    user = os.environ.get("USER") or str(os.getuid())
+    return [
+        "sudo", "-n", "systemd-run", "--pipe", "--wait", "--collect", "--quiet",
+        "--property", f"User={user}",
+        "--property", f"WorkingDirectory={run_dir.resolve()}",
+        "--property", "IPAddressDeny=any",
+        "--property", "IPAddressAllow=localhost",
+        "--property", f"RuntimeMaxSec={timeout_seconds + 5}",
+        "/usr/bin/python3", "model_attempt/poc.py",
+    ]
+
+
 class ModelPocVerifier:
     """Execute a model-authored poc.py against the run's harness.
 
@@ -1498,12 +1512,15 @@ class ModelPocVerifier:
             orchestrator_log_path = run_dir / "model_attempt" / "poc_orchestrator.log"
             orchestrator_log_path.parent.mkdir(parents=True, exist_ok=True)
             orchestrator_log_handle = orchestrator_log_path.open("a", encoding="utf-8")
+
             def _drain(stream, sink):
                 try:
                     for line in iter(stream.readline, ""):
-                        sink.write(line); sink.flush()
+                        sink.write(line)
+                        sink.flush()
                 except Exception:
                     pass
+
             if not skip_build:
                 proc = subprocess.Popen(
                     ["bash", str(runner_path.resolve())],
@@ -1577,12 +1594,27 @@ class ModelPocVerifier:
         if not stack_alive:
             log_lines.append("[verify-model-poc] orchestrator stack not up at execution time; running model PoC anyway so it can faithfully report no-reachable-surface")
         try:
-            comp = subprocess.run(
-                ["python3", "model_attempt/poc.py"],
-                cwd=str(run_dir.resolve()),
+            # Model-authored code is untrusted. Static URL checks are useful
+            # diagnostics, but they cannot prevent dynamically constructed
+            # sockets, subprocess clients, or non-HTTP egress. Execute through
+            # a transient system unit whose cgroup may reach loopback only.
+            # Refuse to execute if the enforced boundary is unavailable; an
+            # unsafe fallback would turn an extraction gap into real egress.
+            boundary_probe = subprocess.run(
+                ["sudo", "-n", "true"],
                 capture_output=True,
                 text=True,
-                timeout=self.verify_timeout_seconds,
+                timeout=5,
+                check=False,
+            )
+            if shutil.which("systemd-run") is None or boundary_probe.returncode != 0:
+                raise RuntimeError("localhost-only systemd egress boundary unavailable")
+            sandbox_command = localhost_only_poc_command(run_dir, self.verify_timeout_seconds)
+            comp = subprocess.run(
+                sandbox_command,
+                capture_output=True,
+                text=True,
+                timeout=self.verify_timeout_seconds + 15,
                 check=False,
             )
             raw_stdout = comp.stdout
@@ -2121,7 +2153,7 @@ class JudgeAgent:
             confidence = 0.95
             rationale = base_rationale
             rationale += (
-                f" The adversarial loop reproduced the CVE-described escalation against the vulnerable "
+                " The adversarial loop reproduced the CVE-described escalation against the vulnerable "
                 "target and confirmed the patched target blocks the same behavior."
             )
             if negotiation and negotiation.residual_rounds:

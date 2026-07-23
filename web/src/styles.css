@@ -76,6 +76,147 @@ main {
   padding: 24px 0 48px;
 }
 
+.wordpressBenchmark {
+  margin-bottom: 22px;
+  padding: 22px;
+  border: 1px solid #42517c;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #111827 0%, #0d111c 65%, #171329 100%);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.24);
+}
+
+.benchmarkHeading,
+.benchmarkModelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.benchmarkHeading h2,
+.benchmarkModel h3 {
+  margin: 0;
+}
+
+.benchmarkHeading p:not(.eyebrow) {
+  max-width: 900px;
+  color: #b9c1d8;
+  line-height: 1.5;
+}
+
+.benchmarkHeading > a,
+.benchmarkModel > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #91b4ff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #9cb8ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.benchmarkGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.benchmarkModel {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #2a334c;
+  border-radius: 9px;
+  background: rgba(10, 13, 22, 0.72);
+}
+
+.modelSlug {
+  margin: 5px 0 14px;
+  overflow-wrap: anywhere;
+  color: #8791aa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.benchmarkTotals {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 9px;
+  padding: 10px;
+  border-radius: 7px;
+  background: #111625;
+}
+
+.benchmarkTotals strong {
+  color: #d8e5ff;
+  text-align: right;
+}
+
+.benchmarkTotals span,
+.benchmarkTasks span,
+.benchmarkPending {
+  color: #9ca6bc;
+  font-size: 12px;
+}
+
+.benchmarkStages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 12px 0;
+}
+
+.benchmarkStage {
+  padding: 4px 6px;
+  border: 1px solid #3a4152;
+  border-radius: 5px;
+  color: #abb3c4;
+  font-size: 10px;
+}
+
+.benchmarkStage.completed { border-color: #286649; color: #76d5a4; }
+.benchmarkStage.failed,
+.benchmarkStage.error { border-color: #7d3441; color: #ff9da8; }
+
+.benchmarkTasks {
+  display: grid;
+  gap: 7px;
+}
+
+.benchmarkTasks > div {
+  display: grid;
+  gap: 2px;
+  padding-top: 7px;
+  border-top: 1px solid #242b3b;
+  font-size: 12px;
+}
+
+.benchmarkRefusal {
+  margin: 12px 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #101924;
+  color: #9db3c8;
+  font-size: 12px;
+}
+
+.benchmarkRefusal.present {
+  background: #2b181d;
+  color: #ffabb4;
+}
+
+@media (max-width: 900px) {
+  .benchmarkGrid { grid-template-columns: 1fr; }
+  .benchmarkHeading { display: block; }
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
