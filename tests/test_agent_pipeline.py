@@ -209,8 +209,10 @@ def test_canonical_isolated_hash_linked_pipeline_and_safe_ledger(tmp_path):
         stage: tuple(item.destination for item in request.inputs)
         for stage, request in by_stage.items()
     } == expected_sources
-    assert by_stage["collector"].research and by_stage["researcher"].research
-    assert all(not request.research for name, request in by_stage.items() if name not in {"collector", "researcher"})
+    # collector/researcher/harness_builder are research stages: acquisition of
+    # the real target at harness_builder requires the allowlisted tools.
+    assert by_stage["collector"].research and by_stage["researcher"].research and by_stage["harness_builder"].research
+    assert all(not request.research for name, request in by_stage.items() if name not in {"collector", "researcher", "harness_builder"})
     assert "cvehunt.container-plan/v1" in by_stage["harness_builder"].prompt
     assert BASE_IMAGE in by_stage["harness_builder"].prompt
     assert "RUN,ADD,COPY flags" in by_stage["harness_builder"].prompt
