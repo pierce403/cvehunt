@@ -84,6 +84,16 @@ _MODEL_RAW_ARTIFACT_SOURCES: Mapping[str, frozenset[str]] = MappingProxyType({
 })
 
 
+_MODEL_STAGE_INPUT_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _input_within_model_budget(item: "_InputFile") -> bool:
+    try:
+        return item.source.is_file() and item.source.stat().st_size <= _MODEL_STAGE_INPUT_MAX_BYTES
+    except OSError:
+        return False
+
+
 class PipelineError(RuntimeError):
     """Pipeline configuration or trusted-boundary validation failed."""
 
@@ -444,6 +454,15 @@ class AgentPipeline:
             if stage in MODEL_STAGES and source not in _MODEL_RAW_ARTIFACT_SOURCES[stage]:
                 source_packet = source_packet[:1]
             result.extend(source_packet)
+        if stage in MODEL_STAGES:
+            # Multi-MiB binary acquisitions (official target archives) travel
+            # the trusted object-snapshot path to the executor; they are not
+            # model-stage inputs (the stage input per-file budget is smaller
+            # and stage_read caps text reads at 2 MiB anyway).
+            result = [
+                item for item in result
+                if item is target or _input_within_model_budget(item)
+            ]
         return result
 
     def _run_model(
@@ -1063,8 +1082,14 @@ def _stage_prompt(
             "artifact_id MUST identify one model_input replacement file, and every destination MUST exactly match an "
             "existing Harness Builder container_plan.files destination. Raw patches and replacement files MUST remain model_input."
         )
+    acquisition_rule = (
+        "Do not acquire target release archives (large tarballs/zips) in this stage; "
+        "target acquisition happens only at harness_builder via https_download. "
+        if stage in {"collector", "researcher"} else ""
+    )
     return (
         f"You are the evaluated model author for the {stage} stage. {_ROLE_OBLIGATIONS[stage]}\n"
+        f"{acquisition_rule}"
         "Read exactly this declared manifest; destinations are relative to the isolated input root:\n"
         f"{json.dumps(list(manifest), sort_keys=True, separators=(',', ':'))}\n"
         "Write output/stage_output.json and only declared artifact files under output/. "
