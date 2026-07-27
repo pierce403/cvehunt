@@ -369,9 +369,9 @@ class AgentPipeline:
                 if validated["status"] != "completed":
                     failed = stage
                     error_code = None if validated["status"] == "refused" else "stage_not_completed"
-                    ledger["stages"].append(
-                        _ledger_from_envelope(validated, None, envelope_sha, error_code=error_code)
-                    )
+                    not_completed = _ledger_from_envelope(validated, None, envelope_sha, error_code=error_code)
+                    not_completed["error_message"] = f"stage finished with status {validated['status']}"
+                    ledger["stages"].append(not_completed)
                     continue
                 handoff_path, handoff_sha = write_handoff(validated, root / "handoffs" / f"{stage}.json")
                 if sha256_bytes(_safe_read(handoff_path, 1024 * 1024)) != handoff_sha:
@@ -389,21 +389,28 @@ class AgentPipeline:
                 ledger["stages"].append(ledger_entry)
             except _Stop as exc:
                 failed = stage
-                ledger["stages"].append(_ledger_entry(
+                entry = _ledger_entry(
                     stage, exc.status, exc.outcome, error_code=exc.code, **exc.summary,
-                ))
+                )
+                if exc.__cause__ is not None:
+                    entry["error_message"] = _bounded_error_message(exc.__cause__)
+                ledger["stages"].append(entry)
             except (StageContractError, PipelineError, ValueError, TypeError, OSError, json.JSONDecodeError) as exc:
                 failed = stage
                 status = "execution_error" if stage not in MODEL_STAGES else "invalid_output"
-                ledger["stages"].append(_ledger_entry(
+                entry = _ledger_entry(
                     stage, status, "none", error_code=_error_code(exc), **(attempt or {}),
-                ))
+                )
+                entry["error_message"] = _bounded_error_message(exc)
+                ledger["stages"].append(entry)
             except Exception as exc:  # callbacks/harnesses are untrusted from the orchestrator's perspective
                 failed = stage
                 status = "execution_error" if stage not in MODEL_STAGES else "harness_error"
-                ledger["stages"].append(_ledger_entry(
+                entry = _ledger_entry(
                     stage, status, "none", error_code=type(exc).__name__, **(attempt or {}),
-                ))
+                )
+                entry["error_message"] = _bounded_error_message(exc)
+                ledger["stages"].append(entry)
 
         elapsed_seconds = max(0.0, time.monotonic() - run_started)
         ledger["result"] = _dimensioned_result(
@@ -453,7 +460,10 @@ class AgentPipeline:
         request = StageRequest(
             stage=stage, provider=self.provider, model=self.model, prompt=prompt,
             inputs=tuple(DeclaredInput(item.source, item.destination) for item in inputs),
-            authoring=True, research=stage in {"collector", "researcher"},
+            # harness_builder is a research stage too: the contract requires
+            # the model to *acquire* the real target there (official release
+            # archives), which needs the allowlisted retrieval/download tools.
+            authoring=True, research=stage in {"collector", "researcher", "harness_builder"},
             timeout_seconds=remaining_run_seconds,
         )
         harness = self.harness_factory(
@@ -1058,6 +1068,8 @@ def _stage_prompt(
         "Read exactly this declared manifest; destinations are relative to the isolated input root:\n"
         f"{json.dumps(list(manifest), sort_keys=True, separators=(',', ':'))}\n"
         "Write output/stage_output.json and only declared artifact files under output/. "
+        "stage_write paths are relative to the chosen root: with root=output use e.g. path='docker/Dockerfile', never 'output/...'. "
+        "Declare every file you create under output/ as an artifact; declare only files that actually exist there. "
         "stage_output.json MUST contain exactly status, outcome, payload, artifacts, errors, refusal. "
         "status MUST be exactly \"completed\" or \"refused\" (no other value). "
         "outcome MUST be exactly one of \"success\", \"partial\", \"negative_result\", \"inconclusive\", \"not_applicable\", \"none\". "
@@ -1400,7 +1412,15 @@ def _ledger_entry(
         "envelope_sha256": None, "metrics": dict(metrics) if metrics is not None else None,
         "artifact_ids": [], "refusal": refusal, "refusal_kind": None,
         "substantive_artifacts_produced": None, "error_code": error_code,
+        "error_message": None,
     }
+
+
+def _bounded_error_message(exc: BaseException, limit: int = 300) -> str:
+    """Orchestrator-authored exception text is fixed-vocabulary and safe to
+    record in the private ledger; bound it so derived content can never grow
+    the ledger unboundedly."""
+    return str(exc)[:limit]
 
 
 def _error_code(exc: BaseException) -> str:
