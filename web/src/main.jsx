@@ -49,16 +49,19 @@ function App() {
 
 function Dashboard({ data }) {
   const [query, setQuery] = useState('');
+  const [modalRun, setModalRun] = useState(null);
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return data.runs.filter((run) => !needle || `${run.cve_id} ${run.model_title} ${run.run_id}`.toLowerCase().includes(needle));
   }, [data.runs, query]);
+  const modalCve = modalRun ? data.cves.find((item) => item.cve_id === modalRun.cve_id) : null;
   return <>
     <section className="stats">
       <Stat label="CVEs tracked" value={data.counts.tracked} />
       <Stat label="Runs summarized" value={data.counts.runs} />
       <Stat label="Runs with published artifacts" value={data.counts.publishable_runs} />
     </section>
+    <CveIndex cves={data.cves || []} runs={data.runs || []} onSelect={(id) => setQuery(id)} />
     <section className="panel methodology">
       <div className="panelTitle"><ShieldCheck size={18} /> What this evaluation measures</div>
       <p><strong>Primary result:</strong> can one selected model start from a CVE ID, independently construct a realistic affected target, and iteratively prove the capability described by the CVE within one two-hour run?</p>
@@ -67,20 +70,26 @@ function Dashboard({ data }) {
       <a className="artifactLink" href={data.evaluation_contract.documentation_url}>Read the versioned evaluation contract <ExternalLink size={13} /></a>
     </section>
     <ModelScorecard scorecard={data.model_scorecard || []} />
-    <CveIndex cves={data.cves || []} runs={data.runs || []} onSelect={(id) => setQuery(id)} />
     <section className="controls"><label className="searchBox"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="CVE, model, or run" /></label></section>
     <section className="panel">
       <div className="panelTitle"><ShieldCheck size={18} /> Public run index</div>
-      <p className="mutedText">Every run has a deterministic summary for every canonical phase. Drill-down links expose only site-owned copies of explicitly allowlisted, publishable artifacts. The milestone ladder (I·H·E·W·B·F) shows how far each run got: identified, harnessed, exploited, weaponized, patch-blocked, fix-validated.</p>
+      <p className="mutedText">Every run has a deterministic summary for every canonical phase. Click a run for the quick-look modal; open the full run page for complete phase-by-phase detail. The milestone ladder (I·H·E·W·B·F) shows how far each run got: identified, harnessed, exploited, weaponized, patch-blocked, fix-validated.</p>
       <div className="tableWrap"><table><thead><tr><th>CVE</th><th>Run</th><th>Model</th><th>Status</th><th title="I identified · H harnessed · E exploited · W weaponized · B patch blocked · F fix validated">Milestones</th><th>Phases complete</th><th>Published artifacts</th><th>Open</th></tr></thead>
-        <tbody>{visible.map((run) => <tr key={`${run.cve_id}-${run.run_id}`}>
+        <tbody>{visible.map((run) => <tr
+          key={`${run.cve_id}-${run.run_id}`}
+          className="summaryRow"
+          onClick={() => setModalRun(run)}
+          onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setModalRun(run); } }}
+          tabIndex={0}
+        >
           <td><strong>{run.cve_id}</strong></td><td>{run.run_id}</td><td>{run.model_title}</td>
           <td><span className={`status ${run.status === 'defensive_signal_observed' ? 'analyzed' : 'pending'}`}>{run.status}</span></td>
           <td><MilestoneLadder milestones={run.milestones} /></td>
           <td>{run.phases.filter((phase) => phase.status === 'completed').length}/{run.phases.length}</td><td>{run.artifacts.length}</td>
-          <td><a className="artifactLink" href={`#/run/${encodeURIComponent(run.cve_id)}/${encodeURIComponent(run.run_id)}`}>View run</a></td>
+          <td><a className="artifactLink" href={`#/run/${encodeURIComponent(run.cve_id)}/${encodeURIComponent(run.run_id)}`} onClick={(event) => event.stopPropagation()}>View run</a></td>
         </tr>)}</tbody></table></div>
     </section>
+    {modalRun && <RunModal run={modalRun} cve={modalCve} onClose={() => setModalRun(null)} />}
   </>;
 }
 
@@ -186,6 +195,66 @@ function CveIndex({ cves, runs, onSelect }) {
         ))}</tbody>
       </table></div>
     </section>
+  );
+}
+
+function RunModal({ run, cve, onClose }) {
+  useEffect(() => {
+    function onKey(event) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const detailHref = `#/run/${encodeURIComponent(run.cve_id)}/${encodeURIComponent(run.run_id)}`;
+  return (
+    <div className="modalBackdrop" onClick={onClose} role="presentation">
+      <div className="modalCard" role="dialog" aria-modal="true" aria-label={`Run ${run.run_id}`} onClick={(event) => event.stopPropagation()}>
+        <div className="modalHeader">
+          <div>
+            <strong>{run.cve_id}</strong>
+            <span className="mutedText"> · {run.model_title}</span>
+            {cve?.name && <p className="mutedText">{cve.name}</p>}
+          </div>
+          <button className="modalClose" onClick={onClose} aria-label="Close">×</button>
+        </div>
+        <dl className="definitionList">
+          <Info label="Run" value={run.run_id} />
+          <Info label="Status" value={run.status} />
+          <Info label="Run kind" value={run.run_kind.replaceAll('_', ' ')} />
+          <Info label="Scoring eligible" value={run.model_scoring_eligible ? 'yes' : 'no'} />
+          <Info label="Score" value={`${run.score.earned}/${run.score.available}`} />
+          <Info label="Weaponization decision" value={run.weaponization?.decision || '-'} />
+        </dl>
+        <div className="modalSection">
+          <strong>Milestones — find → exploit → weaponize → patch</strong>
+          <p><MilestoneLadder milestones={run.milestones} showCapability /></p>
+          {run.milestones && (
+            <p className="mutedText">
+              {run.milestones.exploited ? `Escalation observed via ${run.milestones.exploited_via || 'recorded evidence'}.` : 'No escalation observed in this run.'}
+              {run.milestones.patch_blocked ? ` Patched target blocked the same primitive (via ${run.milestones.patch_blocked_via || 'recorded evidence'}).` : ''}
+            </p>
+          )}
+        </div>
+        <div className="modalSection">
+          <strong>Phases</strong>
+          <div className="phaseChipGrid">
+            {run.phases.map((phase) => (
+              <span
+                key={phase.id}
+                className={`phaseChip ${phase.status === 'completed' ? 'ok' : phase.status === 'not_run' || phase.status === 'not_recorded' ? 'no' : 'bad'}`}
+                title={`${phase.name} · ${phase.status} — ${phase.summary}`}
+              >
+                {phase.name} · {phase.status}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="modalFooter">
+          <a className="artifactLink" href={detailHref}>Open full run detail <ExternalLink size={13} /></a>
+        </div>
+      </div>
+    </div>
   );
 }
 

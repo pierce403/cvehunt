@@ -268,6 +268,29 @@ print('transport credential present')
         ).prepare("stage")
 
 
+def test_pi_models_bootstrap_rewrites_env_names_to_interpolation(tmp_path: Path) -> None:
+    """The isolated stage config must authenticate: Pi treats a bare env var
+    NAME as a literal secret (401 at request time), so the bootstrap rewrites
+    validated references to Pi's `$VAR` interpolation form. The sanitized
+    source keeps env names only; the secret lives solely in the process env."""
+    models = tmp_path / "models.json"
+    models.write_text(json.dumps({"providers": {"safe": {
+        "baseUrl": "https://provider.example/v1", "api": "openai-completions",
+        "apiKey": "OPENAI_API_KEY", "models": [{"id": "safe-model"}],
+    }}}))
+    harness = StageHarness(
+        tmp_path / "runs", pi_binary=executable(tmp_path / "pi", "print('x')\n"),
+        pi_extension=tmp_path / "x.ts", pi_models_source=models,
+        provider_environment={"OPENAI_API_KEY": "secret"},
+    )
+    paths = harness.prepare("stage")
+    copied = json.loads((paths.config / "pi" / "models.json").read_text())
+    assert copied["providers"]["safe"]["apiKey"] == "$OPENAI_API_KEY"
+    assert copied["providers"]["safe"]["baseUrl"] == "https://provider.example/v1"
+    # The env name alone is not a usable credential; the source file is unchanged.
+    assert json.loads(models.read_text())["providers"]["safe"]["apiKey"] == "OPENAI_API_KEY"
+
+
 def test_credential_exfiltration_to_stage_is_removed_and_fails_closed(tmp_path: Path) -> None:
     secret = "never-persist-this"
     fake = executable(tmp_path / "pi", """

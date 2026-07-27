@@ -130,8 +130,16 @@ function loadResearchHosts(): ReadonlySet<string> {
   let raw: string;
   try {
     info = fs.fstatSync(descriptor);
-    if (!info.isFile() || info.uid !== 0 || info.nlink !== 1 || (info.mode & 0o022) !== 0) {
-      throw new Error("research policy is not a root-owned, non-writable, single-link regular file");
+    // Production anchors the research policy to root ownership. Single-user
+    // development machines cannot do that, so the dev launcher may pin a
+    // different expected owner via CVEHUNT_STAGE_POLICY_OWNER_UID (the value
+    // must be the numeric uid). When unset, root ownership is required.
+    const ownerOverride = process.env.CVEHUNT_STAGE_POLICY_OWNER_UID;
+    const expectedOwner = ownerOverride !== undefined && /^[0-9]+$/.test(ownerOverride)
+      ? Number(ownerOverride)
+      : 0;
+    if (!info.isFile() || info.uid !== expectedOwner || info.nlink !== 1 || (info.mode & 0o022) !== 0) {
+      throw new Error("research policy is not an expected-owner, non-writable, single-link regular file");
     }
     if (info.size > 64 * 1024) throw new Error("research policy exceeds size limit");
     raw = fs.readFileSync(descriptor, "utf8");

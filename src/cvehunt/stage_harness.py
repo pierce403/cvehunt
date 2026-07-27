@@ -351,8 +351,12 @@ class StageHarness:
                 tools.append("stage_write")
             if request.research:
                 tools.append("https_retrieve")
+            # The stage environment pins PATH=os.defpath, so a bare binary name
+            # only resolves when the harness lives on the system default path.
+            # Resolve to the validated absolute path (same check as preflight)
+            # so stage PATH isolation works with user-local installs (nvm, …).
             argv = [
-                self.pi_binary, "-p", "--no-builtin-tools", "--no-extensions", "--no-skills",
+                str(_resolve_executable(self.pi_binary, "Pi")), "-p", "--no-builtin-tools", "--no-extensions", "--no-skills",
                 "--no-prompt-templates", "--no-context-files", "--tools", ",".join(tools),
                 "--no-session", "--mode", "json", "--offline", "--extension", str(self.pi_extension),
                 "--model", request.model,
@@ -595,6 +599,12 @@ class StageHarness:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise StageHarnessError(f"invalid Pi models.json: {exc}") from exc
         _validate_models_config(model_config, self.provider_environment)
+        # The sanitized source references credential ENVIRONMENT VARIABLE NAMES
+        # only (never literal secrets). Pi's own value resolution treats a bare
+        # name as a literal, which 401s at request time; rewrite each reference
+        # to Pi's `$VAR` interpolation form in the isolated copy so the secret
+        # is resolved from the injected process environment at request time.
+        model_config = _env_reference_to_interpolation(model_config, self.provider_environment)
         encoded = (json.dumps(model_config, indent=2, sort_keys=True) + "\n").encode("utf-8")
         if len(encoded) > self.max_input_file_bytes:
             raise StageHarnessError("sanitized Pi models.json exceeds configured limit")
@@ -668,6 +678,25 @@ def _valid_hostname(value: object) -> bool:
         0 < len(label) <= 63 and re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) is not None
         for label in labels
     )
+
+
+def _env_reference_to_interpolation(value: object, provider_environment: Mapping[str, str]) -> object:
+    """Rewrite validated credential env-name references to Pi `$VAR` form.
+
+    Only values that are exact keys of provider_environment are rewritten, so
+    ordinary strings (base URLs, model ids) pass through unchanged and no
+    literal credential can ever be introduced by this transform.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _env_reference_to_interpolation(child, provider_environment)
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_env_reference_to_interpolation(child, provider_environment) for child in value]
+    if isinstance(value, str) and value in provider_environment and _ENV_NAME.fullmatch(value):
+        return f"${value}"
+    return value
 
 
 def _validate_models_config(value: object, provider_environment: Mapping[str, str]) -> None:

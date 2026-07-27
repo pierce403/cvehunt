@@ -118,6 +118,12 @@ class AgentDependencies:
     expected_root_uid: int = 0
     current_uid: int | None = None
     docker_binary: str = "docker"
+    # Rootless Docker is the production default. Single-user development
+    # machines typically run the stock rootful daemon, so an explicit
+    # administrator opt-out is provided for dev-sample runs only; every
+    # other preflight check (digest-pinned images, bounded docker calls)
+    # is unchanged. Mirrors ContainerExecutor's administrator opt-out.
+    require_rootless_docker: bool = True
 
 
 def validate_identity(cve_id: object, run_id: object) -> tuple[str, str]:
@@ -343,6 +349,7 @@ def preflight_docker(
     runner: CommandRunner,
     *,
     docker_binary: str = "docker",
+    require_rootless: bool = True,
 ) -> None:
     if docker_binary != "docker":
         raise AgentEntryError("invalid_docker_binary")
@@ -371,10 +378,11 @@ def preflight_docker(
         options = json.loads(info.stdout)
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise AgentEntryError("docker_preflight_failed") from None
-    if not isinstance(options, list) or not any(
+    rootless = isinstance(options, list) and any(
         isinstance(item, str) and (item == "rootless" or "name=rootless" in item)
         for item in options
-    ):
+    )
+    if require_rootless and not rootless:
         raise AgentEntryError("docker_not_rootless")
     for image in sorted(set(policy.allowed_base_images) | {policy.python_runner_image}):
         invoke(("docker", "image", "inspect", "--format", "{{.Id}}", image))
@@ -1048,7 +1056,11 @@ def _run_agent_verified(
         raise AgentEntryError("provider_preflight_failed") from None
 
     runner = deps.command_runner or SubprocessCommandRunner()
-    preflight_docker(policy, runner, docker_binary=deps.docker_binary)
+    preflight_docker(
+        policy, runner,
+        docker_binary=deps.docker_binary,
+        require_rootless=deps.require_rootless_docker,
+    )
 
     def harness_factory(stage_root: Path) -> StageHarness:
         return deps.harness_factory(stage_root, **harness_kwargs)
