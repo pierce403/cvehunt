@@ -131,7 +131,7 @@ def run_adaptive_exploit_loop(
         except Exception as exc:
             return AdaptiveLoopResult(
                 "infrastructure_error", attempt - 1, tuple(feedback), None,
-                error_code=type(exc).__name__,
+                error_code=getattr(exc, "code", None) or type(exc).__name__,
             )
         if not isinstance(revision, ModelRevision):
             return AdaptiveLoopResult(
@@ -188,7 +188,7 @@ def run_adaptive_exploit_loop(
         except Exception as exc:
             return AdaptiveLoopResult(
                 "infrastructure_error", attempt, tuple(feedback), None,
-                error_code=type(exc).__name__,
+                error_code=getattr(exc, "code", None) or type(exc).__name__,
             )
         feedback.append(bounded)
         if receipt["trusted_result"] is True:
