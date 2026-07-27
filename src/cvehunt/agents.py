@@ -1585,6 +1585,9 @@ class ModelPocVerifier:
         raw_stderr = ""
         triggered_vuln = False
         blocked_patched = False
+        capability: str | None = None
+        details_vulnerable: str | None = None
+        details_patched: str | None = None
         verify_status = "ok"
         # Brief cleanup of any stale orchestrator; if it has already exited
         # (e.g. a stub harness whose containers log+exit), we still run the
@@ -1626,6 +1629,9 @@ class ModelPocVerifier:
             if outcome is not None:
                 triggered_vuln = bool(outcome.get("vulnerable_triggered") or outcome.get("triggered_vulnerable"))
                 blocked_patched = bool(outcome.get("patched_blocked") or outcome.get("patched_blocked_poc"))
+                capability = str(outcome.get("capability") or "").strip() or None
+                details_vulnerable = str(outcome.get("details_vulnerable") or "").strip() or None
+                details_patched = str(outcome.get("details_patched") or "").strip() or None
                 log_lines.append(
                     f"[verify-model-poc] parsed outcome vulnerable_triggered={triggered_vuln} patched_blocked={blocked_patched}"
                 )
@@ -1649,6 +1655,9 @@ class ModelPocVerifier:
             "status": verify_status,
             "vulnerable_triggered": triggered_vuln,
             "patched_blocked": blocked_patched,
+            "capability": capability,
+            "details_vulnerable": details_vulnerable,
+            "details_patched": details_patched,
             "stdout": raw_stdout[:8192],
             "stderr": raw_stderr[:8192],
             "base_port": base_port,

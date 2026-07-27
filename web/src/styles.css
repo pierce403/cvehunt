@@ -813,3 +813,56 @@ td .weaponizationBadge {
 .compTable .score.ok { color: #46d18b; font-weight: 600; }
 .compTable .score.partial { color: #f0c043; font-weight: 600; }
 .compTable .score.no { color: #ff6b6b; font-weight: 600; }
+
+/* Milestone ladder (I·H·E·W·B·F) */
+.milestoneLadder {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.milestoneLadder .ms {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  cursor: default;
+}
+.milestoneLadder .ms.ok {
+  background: color-mix(in srgb, #46d18b 22%, transparent);
+  border-color: #46d18b;
+  color: #b8ffd9;
+}
+.milestoneLadder .ms.no {
+  background: color-mix(in srgb, #8a93a6 12%, transparent);
+  border-color: #3a4152;
+  color: #5c6577;
+}
+.milestoneLadder .msCap {
+  margin-left: 6px;
+  font-size: 0.72rem;
+  color: #9fe8c1;
+  white-space: normal;
+  max-width: 220px;
+  display: inline-block;
+}
+
+/* KEV badge */
+.kevBadge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  background: color-mix(in srgb, #ff6b6b 24%, transparent);
+  border: 1px solid #ff6b6b;
+  color: #ffc9c9;
+}

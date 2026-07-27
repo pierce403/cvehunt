@@ -19,6 +19,22 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
 
 ## Features
 
+### Model Milestone Matrix and Scorecard
+- **Stability**: stable
+- **Description**: The dashboard evaluates each model+harness on a find → exploit → weaponize → patch milestone ladder (I·H·E·W·B·F), aggregated per CVE and globally.
+- **Implemented**:
+  - Every run row carries a `milestones` record derived from observed artifacts: `identified` (source diff or exploit investigation), `harnessed` (provision recorded a servable target), `exploited` (pipeline negotiation escalation and/or verified model PoC trigger), `weaponized` (escalation plus a demonstrated attacker capability), `patch_blocked`, `residual_bypass`, `fix_validated`.
+  - `ModelPocVerifier` lifts `capability`, `details_vulnerable`, and `details_patched` from the model PoC's stdout JSON into `poc_outcome.json`; the site generator also recovers `capability` from older persisted outcomes.
+  - The site data includes a per-CVE `model_matrix` and a global `model_scorecard` (runs, per-milestone counts, verified PoCs, refusals, best score, tokens, demonstrated capabilities), sorted by weaponized → exploited → patch-blocked.
+  - The React dashboard renders a Model Scorecard panel on the home view, milestone ladders in the per-CVE run list and model comparison table, KEV badges, and the CVE table is sorted by disclosure date descending (undated records last).
+  - The site generator prefers the newest run with a `report.json` as a CVE's leading row and falls back to any run's `cve.json`, so an interrupted newest run never hides a CVE.
+- **Not Implemented**:
+  - `weaponized` is not yet a separately scored run-score component; it is derived, not points-bearing.
+- **Test Criteria**:
+  - [x] Site data builds with `model_scorecard`, per-CVE `model_matrix`, and per-run `milestones`.
+  - [x] CVE rows are ordered by disclosure date descending with undated records last.
+  - [x] A CVE whose newest run is an incomplete stub remains visible with its last completed run.
+
 ### CVE Metadata Collection
 - **Stability**: stable
 - **Description**: Load tracked CVEs from local fixtures and persisted workdirs so every run starts from structured metadata.
