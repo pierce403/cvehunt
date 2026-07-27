@@ -69,7 +69,9 @@ class DevStageHarness(StageHarness):
         # being anywhere near its own 4 MiB bound. Dev samples get transport
         # headroom; the response/event caps that actually bound the model's
         # answer are unchanged.
-        kwargs.setdefault("max_native_output_bytes", 256 * 1024 * 1024)
+        # Kimi-class reasoning models emit ~270 MiB of cumulative NDJSON on a
+        # single heavy research stage; give the dev sample transport headroom.
+        kwargs.setdefault("max_native_output_bytes", 768 * 1024 * 1024)
         kwargs.setdefault("max_native_tail_bytes", 1024 * 1024)
         kwargs.setdefault("max_native_event_bytes", 8 * 1024 * 1024)
         kwargs.setdefault("max_normalized_events_bytes", 8 * 1024 * 1024)
