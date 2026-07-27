@@ -63,6 +63,18 @@ class DevStageHarness(StageHarness):
     extension keeps requiring root ownership).
     """
 
+    def __init__(self, run_root, **kwargs):
+        # Reasoning models stream cumulative NDJSON partials; a hard stage can
+        # exceed the production 64 MiB raw-output cap without the *answer*
+        # being anywhere near its own 4 MiB bound. Dev samples get transport
+        # headroom; the response/event caps that actually bound the model's
+        # answer are unchanged.
+        kwargs.setdefault("max_native_output_bytes", 256 * 1024 * 1024)
+        kwargs.setdefault("max_native_tail_bytes", 1024 * 1024)
+        kwargs.setdefault("max_native_event_bytes", 8 * 1024 * 1024)
+        kwargs.setdefault("max_normalized_events_bytes", 8 * 1024 * 1024)
+        super().__init__(run_root, **kwargs)
+
     def _environment(self, request, paths):
         env = super()._environment(request, paths)
         if "CVEHUNT_STAGE_POLICY" in env:

@@ -340,12 +340,22 @@ class AgentPipeline:
                         envelopes[predecessor], handoff_hashes[predecessor], packets,
                         target_input, envelopes, attempt, callback, run_deadline,
                     )
+                # Harness Builder may legitimately carry official target release
+                # archives (two ~27 MiB WordPress tarballs) as model_input
+                # artifacts; its envelope gets the same bounded budget the
+                # trusted executor validates against.
+                envelope_limits = (
+                    {"max_file_bytes": 32 * 1024 * 1024, "max_total_bytes": 128 * 1024 * 1024}
+                    if stage == "harness_builder"
+                    else {}
+                )
                 validated = validate_envelope(
                     envelope, artifact_root,
                     expected_run_id=run_id, expected_cve_id=cve_id, expected_stage=stage,
                     expected_harness=self.harness_name if stage in MODEL_STAGES else None,
                     expected_model=self.model if stage in MODEL_STAGES else None,
                     predecessor_handoff_sha256=handoff_hashes.get(predecessor) if predecessor else None,
+                    **envelope_limits,
                 )
                 produced_ids = {item["artifact_id"] for item in validated["artifacts"]}
                 collisions = produced_ids & reserved_artifact_ids
@@ -1010,7 +1020,9 @@ def _stage_prompt(
     runtime_contract = ""
     if stage == "harness_builder":
         runtime_contract = (
-            " payload.container_plan MUST have exactly schema='cvehunt.container-plan/v1', files, variants, "
+            " Acquire every official target release archive with the https_download tool into output/ (it streams "
+            "bytes to disk and returns only metadata including the SHA-256); declare each downloaded archive and every "
+            "authored file as model_input artifacts. payload.container_plan MUST have exactly schema='cvehunt.container-plan/v1', files, variants, "
             "container_port, readiness_path. files entries have exactly artifact_id,destination; variants contain "
             "vulnerable and patched exactly once with dockerfile_artifact_id. Every referenced Dockerfile/build file "
             "MUST be an artifact classified model_input. Dockerfiles are single-stage declarative images: exactly one "

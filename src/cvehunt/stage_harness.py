@@ -350,7 +350,7 @@ class StageHarness:
             if request.authoring:
                 tools.append("stage_write")
             if request.research:
-                tools.append("https_retrieve")
+                tools.extend(("https_retrieve", "https_download"))
             # The stage environment pins PATH=os.defpath, so a bare binary name
             # only resolves when the harness lives on the system default path.
             # Resolve to the validated absolute path (same check as preflight)

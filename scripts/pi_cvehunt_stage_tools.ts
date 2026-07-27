@@ -12,6 +12,7 @@ import { Type } from "@sinclair/typebox";
 
 const MAX_READ = 2 * 1024 * 1024;
 const MAX_FETCH = 5 * 1024 * 1024;
+const MAX_DOWNLOAD = 32 * 1024 * 1024;
 const MAX_WRITE = boundedIntegerEnv("CVEHUNT_STAGE_MAX_WRITE_BYTES", 8 * 1024 * 1024);
 
 type ExtensionAPI = {
@@ -255,6 +256,109 @@ async function retrieve(rawUrl: string): Promise<{ status: number; contentType: 
   });
 }
 
+async function download(rawUrl: string, relative: string): Promise<{ status: number; contentType: string; bytes: number; sha256: string; logical_path: string }> {
+  // Target acquisition for realistic targets requires moving large official
+  // release archives (e.g. WordPress tarballs). Those bytes must never enter
+  // the conversation: this streams them straight to the stage output root
+  // and returns only bounded metadata. Same allowlist, DNS pinning, no
+  // redirects, HTTPS-on-443-only policy as https_retrieve.
+  let parsed: URL;
+  try { parsed = new URL(rawUrl); } catch { throw new Error("invalid URL"); }
+  if (parsed.protocol !== "https:") throw new Error("only HTTPS retrieval is allowed");
+  if (parsed.username || parsed.password) throw new Error("URL credentials rejected");
+  for (const key of parsed.searchParams.keys()) {
+    if (/(?:token|secret|passw|credential|api.?key|auth)/i.test(key)) {
+      throw new Error("URL credential query rejected");
+    }
+  }
+  if (parsed.port && parsed.port !== "443") throw new Error("non-standard HTTPS port rejected");
+  const host = normalizedHostname(parsed.hostname);
+  if (!researchHosts.has(host)) throw new Error("hostname is outside the research policy");
+  const target = await confined("output", relative, true, true);
+  if (fs.existsSync(target)) throw new Error("download destination already exists");
+  const answer = await resolveAllowedPublic(host);
+  const requestId = crypto.randomUUID();
+  await logNetwork(parsed, { request_id: requestId, outcome: "started", tool: "https_download" });
+
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let partialFailed = false;
+    const cleanup = () => {
+      try { if (fs.existsSync(target)) fs.unlinkSync(target); } catch { /* best effort */ }
+    };
+    const finishReject = (error: Error) => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(error);
+      }
+    };
+    const request = https.request({
+      protocol: "https:", hostname: answer.address, port: 443,
+      servername: host, path: `${parsed.pathname}${parsed.search}`, method: "GET",
+      headers: { host, "user-agent": "CVEHunt-stage-research/1", accept: "*/*" },
+      timeout: 60_000,
+    }, (response) => {
+      const status = response.statusCode || 0;
+      const type = String(response.headers["content-type"] || "");
+      if (status >= 300 && status < 400) {
+        response.resume();
+        void logNetwork(parsed, { request_id: requestId, status, outcome: "redirect_rejected" }).finally(() => finishReject(new Error("redirects are rejected")));
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.resume();
+        void logNetwork(parsed, { request_id: requestId, status, outcome: "http_error" }).finally(() => finishReject(new Error(`HTTPS status ${status}`)));
+        return;
+      }
+      let stream: fs.WriteStream;
+      try {
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+        const descriptor = fs.openSync(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+        stream = fs.createWriteStream("", { fd: descriptor, autoClose: false });
+      } catch (error: any) {
+        response.resume();
+        finishReject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      const hash = crypto.createHash("sha256");
+      let size = 0;
+      response.on("data", (chunk: Buffer) => {
+        if (partialFailed) return;
+        size += chunk.length;
+        if (size > MAX_DOWNLOAD) {
+          partialFailed = true;
+          stream.destroy();
+          request.destroy(new Error("response exceeds download limit"));
+          return;
+        }
+        hash.update(chunk);
+        if (!stream.write(chunk)) response.pause();
+      });
+      stream.on("drain", () => { if (!partialFailed) response.resume(); });
+      response.on("end", () => {
+        stream.end(() => {
+          if (partialFailed) return;
+          const digest = hash.digest("hex");
+          const result = { status, contentType: type, bytes: size, sha256: digest, logical_path: relative };
+          void logNetwork(parsed, { request_id: requestId, status, bytes: size, content_sha256: digest, outcome: "completed" }).then(() => {
+            if (!settled) { settled = true; resolve(result); }
+          }, finishReject);
+        });
+      });
+      response.on("error", (error) => {
+        stream.destroy();
+        void logNetwork(parsed, { request_id: requestId, outcome: "error", error_type: error.name }).finally(() => finishReject(error));
+      });
+    });
+    request.on("timeout", () => request.destroy(new Error("HTTPS download timed out")));
+    request.on("error", (error) => {
+      void logNetwork(parsed, { request_id: requestId, outcome: "error", error_type: error.name }).finally(() => finishReject(error));
+    });
+    request.end();
+  });
+}
+
 export default function cvehuntStageTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "stage_read", label: "Read stage file",
@@ -329,6 +433,15 @@ export default function cvehuntStageTools(pi: ExtensionAPI) {
       async execute(_id, args) {
         const result = await retrieve(args.url);
         return textResult(result.body, { status: result.status, contentType: result.contentType, bytes: Buffer.byteLength(result.body) });
+      },
+    });
+    pi.registerTool({
+      name: "https_download", label: "Download allowlisted HTTPS file into output",
+      description: "Download one policy-allowlisted public HTTPS file (text or binary, up to 32 MiB) directly into the stage output directory without routing bytes through the conversation. Use this to acquire official target release archives. Returns status, content type, byte count, and SHA-256 only. Declare every downloaded file as a stage artifact.",
+      parameters: Type.Object({ url: Type.String(), path: Type.String() }),
+      async execute(_id, args) {
+        const result = await download(args.url, args.path);
+        return textResult(JSON.stringify(result), result);
       },
     });
   }
