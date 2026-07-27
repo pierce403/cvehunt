@@ -1069,7 +1069,7 @@ def _stage_prompt(
         f"{json.dumps(list(manifest), sort_keys=True, separators=(',', ':'))}\n"
         "Write output/stage_output.json and only declared artifact files under output/. "
         "stage_write paths are relative to the chosen root: with root=output use e.g. path='docker/Dockerfile', never 'output/...'. "
-        "Declare every file you create under output/ as an artifact; declare only files that actually exist there. "
+        "Declare every file you create under output/ as an artifact EXCEPT stage_output.json itself (never declare it); declare only files that actually exist there. "
         "stage_output.json MUST contain exactly status, outcome, payload, artifacts, errors, refusal. "
         "status MUST be exactly \"completed\" or \"refused\" (no other value). "
         "outcome MUST be exactly one of \"success\", \"partial\", \"negative_result\", \"inconclusive\", \"not_applicable\", \"none\". "
