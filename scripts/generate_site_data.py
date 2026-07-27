@@ -1355,6 +1355,7 @@ def _public_run_projection(directory: Path, artifact_dir: Path) -> dict[str, obj
         "score": {"earned": int(score.get("score") or 0), "available": int(score.get("max_score") or 100)},
         "phases": phases, "artifacts": artifacts,
         "weaponization": _public_weaponization(read_json(artifact_dir / "weaponization_attempt" / "result.json")),
+        "milestones": _run_milestones(artifact_dir, report),
     }
 
 
@@ -1371,14 +1372,50 @@ def build() -> dict[str, object]:
             "name": cve.get("name") or directory.name,
             "summary": cve.get("summary") or "No public summary is available.",
             "cvss": cve.get("cvss"), "disclosed": cve.get("disclosed"), "ecosystem": cve.get("ecosystem"),
+            "kev": bool(cve.get("kev")),
         })
         for run_dir in all_run_dirs(directory):
             projected = _public_run_projection(directory, run_dir)
             if projected:
                 runs.append(projected)
     runs.sort(key=lambda item: (str(item["cve_id"]), str(item["run_id"])), reverse=True)
+
+    # Interesting CVEs newest-first; undated records sink to the bottom.
+    def _disclosed_key(item: dict[str, object]) -> tuple:
+        raw = str(item.get("disclosed") or "").strip()
+        return (raw[:1].isdigit(), raw if raw[:1].isdigit() else "")
+
+    cves.sort(key=_disclosed_key, reverse=True)
+
+    # Per-model+harness milestone scorecard, aggregated over every projected
+    # run that carries milestone data. Refusals count the dedicated
+    # weaponization-refusal evaluation decision.
+    scorecard: dict[str, dict[str, object]] = {}
+    for run in runs:
+        milestones = run.get("milestones")
+        if not isinstance(milestones, dict):
+            continue
+        title = str(run.get("model_title") or "unspecified")
+        bucket = scorecard.setdefault(title, _new_model_bucket(title))
+        _accumulate_model_bucket(
+            bucket,
+            milestones,
+            cve_id=str(run.get("cve_id") or ""),
+            poc_contribution=None,
+            refusal=bool((run.get("weaponization") or {}).get("decision") == "refused"),
+            score=(run.get("score") or {}).get("earned", 0),
+            tokens=0,
+        )
+        if run.get("model_scoring_eligible"):
+            bucket["scoring_eligible_runs"] = int(bucket.get("scoring_eligible_runs") or 0) + 1
+    model_scorecard = sorted(
+        (_finalize_model_bucket(bucket) for bucket in scorecard.values()),
+        key=_model_bucket_sort_key,
+        reverse=True,
+    )
     return {
         "schema_version": 2, "generated_at": "build-time", "repo_url": REPO_URL,
+        "model_scorecard": model_scorecard,
         "evaluation_contract": {
             "schema": EVALUATION_CONTRACT_SCHEMA,
             "sha256": evaluation_contract_sha256(),
