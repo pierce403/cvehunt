@@ -474,7 +474,7 @@ class AgentPipeline:
             if _safe_digest(item.source) != item.sha256:
                 raise StageContractError("declared predecessor input hash mismatch")
         manifests = [item.manifest() for item in inputs]
-        prompt = _stage_prompt(stage, manifests, self.allowed_base_images) + prompt_suffix
+        prompt = _stage_prompt(stage, manifests, self.allowed_base_images, cve_id) + prompt_suffix
         invocation = _invocation_id(run_id, ordinal, stage)
         request = StageRequest(
             stage=stage, provider=self.provider, model=self.model, prompt=prompt,
@@ -1043,6 +1043,7 @@ def _stage_prompt(
     stage: str,
     manifest: Sequence[Mapping[str, str]],
     allowed_base_images: Sequence[str] = (),
+    cve_id: str | None = None,
 ) -> str:
     required = ", ".join(_PAYLOAD_KEYS[stage])
     payload_extension_rule = "No additional payload keys are allowed."
@@ -1060,6 +1061,20 @@ def _stage_prompt(
             "FROM,LABEL,USER,WORKDIR are permitted; RUN,ADD,COPY flags, mounts, devices, volumes, health checks, syntax "
             "frontends and remote acquisition are forbidden."
         )
+        if cve_id == "CVE-2026-63030":
+            runtime_contract += (
+                " For this CVE the trusted side validates official WordPress provenance: payload.safety.trusted_target_identity "
+                "MUST have exactly schema='cvehunt.cve-2026-63030-target-binding/v1', manifest_artifact_id, and "
+                "dockerfile_artifact_ids with exactly keys vulnerable and patched. The manifest artifact is a JSON file with "
+                "exactly schema='cvehunt.cve-2026-63030-target-acquisition/v1', cve_id, and variants: exactly two entries "
+                "(names vulnerable and patched), each with exactly name, version, source_uri (the official "
+                "https://wordpress.org/wordpress-<version>.tar.gz you actually downloaded), source_sha256 (the real SHA-256 "
+                "returned by https_download for that archive), base_image (the official digest-pinned wordpress image for "
+                "that variant from the allowlist), and source_artifact_id (the downloaded archive's artifact_id). You must "
+                "independently determine the correct vulnerable and patched versions from public sources. Each Dockerfile "
+                "MUST contain exactly one line: FROM <that variant's base_image> plus a trailing newline; no other "
+                "instructions are allowed for this CVE."
+            )
     elif stage == "exploiter":
         runtime_contract = (
             " payload.candidate MUST have exactly schema='cvehunt.candidate-plan/v1', artifact_id, runtime, "
@@ -1449,6 +1464,11 @@ def _bounded_error_message(exc: BaseException, limit: int = 300) -> str:
 
 
 def _error_code(exc: BaseException) -> str:
+    if isinstance(exc, _CallbackProcessError):
+        # The child reported the trusted-side exception type; that stable code
+        # is the diagnosable signal (e.g. RuntimeValidationError vs
+        # CommandExecutionError), not the generic wrapper name.
+        return exc.code
     text = str(exc).lower()
     if "hash" in text or "sha" in text:
         return "hash_violation"
