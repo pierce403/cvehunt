@@ -417,7 +417,7 @@ class AgentPipeline:
                 failed = stage
                 status = "execution_error" if stage not in MODEL_STAGES else "harness_error"
                 entry = _ledger_entry(
-                    stage, status, "none", error_code=type(exc).__name__, **(attempt or {}),
+                    stage, status, "none", error_code=_error_code(exc), **(attempt or {}),
                 )
                 entry["error_message"] = _bounded_error_message(exc)
                 ledger["stages"].append(entry)
