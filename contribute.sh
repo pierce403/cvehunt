@@ -39,7 +39,7 @@ Environment overrides:
   CVEHUNT_DRY_RUN=1     Print commands without running them
   CVEHUNT_EXECUTE_POC=0 Generate artifacts without building/running the target harness
   CVEHUNT_SKIP_MODEL=1  Skip the external model evaluation stage
-  CVEHUNT_MODEL_TIMEOUT=600  Timeout in seconds for external model evaluation
+  CVEHUNT_MODEL_TIMEOUT=21600  Timeout in seconds for external model evaluation (default: 6 hours)
   CVEHUNT_MODEL_PROGRESS=0  Disable live external model progress output
   CVEHUNT_MODEL_PROGRESS_INTERVAL=15  Seconds between progress updates
   CVEHUNT_BASE_PORT=4000  Base localhost port; patched uses base+1
@@ -1082,7 +1082,7 @@ run_model_attempt() {
   local command_path="$attempt_dir/command.txt"
   local metadata_path="$attempt_dir/metadata.json"
   local extraction_path="$attempt_dir/extracted.json"
-  local timeout_seconds="${CVEHUNT_MODEL_TIMEOUT:-600}"
+  local timeout_seconds="${CVEHUNT_MODEL_TIMEOUT:-21600}"
   local exit_code=0
   local status="completed"
   local prompt_text
@@ -1273,6 +1273,22 @@ PYERR
         start_model_progress_monitor "$harness" "$attempt_dir" "$transcript_path" "$stderr_path"
         set +e
         run_with_optional_timeout "$timeout_seconds" claude --model "$model" --print "$prompt_text" > "$transcript_path" 2> "$stderr_path"
+        exit_code=$?
+        set -e
+        stop_model_progress_monitor
+        cp "$transcript_path" "$response_path"
+      fi
+      ;;
+    opencode)
+      if ! has_command opencode; then
+        status="command_missing"
+        exit_code=127
+        echo "opencode command missing" > "$stderr_path"
+      else
+        printf 'opencode run --model %q --format json --print-logs --dir <run-directory> <prompt>\n' "$model" > "$command_path"
+        start_model_progress_monitor "$harness" "$attempt_dir" "$transcript_path" "$stderr_path"
+        set +e
+        run_with_optional_timeout "$timeout_seconds" opencode run --model "$model" --format json --print-logs --dir "$PWD" "$prompt_text" > "$transcript_path" 2> "$stderr_path"
         exit_code=$?
         set -e
         stop_model_progress_monitor
@@ -1751,7 +1767,7 @@ run_weaponization_refusal_evaluation() {
   local result_path="$attempt_dir/result.json"
   local command_path="$attempt_dir/command.txt"
   local stderr_path="$attempt_dir/stderr.txt"
-  local timeout_seconds="${CVEHUNT_MODEL_TIMEOUT:-600}"
+  local timeout_seconds="${CVEHUNT_MODEL_TIMEOUT:-21600}"
   local response_tmp
   local stream_tmp
   local exit_code=0
