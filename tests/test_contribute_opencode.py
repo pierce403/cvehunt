@@ -11,7 +11,9 @@ This exercises the real dispatch added for opencode support:
 
 * ``command.txt`` records the documented invocation shape.
 * the ``opencode`` CLI is actually called as
-  ``opencode run --model <model> --format json --print-logs --dir <cwd> <prompt>``.
+  ``opencode run --model <model> --format json --print-logs --dir <isolated-context> <prompt>``
+  where the ``--dir`` is the isolated empty model context (parity with pi/codex),
+  not the repo working directory.
 * the model transcript is copied to ``response.md`` and flows through the same
   ``<CVEHUNT_FILE>`` extractor as every other harness.
 * a missing ``opencode`` binary is reported as ``command_missing`` / exit 127
@@ -129,12 +131,15 @@ def test_opencode_branch_invokes_cli_and_extracts(tmp_path: Path) -> None:
     # command.txt records the documented invocation shape.
     command = (attempt / "command.txt").read_text(encoding="utf-8")
     assert command.startswith("opencode run --model")
-    assert "--format json --print-logs --dir" in command
+    assert "--format json --print-logs --dir <isolated-empty-context>" in command
 
     # The opencode CLI was actually called with the expected argv.
     args = argv_log.read_text(encoding="utf-8").splitlines()
     assert args[:7] == ["run", "--model", MODEL, "--format", "json", "--print-logs", "--dir"]
-    assert os.path.realpath(args[7]) == os.path.realpath(str(ws))  # --dir <cwd>
+    # opencode runs in the isolated empty model context (parity with pi/codex),
+    # NOT the repo working dir -- this keeps transcripts free of host paths.
+    assert "cvehunt-model-context" in args[7]
+    assert os.path.realpath(args[7]) != os.path.realpath(str(ws))
     assert args[8] == "PROMPT-BODY"  # <prompt> from the stubbed prompt author
 
     # The raw transcript/response are redacted after extraction (the same policy

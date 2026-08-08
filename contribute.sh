@@ -1285,10 +1285,12 @@ PYERR
         exit_code=127
         echo "opencode command missing" > "$stderr_path"
       else
-        printf 'opencode run --model %q --format json --print-logs --dir <run-directory> <prompt>\n' "$model" > "$command_path"
+        # Isolated empty model context (parity with pi/codex): all allowed
+        # evidence is embedded in prompt.md, so no repository dir is mounted.
+        printf 'opencode run --model %q --format json --print-logs --dir <isolated-empty-context> <prompt>\n' "$model" > "$command_path"
         start_model_progress_monitor "$harness" "$attempt_dir" "$transcript_path" "$stderr_path"
         set +e
-        run_with_optional_timeout "$timeout_seconds" opencode run --model "$model" --format json --print-logs --dir "$PWD" "$prompt_text" > "$transcript_path" 2> "$stderr_path"
+        run_with_optional_timeout "$timeout_seconds" opencode run --model "$model" --format json --print-logs --dir "$model_context_dir" "$prompt_text" > "$transcript_path" 2> "$stderr_path"
         exit_code=$?
         set -e
         stop_model_progress_monitor
