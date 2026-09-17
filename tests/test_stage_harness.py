@@ -214,6 +214,22 @@ def test_provider_and_transport_errors_are_distinct(tmp_path: Path, source: str,
     assert result.status is expected
 
 
+def test_zero_exit_pi_provider_error_event_is_not_transport_success(tmp_path: Path) -> None:
+    fake = executable(
+        tmp_path / "pi-provider-event",
+        "import json\n"
+        "print(json.dumps({'type': 'message_end', 'message': {"
+        "'role': 'assistant', 'content': [], 'stopReason': 'error', "
+        "'errorMessage': '404: model_not_found: model does not exist or you do not have access'}}))\n",
+    )
+    result = StageHarness(
+        tmp_path / "provider-event", pi_binary=fake, pi_extension=tmp_path / "x.ts"
+    ).run(StageRequest("stage", "pi", "m", "p", timeout_seconds=5))
+
+    assert result.status is StageStatus.PROVIDER_ERROR
+    assert "model_not_found" in (result.error or "")
+
+
 def test_preflight_validates_pi_model_and_creates_no_stage(tmp_path: Path) -> None:
     fake = executable(tmp_path / "pi", "print('unused')\n")
     extension = tmp_path / "tools.ts"

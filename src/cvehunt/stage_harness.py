@@ -103,7 +103,8 @@ class StageRequest:
 
 _SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _PROVIDER_ERROR = re.compile(
-    r"(?:authentication|unauthori[sz]ed|invalid api key|rate.?limit|quota|provider|overloaded|model not found)",
+    r"(?:authentication|unauthori[sz]ed|invalid api key|rate.?limit|quota|provider|overloaded|"
+    r"model[_ -]?not[_ -]?found|does not exist or you do not have access)",
     re.IGNORECASE,
 )
 _SECRET_NAME = re.compile(
@@ -134,6 +135,7 @@ class _EventAccumulator:
         self.normalized: list[dict[str, object]] = []
         self.normalized_bytes = 0
         self.error: str | None = None
+        self.transport_error: str | None = None
 
     def feed(self, chunk: bytes) -> None:
         if self.error:
@@ -179,6 +181,14 @@ class _EventAccumulator:
             if isinstance(child, dict):
                 candidates.append(child)
         for value in candidates:
+            error_message = value.get("errorMessage")
+            if value.get("stopReason") == "error" and isinstance(error_message, str):
+                encoded_error = error_message.encode("utf-8")
+                self.transport_error = (
+                    error_message
+                    if len(encoded_error) <= 4096
+                    else "provider error exceeded configured message limit"
+                )
             usage = value.get("usage")
             if isinstance(usage, dict):
                 self.input_tokens = max(self.input_tokens, _int(usage.get("input_tokens", usage.get("input", 0))))
@@ -449,6 +459,9 @@ class StageHarness:
 
         metrics = _collect_metrics(paths, events, elapsed)
         status, error = _classify(timed_out, exit_code, stderr_tail.decode("utf-8", "replace"), launch_error, limit_error)
+        if status is StageStatus.SUCCESS and events.transport_error:
+            error = _redact(events.transport_error.encode("utf-8"), secrets).decode("utf-8", "replace")
+            status = StageStatus.PROVIDER_ERROR if _PROVIDER_ERROR.search(error) else StageStatus.ERROR
         if status is StageStatus.SUCCESS and request.contract is not None:
             try:
                 contract_status = request.contract(response, paths)

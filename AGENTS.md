@@ -156,6 +156,7 @@ pnpm run build
 - Pi project-local extensions auto-discover from `.pi/extensions/`; async `pi.registerProvider()` providers appear in `pi --list-models` without extra settings. Verified here with `.pi/extensions/bastet-vllm.ts` and `pi -p --model 'bastet/AEON-7/Gemma-4-31B-it-DECKARD-HERETIC-Uncensored-NVFP4' 'Reply with exactly: pi bastet ok'`.
 - Pi also reloads `~/.pi/agent/models.json` whenever `/model` opens. Adding the Bastet provider there makes it visible across projects without restarting Pi, as long as extensions/models discovery is enabled.
 - Pi's current `~/.pi/agent/auth.json` API-key record uses the exact type string `api_key` (underscore), not `api-key`; production credential preflight must validate the actual Pi schema. On hosts where `pnpm` is not directly on `PATH`, the package pin works via `corepack pnpm run build`.
+- Pi may exit zero after emitting a `message.stopReason=error` provider failure such as `model_not_found`; `StageHarness` must classify that NDJSON event as `provider_error` instead of trying to load a missing `stage_output.json`. Verify with `.venv/bin/python -m pytest tests/test_stage_harness.py -q`.
 
 ## Rapport & Reflection
 
