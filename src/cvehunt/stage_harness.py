@@ -356,7 +356,7 @@ class StageHarness:
     def build_argv(self, request: StageRequest, paths: StagePaths) -> list[str]:
         provider = request.provider.lower()
         if provider == "pi":
-            tools = ["stage_read", "stage_list"]
+            tools = ["stage_read", "stage_list", "archive_list", "archive_read"]
             if request.authoring:
                 tools.append("stage_write")
             if request.research:

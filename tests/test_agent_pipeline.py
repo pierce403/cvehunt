@@ -48,6 +48,22 @@ PAYLOADS = {
 BASE_IMAGE = "python:3.12@sha256:" + "1" * 64
 
 
+def test_react2shell_prompt_exposes_archive_and_nonce_contracts() -> None:
+    harness = agent_pipeline._stage_prompt(
+        "harness_builder", (), (BASE_IMAGE,), "CVE-2025-55182",
+    )
+    exploiter = agent_pipeline._stage_prompt(
+        "exploiter", (), (BASE_IMAGE,), "CVE-2025-55182",
+    )
+
+    assert "cvehunt.container-plan/v2" in harness
+    assert "cvehunt.cve-2025-55182-target-acquisition/v1" in harness
+    assert "react-server-dom-webpack" in harness
+    assert "archive_list" in harness and "archive_read" in harness
+    assert "CVEHUNT_CHALLENGE" in exploiter
+    assert "/tmp/cvehunt-capability-<challenge>" in exploiter
+
+
 def capability_receipt(*, variant: str = "vulnerable", trusted: bool = True) -> dict:
     return {
         "schema": "cvehunt.capability-receipt/v1",

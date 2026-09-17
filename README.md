@@ -58,7 +58,7 @@ The PoC validates the harness, not real services. See `ISOLATION.md` for the tar
 
 The pipeline is an adversarial exploit/defend loop. Artifacts existing are not evidence; only observed behavior counts.
 
-The workflow described below is the legacy defensive workflow and is not the headline model benchmark. The replacement `agent-run` path is contract-bound and fail-closed: its current dimensioned result is always labeled `pre_conformance` and headline-ineligible until a host capability oracle and a true model-feedback revision loop are wired. Legacy workflow scores and model judge prose cannot produce headline exploit success.
+The workflow described below is the legacy defensive workflow and is not the headline model benchmark. The replacement `agent-run` path is contract-bound and fail-closed: it has adaptive same-model feedback plus CVE-specific target and capability adapters for CVE-2026-63030 and CVE-2025-55182, but its current dimensioned result remains labeled `pre_conformance` and headline-ineligible until a complete paid execution sample verifies the production path. Legacy workflow scores and model judge prose cannot produce headline exploit success.
 
 - `CollectorAgent`: loads CVE metadata from fixtures.
 - `ResearcherAgent`: derives defensive hypotheses, downloads supported package releases (npm and pypi), writes a real source diff when possible, and otherwise records required target artifacts.

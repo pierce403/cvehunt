@@ -21,8 +21,11 @@ from typing import Any, Callable, Iterator, Mapping
 
 from .agent_pipeline import DIMENSIONED_RESULT_SCHEMA, AgentPipeline, PipelineResult
 from .benchmark_adapters import (
+    CVE55182CapabilityOracle,
+    CVE55182TargetIdentityValidator,
     CVE63030CapabilityOracle,
     CVE63030TargetIdentityValidator,
+    CVE_55182,
     CVE_63030,
 )
 from .evaluation_contract import (
@@ -1029,14 +1032,20 @@ def _run_agent_verified(
     validate_oracle(config.oracle, cve_id, runs_root, current_uid=deps.current_uid)
     capability_oracle = None
     target_identity_validator = None
-    if cve_id == CVE_63030:
+    if cve_id in {CVE_55182, CVE_63030}:
         if config.target_policy is None:
             raise AgentEntryError("target_policy_required")
         try:
-            target_identity_validator = CVE63030TargetIdentityValidator(
-                config.target_policy, expected_uid=current_uid,
-            )
-            capability_oracle = CVE63030CapabilityOracle()
+            if cve_id == CVE_63030:
+                target_identity_validator = CVE63030TargetIdentityValidator(
+                    config.target_policy, expected_uid=current_uid,
+                )
+                capability_oracle = CVE63030CapabilityOracle()
+            else:
+                target_identity_validator = CVE55182TargetIdentityValidator(
+                    config.target_policy, expected_uid=current_uid,
+                )
+                capability_oracle = CVE55182CapabilityOracle()
         except Exception:
             raise AgentEntryError("invalid_target_policy") from None
     try:

@@ -117,7 +117,7 @@ print(json.dumps({'type':'message_end','message':{'role':'assistant','content':[
     assert seen["prompt_hash"] == hashlib.sha256(prompt.encode()).hexdigest()
     assert seen["argv"] == [
         str(fake), "-p", "--no-builtin-tools", "--no-extensions", "--no-skills",
-        "--no-prompt-templates", "--no-context-files", "--tools", "stage_read,stage_list,stage_write",
+        "--no-prompt-templates", "--no-context-files", "--tools", "stage_read,stage_list,archive_list,archive_read,stage_write",
         "--no-session", "--mode", "json", "--offline", "--extension", str(extension),
         "--model", "provider/model", "--thinking", "minimal", "@/dev/stdin",
     ]
@@ -439,7 +439,7 @@ def test_real_pi_loads_extension_and_parses_cli_without_provider_request(tmp_pat
     }
     command = [
         pi, "-p", "--offline", "--no-builtin-tools", "--no-extensions", "--no-skills",
-        "--no-prompt-templates", "--no-context-files", "--tools", "stage_read,stage_list",
+        "--no-prompt-templates", "--no-context-files", "--tools", "stage_read,stage_list,archive_list,archive_read",
         "--no-session", "--mode", "json", "--extension", str(extension),
         "--model", "definitely-not-a-provider/definitely-not-a-model", "@/dev/stdin",
     ]
@@ -463,12 +463,14 @@ def test_real_pi_loads_extension_and_parses_cli_without_provider_request(tmp_pat
 
 def test_extension_surface_and_stage_write_limit_are_explicit() -> None:
     extension = (Path(__file__).parents[1] / "scripts" / "pi_cvehunt_stage_tools.ts").read_text()
-    assert extension.count("pi.registerTool({") == 5
-    for name in ("stage_read", "stage_list", "stage_write", "https_retrieve", "https_download"):
+    assert extension.count("pi.registerTool({") == 7
+    for name in ("stage_read", "stage_list", "archive_list", "archive_read", "stage_write", "https_retrieve", "https_download"):
         assert f'name: "{name}"' in extension
     # https_download must stream bytes to disk and return metadata only, so
     # large official target archives never enter the model's context.
     assert "MAX_DOWNLOAD" in extension and "createWriteStream" in extension
+    assert "MAX_ARCHIVE_EXPANDED" in extension and "maxOutputLength" in extension
+    assert "tar header checksum mismatch" in extension
     assert 'tool: "https_download"' in extension
     assert 'name: "bash"' not in extension and "child_process" not in extension
     assert "CVEHUNT_STAGE_MAX_WRITE_BYTES" in extension

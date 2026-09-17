@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from cvehunt.provenance import (
+    ALLOWED_SOURCE_CATEGORIES,
     ATTESTATION,
     DERIVATION,
     parse_exploit_provenance,
@@ -90,5 +91,8 @@ def test_contributor_prompt_forbids_external_poc_reuse_and_requires_attestation(
     assert "A finished public exploit is an answer key" in script
     assert "Do not clone, download, inspect, or execute external PoC/exploit repositories" in script
     assert "exploit_provenance.json" in script
+    assert "Every `research_sources[].category` MUST be one of exactly" in script
+    for category in ALLOWED_SOURCE_CATEGORIES:
+        assert f"`{category}`" in script
     assert ATTESTATION in script
     assert 'model exploit artifact requires valid from-scratch provenance' in script

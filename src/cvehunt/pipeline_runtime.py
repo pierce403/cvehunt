@@ -8,6 +8,7 @@ small rule language over the pipeline's safe public stage records.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import os
@@ -16,9 +17,11 @@ import secrets
 import signal
 import stat
 import subprocess
+import tarfile
 import tempfile
 import threading
 import time
+import zlib
 
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -36,6 +39,7 @@ from .agent_pipeline import (
 from .stage_contracts import StageContractError, canonical_json, sha256_bytes
 
 CONTAINER_PLAN_SCHEMA = "cvehunt.container-plan/v1"
+CONTAINER_PLAN_ARCHIVE_SCHEMA = "cvehunt.container-plan/v2"
 CANDIDATE_PLAN_SCHEMA = "cvehunt.candidate-plan/v1"
 ADVERSARIAL_PLAN_SCHEMA = "cvehunt.adversarial-plan/v1"
 FIX_PLAN_SCHEMA = "cvehunt.fix-plan/v1"
@@ -264,8 +268,17 @@ class _Variant:
 
 
 @dataclass(frozen=True)
+class _Archive:
+    artifact_id: str
+    destination: str
+    format: str
+    strip_components: int
+
+
+@dataclass(frozen=True)
 class _ContainerPlan:
     files: tuple[tuple[str, str], ...]
+    archives: tuple[_Archive, ...]
     variants: tuple[_Variant, ...]
     container_port: int
     readiness_path: str
@@ -310,6 +323,7 @@ class ContainerExecutor:
         administrator_allow_non_rootless: bool = False,
         max_artifact_bytes: int = 4 * 1024 * 1024,
         max_total_context_bytes: int = 16 * 1024 * 1024,
+        max_extracted_context_bytes: int = 128 * 1024 * 1024,
         max_output_bytes: int = _MAX_RESULT_BYTES,
         command_timeout_seconds: float = 120.0,
         capability_oracle: CapabilityOracle | None = None,
@@ -327,6 +341,9 @@ class ContainerExecutor:
             raise ValueError("disabling rootless requires explicit administrator_allow_non_rootless")
         self.max_artifact_bytes = _positive_int(max_artifact_bytes, "max_artifact_bytes")
         self.max_total_context_bytes = _positive_int(max_total_context_bytes, "max_total_context_bytes")
+        self.max_extracted_context_bytes = _positive_int(
+            max_extracted_context_bytes, "max_extracted_context_bytes",
+        )
         self.max_output_bytes = _positive_int(max_output_bytes, "max_output_bytes")
         self.command_timeout_seconds = _positive_number(command_timeout_seconds, "command_timeout_seconds")
         self.capability_oracle = capability_oracle
@@ -356,6 +373,8 @@ class ContainerExecutor:
             {key: value.data for key, value in inputs.items()}, plan,
         )
         referenced = {artifact_id for artifact_id, _ in plan.files} | {
+            item.artifact_id for item in plan.archives
+        } | {
             item.dockerfile_artifact_id for item in plan.variants
         } | {candidate.artifact_id}
         unknown = referenced - set(inputs)
@@ -386,7 +405,6 @@ class ContainerExecutor:
         cleanup: dict[str, object] = {"ok": True, "failures": []}
 
         try:
-            self._check_daemon(audit)
             with tempfile.TemporaryDirectory(prefix="cvehunt-build-") as temporary, tempfile.TemporaryDirectory(prefix="cvehunt-candidate-") as candidate_temporary:
                 build_root = Path(temporary)
                 candidate_root = Path(candidate_temporary)
@@ -396,6 +414,7 @@ class ContainerExecutor:
                 candidate_path.chmod(0o400)
                 if sha256_bytes(_safe_read(candidate_path, self.max_artifact_bytes)) != hashlib.sha256(inputs[candidate.artifact_id].data).hexdigest():
                     raise RuntimeValidationError("materialized candidate hash mismatch")
+                self._check_daemon(audit)
                 network_created = True
                 self._command((self.docker_binary, "network", "create", "--internal", network), audit)
                 builds: list[dict[str, object]] = []
@@ -537,6 +556,7 @@ class ContainerExecutor:
         candidates = [("original", original)] if mode == "fix" else []
         candidates.extend((item.id, item.candidate) for item in rounds)
         referenced = {artifact_id for artifact_id, _ in plan.files}
+        referenced.update(item.artifact_id for item in plan.archives)
         referenced.update(item.dockerfile_artifact_id for item in plan.variants)
         referenced.update(candidate.artifact_id for _, candidate in candidates)
         if fix_plan is not None:
@@ -588,7 +608,6 @@ class ContainerExecutor:
         cleanup: dict[str, object] = {"ok": True, "failures": []}
         payload: dict[str, object] | None = None
         try:
-            self._check_daemon(audit)
             with tempfile.TemporaryDirectory(prefix=f"cvehunt-{mode}-build-") as temporary, tempfile.TemporaryDirectory(prefix=f"cvehunt-{mode}-candidate-") as candidate_temporary:
                 build_root = Path(temporary)
                 candidate_root = Path(candidate_temporary)
@@ -608,6 +627,7 @@ class ContainerExecutor:
                     if sha256_bytes(_safe_read(path, self.max_artifact_bytes)) != sha256_bytes(inputs[candidate.artifact_id].data):
                         raise RuntimeValidationError("materialized candidate hash mismatch")
                     candidate_paths[candidate_id] = path
+                self._check_daemon(audit)
                 network_created = True
                 self._command((self.docker_binary, "network", "create", "--internal", network), audit)
                 builds: list[dict[str, object]] = []
@@ -781,8 +801,9 @@ class ContainerExecutor:
             result[artifact_id] = _File(artifact_id, Path(item.path), data)
         return result
 
-    @staticmethod
-    def _materialize_context(root: Path, plan: _ContainerPlan, inputs: Mapping[str, _File]) -> None:
+    def _materialize_context(
+        self, root: Path, plan: _ContainerPlan, inputs: Mapping[str, _File],
+    ) -> None:
         for artifact_id, destination in plan.files:
             target = root.joinpath(*PurePosixPath(destination).parts)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -790,6 +811,15 @@ class ContainerExecutor:
                 raise RuntimeValidationError("duplicate build-context destination")
             target.write_bytes(inputs[artifact_id].data)
             target.chmod(0o600)
+        extracted = 0
+        for archive in plan.archives:
+            extracted += _extract_tar_gz(
+                inputs[archive.artifact_id].data,
+                root.joinpath(*PurePosixPath(archive.destination).parts),
+                strip_components=archive.strip_components,
+                max_file_bytes=self.max_artifact_bytes,
+                max_total_bytes=self.max_extracted_context_bytes - extracted,
+            )
 
     def _check_daemon(self, audit: list[dict[str, object]]) -> None:
         result = self._command(
@@ -1065,9 +1095,13 @@ def _parse_container_plan(payload: Mapping[str, Any]) -> _ContainerPlan:
     raw = _mapping(payload["container_plan"], "container_plan")
     if len(canonical_json(raw)) > _MAX_PLAN_BYTES:
         raise RuntimeValidationError("container plan exceeds size limit")
-    if set(raw) != {"schema", "files", "variants", "container_port", "readiness_path"}:
+    schema = raw.get("schema")
+    expected_keys = {"schema", "files", "variants", "container_port", "readiness_path"}
+    if schema == CONTAINER_PLAN_ARCHIVE_SCHEMA:
+        expected_keys.add("archives")
+    if set(raw) != expected_keys:
         raise RuntimeValidationError("container plan has unknown or missing keys")
-    if raw["schema"] != CONTAINER_PLAN_SCHEMA:
+    if schema not in {CONTAINER_PLAN_SCHEMA, CONTAINER_PLAN_ARCHIVE_SCHEMA}:
         raise RuntimeValidationError("invalid container plan schema")
     files_raw = _array(raw["files"], "container_plan.files")
     files: list[tuple[str, str]] = []
@@ -1084,6 +1118,34 @@ def _parse_container_plan(payload: Mapping[str, Any]) -> _ContainerPlan:
         files.append((artifact_id, destination))
     if not files:
         raise RuntimeValidationError("build-context files must not be empty")
+    archives: list[_Archive] = []
+    archive_destinations: set[str] = set()
+    if schema == CONTAINER_PLAN_ARCHIVE_SCHEMA:
+        archives_raw = _array(raw["archives"], "container_plan.archives")
+        if not archives_raw or len(archives_raw) > 32:
+            raise RuntimeValidationError("archive container plan requires 1..32 archives")
+        for item in archives_raw:
+            entry = _exact_mapping(
+                item, {"artifact_id", "destination", "format", "strip_components"},
+                "container_plan.archives entry",
+            )
+            artifact_id = _identifier(entry["artifact_id"], "archive artifact_id")
+            destination = _relative_path(entry["destination"], "archive destination")
+            strip_components = entry["strip_components"]
+            if (
+                entry["format"] != "tar_gz"
+                or type(strip_components) is not int
+                or not 0 <= strip_components <= 16
+            ):
+                raise RuntimeValidationError("archive format or strip_components is invalid")
+            if artifact_id in ids or destination in destinations or destination in archive_destinations:
+                raise RuntimeValidationError("duplicate build-context artifact or destination")
+            for existing in destinations | archive_destinations:
+                if existing.startswith(destination + "/") or destination.startswith(existing + "/"):
+                    raise RuntimeValidationError("overlapping build-context destinations")
+            ids.add(artifact_id)
+            archive_destinations.add(destination)
+            archives.append(_Archive(artifact_id, destination, "tar_gz", strip_components))
     variants_raw = _array(raw["variants"], "container_plan.variants")
     variants: list[_Variant] = []
     names: set[str] = set()
@@ -1100,7 +1162,7 @@ def _parse_container_plan(payload: Mapping[str, Any]) -> _ContainerPlan:
     if port > 65535:
         raise RuntimeValidationError("container_port is out of range")
     readiness = _readiness_path(raw["readiness_path"])
-    return _ContainerPlan(tuple(files), tuple(variants), port, readiness)
+    return _ContainerPlan(tuple(files), tuple(archives), tuple(variants), port, readiness)
 
 
 def _parse_candidate_plan(payload: Mapping[str, Any]) -> _CandidatePlan:
@@ -1361,13 +1423,115 @@ def _target_digest(
         }
         for artifact_id, destination in plan.files
     ]
+    archives = [
+        {
+            "artifact_id": item.artifact_id,
+            "destination": item.destination,
+            "format": item.format,
+            "strip_components": item.strip_components,
+            "sha256": sha256_bytes(inputs[item.artifact_id].data),
+        }
+        for item in plan.archives
+    ]
     return sha256_bytes(canonical_json({
         "variant": variant.name,
         "dockerfile_artifact_id": variant.dockerfile_artifact_id,
         "container_port": plan.container_port,
         "readiness_path": plan.readiness_path,
         "files": sorted(files, key=lambda item: item["destination"]),
+        "archives": sorted(archives, key=lambda item: item["destination"]),
     }))
+
+
+def _extract_tar_gz(
+    raw: bytes,
+    destination: Path,
+    *,
+    strip_components: int,
+    max_file_bytes: int,
+    max_total_bytes: int,
+) -> int:
+    """Expand one bounded archive without links, special files, or path escape."""
+    if max_total_bytes <= 0:
+        raise RuntimeValidationError("extracted build context exceeds total size limit")
+    destination.mkdir(parents=True, exist_ok=False)
+    destination.chmod(0o700)
+    total = 0
+    regular_files = 0
+    seen: set[str] = set()
+    try:
+        expanded = _gunzip_bounded(raw, max_total_bytes + 8 * 1024 * 1024)
+        with tarfile.open(fileobj=io.BytesIO(expanded), mode="r:") as archive:
+            members = archive.getmembers()
+            if not members or len(members) > 8192:
+                raise RuntimeValidationError("archive entry count is invalid")
+            for member in members:
+                if member.issym() or member.islnk() or not (member.isfile() or member.isdir()):
+                    raise RuntimeValidationError("archive links and special entries are forbidden")
+                if "\\" in member.name or member.name.startswith("/"):
+                    raise RuntimeValidationError("archive member path is invalid")
+                parts = PurePosixPath(member.name).parts
+                if not parts or any(part in {"", ".", ".."} for part in parts):
+                    raise RuntimeValidationError("archive member path is invalid")
+                if len(parts) <= strip_components:
+                    if member.isfile():
+                        raise RuntimeValidationError("archive strip_components removes a file path")
+                    continue
+                relative = PurePosixPath(*parts[strip_components:])
+                logical = relative.as_posix()
+                if logical in seen:
+                    raise RuntimeValidationError("archive has duplicate member paths")
+                seen.add(logical)
+                target = destination.joinpath(*relative.parts)
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    target.chmod(0o700)
+                    continue
+                if member.size < 0 or member.size > max_file_bytes:
+                    raise RuntimeValidationError("archive member exceeds per-file size limit")
+                total += member.size
+                if total > max_total_bytes:
+                    raise RuntimeValidationError("extracted build context exceeds total size limit")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists() or target.is_symlink():
+                    raise RuntimeValidationError("archive member collides in build context")
+                source = archive.extractfile(member)
+                if source is None:
+                    raise RuntimeValidationError("archive regular member is unreadable")
+                data = source.read(max_file_bytes + 1)
+                if len(data) != member.size:
+                    raise RuntimeValidationError("archive member size mismatch")
+                target.write_bytes(data)
+                target.chmod(0o600)
+                regular_files += 1
+    except (tarfile.TarError, OSError, EOFError) as exc:
+        raise RuntimeValidationError("invalid tar_gz archive") from exc
+    if regular_files == 0:
+        raise RuntimeValidationError("archive contains no regular files")
+    return total
+
+
+def _gunzip_bounded(raw: bytes, limit: int) -> bytes:
+    """Decompress exactly one gzip member without permitting an archive bomb."""
+    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    output = bytearray()
+    try:
+        for offset in range(0, len(raw), 64 * 1024):
+            pending = raw[offset:offset + 64 * 1024]
+            while pending:
+                block = decoder.decompress(pending, limit - len(output) + 1)
+                output.extend(block)
+                if len(output) > limit:
+                    raise RuntimeValidationError("archive expansion exceeds bounded decompression limit")
+                pending = decoder.unconsumed_tail
+        output.extend(decoder.flush(limit - len(output) + 1))
+    except zlib.error as exc:
+        raise RuntimeValidationError("invalid gzip archive") from exc
+    if len(output) > limit:
+        raise RuntimeValidationError("archive expansion exceeds bounded decompression limit")
+    if not decoder.eof or decoder.unused_data:
+        raise RuntimeValidationError("gzip archive is truncated or has trailing members")
+    return bytes(output)
 
 
 def _validate_dockerfile(raw: bytes, allowed_images: frozenset[str]) -> None:
@@ -1651,7 +1815,8 @@ def _execution_id(run_id: str, parent_sha: str) -> str:
 
 
 __all__ = [
-    "CANDIDATE_PLAN_SCHEMA", "CAPABILITY_RECEIPT_SCHEMA", "CONTAINER_PLAN_SCHEMA", "HIDDEN_SCORE_SCHEMA",
+    "CANDIDATE_PLAN_SCHEMA", "CAPABILITY_RECEIPT_SCHEMA", "CONTAINER_PLAN_ARCHIVE_SCHEMA",
+    "CONTAINER_PLAN_SCHEMA", "HIDDEN_SCORE_SCHEMA",
     "CapabilityOracle", "CapabilityOracleArmRequest", "CapabilityOracleObservation", "CapabilityOracleRequest",
     "CommandExecutionError", "CommandResult", "CommandRunner", "ContainerExecutor",
     "HiddenOracleScorer", "RuntimeExecutionError", "RuntimeValidationError",

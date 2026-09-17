@@ -8,11 +8,14 @@ import dns from "node:dns";
 import https from "node:https";
 import net from "node:net";
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 import { Type } from "@sinclair/typebox";
 
 const MAX_READ = 2 * 1024 * 1024;
 const MAX_FETCH = 5 * 1024 * 1024;
 const MAX_DOWNLOAD = 32 * 1024 * 1024;
+const MAX_ARCHIVE_EXPANDED = 128 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES = 8192;
 const MAX_WRITE = boundedIntegerEnv("CVEHUNT_STAGE_MAX_WRITE_BYTES", 8 * 1024 * 1024);
 
 type ExtensionAPI = {
@@ -87,6 +90,69 @@ async function confined(name: keyof typeof roots, relative: string, allowMissing
   const target = lexicalPath(root, relative);
   await rejectSymlinkComponents(root, target, allowMissingLeaf);
   return target;
+}
+
+type TarMember = { name: string; data: Buffer | null; size: number; type: "file" | "directory" };
+
+function tarNumber(field: Buffer): number {
+  const raw = field.toString("ascii").replace(/\0.*$/, "").trim();
+  if (!/^[0-7]+$/.test(raw)) throw new Error("invalid tar numeric field");
+  const value = Number.parseInt(raw, 8);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("invalid tar numeric field");
+  return value;
+}
+
+function tarMembers(compressed: Buffer): TarMember[] {
+  let archive: Buffer;
+  try {
+    archive = zlib.gunzipSync(compressed, { maxOutputLength: MAX_ARCHIVE_EXPANDED });
+  } catch {
+    throw new Error("invalid or oversized tar_gz archive");
+  }
+  const members: TarMember[] = [];
+  const names = new Set<string>();
+  let offset = 0;
+  while (offset + 512 <= archive.length) {
+    const header = archive.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const expectedChecksum = tarNumber(header.subarray(148, 156));
+    let checksum = 0;
+    for (let index = 0; index < header.length; index += 1) {
+      checksum += index >= 148 && index < 156 ? 32 : header[index];
+    }
+    if (checksum !== expectedChecksum) throw new Error("tar header checksum mismatch");
+    const leaf = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "");
+    const prefix = header.subarray(345, 500).toString("utf8").replace(/\0.*$/, "");
+    const size = tarNumber(header.subarray(124, 136));
+    const typeByte = header[156];
+    if (![0, 48, 53].includes(typeByte)) throw new Error("tar links and special entries rejected");
+    const isDirectory = typeByte === 53;
+    const joinedName = prefix ? `${prefix}/${leaf}` : leaf;
+    const name = isDirectory ? joinedName.replace(/\/$/, "") : joinedName;
+    if (!name || name.startsWith("/") || name.includes("\\") || name.split("/").some((part) => !part || part === "." || part === "..")) {
+      throw new Error("tar member path rejected");
+    }
+    const bodyStart = offset + 512;
+    const bodyEnd = bodyStart + size;
+    if (bodyEnd > archive.length) throw new Error("truncated tar member");
+    if (names.has(name)) throw new Error("duplicate tar member path");
+    names.add(name);
+    if (isDirectory && size !== 0) throw new Error("tar directory has data");
+    members.push({ name, data: isDirectory ? null : archive.subarray(bodyStart, bodyEnd), size, type: isDirectory ? "directory" : "file" });
+    if (members.length > MAX_ARCHIVE_ENTRIES) throw new Error("tar entry limit exceeded");
+    offset = bodyStart + Math.ceil(size / 512) * 512;
+  }
+  if (!members.length) throw new Error("archive contains no members");
+  return members;
+}
+
+async function readTarGz(root: keyof typeof roots, relative: string): Promise<TarMember[]> {
+  const target = await confined(root, relative);
+  const info = await fsp.lstat(target);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 || info.size > MAX_DOWNLOAD) {
+    throw new Error("not a readable bounded archive");
+  }
+  return tarMembers(await fsp.readFile(target));
 }
 
 function isForbiddenAddress(address: string): boolean {
@@ -374,6 +440,42 @@ export default function cvehuntStageTools(pi: ExtensionAPI) {
         throw new Error("not a readable single-link regular stage file or file too large");
       }
       return textResult(await fsp.readFile(target, "utf8"), { root: args.root, path: args.path, bytes: info.size });
+    },
+  });
+
+  pi.registerTool({
+    name: "archive_list", label: "List tar_gz archive",
+    description: "List validated regular files and directories in one stage-scoped tar_gz archive. Links, special entries, traversal, malformed headers, and archive bombs are rejected.",
+    parameters: Type.Object({
+      root: Type.Union([Type.Literal("input"), Type.Literal("workspace"), Type.Literal("output")]),
+      path: Type.String(),
+    }),
+    async execute(_id, args) {
+      const members = await readTarGz(args.root, args.path);
+      const visible = members.map(({ name, size, type }) => ({ name, size, type }));
+      const rendered = JSON.stringify(visible, null, 2);
+      if (Buffer.byteLength(rendered) > MAX_READ) throw new Error("archive listing exceeds response limit");
+      return textResult(rendered, { entries: visible.length });
+    },
+  });
+
+  pi.registerTool({
+    name: "archive_read", label: "Read tar_gz member",
+    description: "Read one UTF-8 regular member up to 2 MiB from a validated stage-scoped tar_gz archive without extracting it.",
+    parameters: Type.Object({
+      root: Type.Union([Type.Literal("input"), Type.Literal("workspace"), Type.Literal("output")]),
+      path: Type.String(), member: Type.String(),
+    }),
+    async execute(_id, args) {
+      const members = await readTarGz(args.root, args.path);
+      const found = members.find((member) => member.name === args.member);
+      if (!found || found.type !== "file" || found.data === null || found.size > MAX_READ) {
+        throw new Error("archive member is unavailable, non-regular, or too large");
+      }
+      let content: string;
+      try { content = new TextDecoder("utf-8", { fatal: true }).decode(found.data); }
+      catch { throw new Error("archive member is not UTF-8"); }
+      return textResult(content, { member: found.name, bytes: found.size });
     },
   });
 

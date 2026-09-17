@@ -19,8 +19,11 @@ from cvehunt.agent_entry import (
 )
 from cvehunt.agent_pipeline import PipelineResult
 from cvehunt.benchmark_adapters import (
+    CVE55182CapabilityOracle,
+    CVE55182TargetIdentityValidator,
     CVE63030CapabilityOracle,
     CVE63030TargetIdentityValidator,
+    REACT_TARGET_POLICY_SCHEMA,
     TARGET_POLICY_SCHEMA,
 )
 from cvehunt.evaluation_contract import EVALUATION_CONTRACT_SCHEMA, evaluation_contract_sha256
@@ -425,6 +428,74 @@ def test_cve_63030_requires_and_wires_pinned_target_and_capability_adapters(tmp_
     assert isinstance(executor_kwargs["capability_oracle"], CVE63030CapabilityOracle)
     assert isinstance(
         executor_kwargs["target_identity_validator"], CVE63030TargetIdentityValidator
+    )
+
+
+def test_cve_55182_requires_and_wires_react2shell_adapters(tmp_path):
+    cfg = config(tmp_path)
+    cve_id = "CVE-2025-55182"
+    old_root = cfg.data_dir / "cves" / CVE
+    new_root = cfg.data_dir / "cves" / cve_id
+    old_root.rename(new_root)
+    write_json(new_root / "cve.json", {"cve_id": cve_id})
+    hidden = json.loads(cfg.oracle.read_text())
+    hidden["cve_id"] = cve_id
+    write_json(cfg.oracle, hidden)
+    node_image = "node:22-alpine@sha256:" + "8" * 64
+    write_json(cfg.runtime_policy, {
+        "schema": "cvehunt.runtime-policy/v1",
+        "allowed_base_images": [node_image],
+        "python_runner_image": RUNNER_IMAGE,
+    })
+    base = AgentRunConfig(
+        cfg.data_dir, cve_id, cfg.run_id, cfg.provider, cfg.model,
+        cfg.runtime_policy, cfg.research_policy, cfg.oracle, cfg.pi_models,
+        cfg.pi_auth, cfg.timeout_seconds,
+    )
+    with pytest.raises(AgentEntryError, match="target_policy_required"):
+        run_agent(base, AgentDependencies(
+            command_runner=Runner(), harness_factory=Harness,
+            expected_root_uid=os.getuid(), current_uid=os.getuid(),
+        ))
+
+    variants = []
+    for name, version, digest in (
+        ("vulnerable", "19.0.0", "1" * 64),
+        ("patched", "19.0.1", "2" * 64),
+    ):
+        variants.append({
+            "name": name, "version": version,
+            "source_uri": (
+                "https://registry.npmjs.org/react-server-dom-webpack/-/"
+                f"react-server-dom-webpack-{version}.tgz"
+            ),
+            "source_sha256": digest, "base_image": node_image,
+        })
+    target_policy = write_json(tmp_path / "react-target-policy.json", {
+        "schema": REACT_TARGET_POLICY_SCHEMA,
+        "cve_id": cve_id,
+        "package": "react-server-dom-webpack",
+        "variants": variants,
+    })
+    configured = AgentRunConfig(
+        base.data_dir, base.cve_id, base.run_id, base.provider, base.model,
+        base.runtime_policy, base.research_policy, base.oracle, base.pi_models,
+        base.pi_auth, base.timeout_seconds, target_policy,
+    )
+    FakePipeline.instances.clear()
+
+    result = run_agent(configured, AgentDependencies(
+        command_runner=Runner(), harness_factory=Harness,
+        executor_factory=FakeExecutor, scorer_factory=FakeScorer,
+        pipeline_factory=FakePipeline, expected_root_uid=os.getuid(),
+        current_uid=os.getuid(),
+    ))
+
+    assert result["status"] == "completed"
+    executor_kwargs = FakePipeline.instances[-1].kwargs["executor"].kwargs
+    assert isinstance(executor_kwargs["capability_oracle"], CVE55182CapabilityOracle)
+    assert isinstance(
+        executor_kwargs["target_identity_validator"], CVE55182TargetIdentityValidator,
     )
 
 

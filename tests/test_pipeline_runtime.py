@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
+import io
 import json
 import os
 import sys
+import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -88,6 +91,23 @@ def artifact(tmp_path: Path, artifact_id: str, data: bytes) -> TrustedInput:
     path = tmp_path / artifact_id
     path.write_bytes(data)
     return TrustedInput(artifact_id, hashlib.sha256(data).hexdigest(), path)
+
+
+def tar_gz(entries: list[tuple[str, bytes, str]]) -> bytes:
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w:gz") as archive:
+        for name, data, kind in entries:
+            info = tarfile.TarInfo(name)
+            if kind == "file":
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+            elif kind == "symlink":
+                info.type = tarfile.SYMTYPE
+                info.linkname = data.decode()
+                archive.addfile(info)
+            else:
+                raise AssertionError(kind)
+    return raw.getvalue()
 
 
 def plans() -> tuple[dict, dict]:
@@ -545,6 +565,106 @@ def test_dockerfile_policy_rejected(tmp_path: Path, line: str) -> None:
     out.mkdir()
     with pytest.raises(RuntimeValidationError):
         executor(FakeRunner()).provision_and_execute(context=ctx, output_dir=out)
+
+
+def test_archive_plan_materializes_bounded_npm_style_tree(tmp_path: Path) -> None:
+    harness, exploiter = plans()
+    harness["container_plan"] = {
+        **harness["container_plan"],
+        "schema": "cvehunt.container-plan/v2",
+        "archives": [{
+            "artifact_id": "package-tgz", "destination": "vendor/package",
+            "format": "tar_gz", "strip_components": 1,
+        }],
+    }
+    base = context(tmp_path, harness=harness, exploiter=exploiter)
+    package = artifact(tmp_path, "package-tgz", tar_gz([
+        ("package/package.json", b'{"name":"target"}\n', "file"),
+        ("package/server.js", b"module.exports = 1;\n", "file"),
+    ]))
+    ctx = TrustedCallbackContext(
+        base.run_id, base.cve_id, base.predecessor_stage,
+        base.predecessor_handoff_sha256, base.predecessor_envelope,
+        (*base.inputs, package), base.public_stage_records,
+        base.remaining_run_seconds,
+    )
+    runner = FakeRunner()
+    output = tmp_path / "out"
+    output.mkdir()
+
+    executor(runner).provision_and_execute(context=ctx, output_dir=output)
+
+    assert any(call[0][1] == "build" for call in runner.calls)
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [("package/../../escape", b"x", "file")],
+        [("package/link", b"/etc/passwd", "symlink")],
+    ],
+)
+def test_archive_plan_rejects_traversal_and_links_before_docker(tmp_path: Path, entries) -> None:
+    harness, exploiter = plans()
+    harness["container_plan"] = {
+        **harness["container_plan"],
+        "schema": "cvehunt.container-plan/v2",
+        "archives": [{
+            "artifact_id": "package-tgz", "destination": "vendor/package",
+            "format": "tar_gz", "strip_components": 1,
+        }],
+    }
+    base = context(tmp_path, harness=harness, exploiter=exploiter)
+    package = artifact(tmp_path, "package-tgz", tar_gz(entries))
+    ctx = TrustedCallbackContext(
+        base.run_id, base.cve_id, base.predecessor_stage,
+        base.predecessor_handoff_sha256, base.predecessor_envelope,
+        (*base.inputs, package), base.public_stage_records,
+        base.remaining_run_seconds,
+    )
+    runner = FakeRunner()
+    output = tmp_path / "out"
+    output.mkdir()
+
+    with pytest.raises(RuntimeExecutionError) as caught:
+        executor(runner).provision_and_execute(context=ctx, output_dir=output)
+
+    assert isinstance(caught.value.primary, RuntimeValidationError)
+    assert runner.calls == []
+
+
+def test_archive_plan_rejects_decompression_bomb_before_docker(tmp_path: Path) -> None:
+    harness, exploiter = plans()
+    harness["container_plan"] = {
+        **harness["container_plan"],
+        "schema": "cvehunt.container-plan/v2",
+        "archives": [{
+            "artifact_id": "package-tgz", "destination": "vendor/package",
+            "format": "tar_gz", "strip_components": 0,
+        }],
+    }
+    base = context(tmp_path, harness=harness, exploiter=exploiter)
+    package = artifact(tmp_path, "package-tgz", gzip.compress(b"x" * (9 * 1024 * 1024)))
+    ctx = TrustedCallbackContext(
+        base.run_id, base.cve_id, base.predecessor_stage,
+        base.predecessor_handoff_sha256, base.predecessor_envelope,
+        (*base.inputs, package), base.public_stage_records,
+        base.remaining_run_seconds,
+    )
+    runner = FakeRunner()
+    output = tmp_path / "out"
+    output.mkdir()
+    bounded = ContainerExecutor(
+        allowed_base_images=[BASE], python_runner_image=RUNNER, runner=runner,
+        max_extracted_context_bytes=1024,
+    )
+
+    with pytest.raises(RuntimeExecutionError) as caught:
+        bounded.provision_and_execute(context=ctx, output_dir=output)
+
+    assert isinstance(caught.value.primary, RuntimeValidationError)
+    assert "decompression limit" in str(caught.value.primary)
+    assert runner.calls == []
 
 
 def test_hash_symlink_hardlink_and_oversize_rejected(tmp_path: Path) -> None:
