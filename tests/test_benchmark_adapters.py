@@ -18,6 +18,7 @@ from cvehunt.benchmark_adapters import (
     REACT_TARGET_ACQUISITION_SCHEMA,
     REACT_TARGET_BINDING_SCHEMA,
     REACT_TARGET_POLICY_SCHEMA,
+    REACT_TARGET_POLICY_SCHEMA_V2,
     TARGET_ACQUISITION_SCHEMA,
     TARGET_BINDING_SCHEMA,
     TARGET_POLICY_SCHEMA,
@@ -247,6 +248,76 @@ def test_react2shell_target_pair_binds_official_npm_archives_to_controls(tmp_pat
 
     assert set(identities) == {"vulnerable", "patched"}
     assert identities["vulnerable"] != identities["patched"]
+
+
+def test_react2shell_target_policy_accepts_any_complete_approved_pair(tmp_path: Path) -> None:
+    policy, harness, artifacts = react_fixture(tmp_path)
+    manifest = json.loads(artifacts["react-manifest"])
+    selected = {
+        item["name"]: {
+            key: item[key]
+            for key in ("name", "version", "source_uri", "source_sha256", "base_image")
+        }
+        for item in manifest["variants"]
+    }
+    other = {
+        "vulnerable": {
+            **selected["vulnerable"], "version": "19.2.0",
+            "source_uri": "https://registry.npmjs.org/react-server-dom-webpack/-/react-server-dom-webpack-19.2.0.tgz",
+            "source_sha256": "a" * 64,
+        },
+        "patched": {
+            **selected["patched"], "version": "19.2.1",
+            "source_uri": "https://registry.npmjs.org/react-server-dom-webpack/-/react-server-dom-webpack-19.2.1.tgz",
+            "source_sha256": "b" * 64,
+        },
+    }
+    policy.write_bytes(canonical_json({
+        "schema": REACT_TARGET_POLICY_SCHEMA_V2,
+        "cve_id": CVE_55182,
+        "package": "react-server-dom-webpack",
+        "variant_pairs": [other, selected],
+    }))
+
+    identities = CVE55182TargetIdentityValidator(policy, expected_uid=os.getuid()).validate(
+        cve_id=CVE_55182, harness_payload=harness, artifacts=artifacts,
+    )
+
+    assert set(identities) == {"vulnerable", "patched"}
+
+
+def test_react2shell_target_policy_rejects_cross_pair_selection(tmp_path: Path) -> None:
+    policy, harness, artifacts = react_fixture(tmp_path)
+    value = json.loads(policy.read_text())
+    first = {item["name"]: item for item in value["variants"]}
+    second = {
+        "vulnerable": {
+            **first["vulnerable"], "version": "19.2.0",
+            "source_uri": "https://registry.npmjs.org/react-server-dom-webpack/-/react-server-dom-webpack-19.2.0.tgz",
+        },
+        "patched": {
+            **first["patched"], "version": "19.2.1",
+            "source_uri": "https://registry.npmjs.org/react-server-dom-webpack/-/react-server-dom-webpack-19.2.1.tgz",
+        },
+    }
+    policy.write_bytes(canonical_json({
+        "schema": REACT_TARGET_POLICY_SCHEMA_V2,
+        "cve_id": CVE_55182,
+        "package": "react-server-dom-webpack",
+        "variant_pairs": [first, second],
+    }))
+    manifest = json.loads(artifacts["react-manifest"])
+    patched = next(item for item in manifest["variants"] if item["name"] == "patched")
+    patched.update({
+        "version": "19.2.1",
+        "source_uri": "https://registry.npmjs.org/react-server-dom-webpack/-/react-server-dom-webpack-19.2.1.tgz",
+    })
+    artifacts["react-manifest"] = canonical_json(manifest)
+
+    with pytest.raises(RuntimeValidationError, match="target pair does not match pinned policy"):
+        CVE55182TargetIdentityValidator(policy, expected_uid=os.getuid()).validate(
+            cve_id=CVE_55182, harness_payload=harness, artifacts=artifacts,
+        )
 
 
 @pytest.mark.parametrize("cross_wire", ["patched", "parent", "wildcard"])

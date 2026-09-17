@@ -1100,6 +1100,11 @@ def _stage_prompt(
             )
     elif stage == "exploiter":
         runtime_contract = (
+            " Artifact-first checkpoint: before extended analysis, use stage_write to create a bounded runnable baseline "
+            "Python candidate and a contract-valid output/stage_output.json with outcome partial or inconclusive. Then "
+            "continue investigating and overwrite both files with your strongest result. Do not spend the response "
+            "budget narrating analysis; the host evaluates files, and a provider output limit without stage_output.json "
+            "fails the stage. "
             " payload.candidate MUST have exactly schema='cvehunt.candidate-plan/v1', artifact_id, runtime, "
             "timeout_seconds, args, data. runtime MUST be python, timeout_seconds <= 60, and artifact_id MUST identify "
             "one model_input Python artifact. The candidate reads bounded JSON data from stdin, reads the target only "

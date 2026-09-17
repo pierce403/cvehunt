@@ -62,6 +62,8 @@ def test_react2shell_prompt_exposes_archive_and_nonce_contracts() -> None:
     assert "archive_list" in harness and "archive_read" in harness
     assert "CVEHUNT_CHALLENGE" in exploiter
     assert "/tmp/cvehunt-capability-<challenge>" in exploiter
+    assert "Artifact-first checkpoint" in exploiter
+    assert "provider output limit without stage_output.json fails the stage" in exploiter
 
 
 def capability_receipt(*, variant: str = "vulnerable", trusted: bool = True) -> dict:

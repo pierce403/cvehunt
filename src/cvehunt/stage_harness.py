@@ -132,6 +132,7 @@ class _EventAccumulator:
         self.output_tokens = 0
         self.total_tokens = 0
         self.tool_calls = 0
+        self.output_limited = False
         self.normalized: list[dict[str, object]] = []
         self.normalized_bytes = 0
         self.error: str | None = None
@@ -181,6 +182,10 @@ class _EventAccumulator:
             if isinstance(child, dict):
                 candidates.append(child)
         for value in candidates:
+            stop_reason = value.get("stopReason")
+            if stop_reason in {"length", "max_tokens", "max_output_tokens"}:
+                self.output_limited = True
+                summary["stop_reason"] = stop_reason
             error_message = value.get("errorMessage")
             if value.get("stopReason") == "error" and isinstance(error_message, str):
                 encoded_error = error_message.encode("utf-8")
@@ -469,7 +474,12 @@ class StageHarness:
                     raise ValueError("contract must return StageStatus.SUCCESS or StageStatus.REFUSAL")
                 status = contract_status
             except Exception as exc:
-                status, error = StageStatus.ERROR, f"stage result contract rejected response: {type(exc).__name__}: {exc}"
+                if events.output_limited:
+                    status = StageStatus.PROVIDER_ERROR
+                    error = "provider output token limit reached before valid stage output"
+                else:
+                    status = StageStatus.ERROR
+                    error = f"stage result contract rejected response: {type(exc).__name__}: {exc}"
 
         result = StageResult(
             status, request.provider.lower(), request.model, request.stage, exit_code, response, paths, metrics,

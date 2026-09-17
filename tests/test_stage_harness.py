@@ -230,6 +230,28 @@ def test_zero_exit_pi_provider_error_event_is_not_transport_success(tmp_path: Pa
     assert "model_not_found" in (result.error or "")
 
 
+def test_output_token_limit_is_reported_when_stage_contract_has_no_output(tmp_path: Path) -> None:
+    fake = executable(
+        tmp_path / "pi-output-limit",
+        "import json\n"
+        "print(json.dumps({'type': 'message_end', 'message': {"
+        "'role': 'assistant', 'content': [{'type': 'text', 'text': 'unfinished'}], "
+        "'stopReason': 'length', 'usage': {'input_tokens': 10, 'output_tokens': 16384}}}))\n",
+    )
+
+    def missing_output(_response, paths):
+        return json.loads((paths.output / "stage_output.json").read_text())
+
+    result = StageHarness(
+        tmp_path / "output-limit", pi_binary=fake, pi_extension=tmp_path / "x.ts"
+    ).run(StageRequest("stage", "pi", "m", "p", timeout_seconds=5, contract=missing_output))
+
+    assert result.status is StageStatus.PROVIDER_ERROR
+    assert result.error == "provider output token limit reached before valid stage output"
+    events = (result.paths.log / "events.ndjson").read_text()
+    assert '"stop_reason":"length"' in events
+
+
 def test_preflight_validates_pi_model_and_creates_no_stage(tmp_path: Path) -> None:
     fake = executable(tmp_path / "pi", "print('unused')\n")
     extension = tmp_path / "tools.ts"

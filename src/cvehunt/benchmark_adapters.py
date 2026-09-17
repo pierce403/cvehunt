@@ -29,6 +29,7 @@ TARGET_POLICY_SCHEMA = "cvehunt.cve-2026-63030-target-policy/v1"
 TARGET_ACQUISITION_SCHEMA = "cvehunt.cve-2026-63030-target-acquisition/v1"
 TARGET_BINDING_SCHEMA = "cvehunt.cve-2026-63030-target-binding/v1"
 REACT_TARGET_POLICY_SCHEMA = "cvehunt.cve-2025-55182-target-policy/v1"
+REACT_TARGET_POLICY_SCHEMA_V2 = "cvehunt.cve-2025-55182-target-policy/v2"
 REACT_TARGET_ACQUISITION_SCHEMA = "cvehunt.cve-2025-55182-target-acquisition/v1"
 REACT_TARGET_BINDING_SCHEMA = "cvehunt.cve-2025-55182-target-binding/v1"
 CANARY_OBSERVATION_SCHEMA = "cvehunt.target-canary-observation/v1"
@@ -309,25 +310,50 @@ class CVE55182TargetIdentityValidator:
             Path(policy_path), expected_uid=expected_uid, limit=max_policy_bytes,
         )
         value = _parse_json(raw, "CVE target policy")
-        if (
-            not isinstance(value, dict)
-            or set(value) != {"schema", "cve_id", "package", "variants"}
-            or value.get("schema") != REACT_TARGET_POLICY_SCHEMA
-            or value.get("cve_id") != self.cve_id
-            or value.get("package") != "react-server-dom-webpack"
-            or not isinstance(value.get("variants"), list)
-            or len(value["variants"]) != 2
-        ):
+        if not isinstance(value, dict) or value.get("cve_id") != self.cve_id or value.get(
+            "package"
+        ) != "react-server-dom-webpack":
             raise RuntimeValidationError("invalid CVE target policy")
-        variants = [
-            _react_variant(item, f"policy.variants[{index}]", acquisition=False)[0]
-            for index, item in enumerate(value["variants"])
-        ]
-        if {item.name for item in variants} != {"vulnerable", "patched"}:
-            raise RuntimeValidationError("CVE target policy requires both controls")
-        if len({item.base_image for item in variants}) != 1:
-            raise RuntimeValidationError("React2Shell controls require the same pinned Node base")
-        self._variants = {item.name: item for item in variants}
+        if value.get("schema") == REACT_TARGET_POLICY_SCHEMA:
+            if set(value) != {"schema", "cve_id", "package", "variants"}:
+                raise RuntimeValidationError("invalid CVE target policy")
+            raw_pairs = [value.get("variants")]
+        elif value.get("schema") == REACT_TARGET_POLICY_SCHEMA_V2:
+            if (
+                set(value) != {"schema", "cve_id", "package", "variant_pairs"}
+                or not isinstance(value.get("variant_pairs"), list)
+                or not 1 <= len(value["variant_pairs"]) <= 16
+            ):
+                raise RuntimeValidationError("invalid CVE target policy")
+            raw_pairs = []
+            for index, pair in enumerate(value["variant_pairs"]):
+                if not isinstance(pair, dict) or set(pair) != {"vulnerable", "patched"}:
+                    raise RuntimeValidationError(f"policy.variant_pairs[{index}] is invalid")
+                raw_pairs.append([pair["vulnerable"], pair["patched"]])
+        else:
+            raise RuntimeValidationError("invalid CVE target policy")
+        approved_pairs: list[dict[str, _ReactVariantPolicy]] = []
+        for pair_index, raw_pair in enumerate(raw_pairs):
+            if not isinstance(raw_pair, list) or len(raw_pair) != 2:
+                raise RuntimeValidationError("invalid CVE target policy")
+            variants = [
+                _react_variant(
+                    item, f"policy.variant_pairs[{pair_index}][{index}]", acquisition=False,
+                )[0]
+                for index, item in enumerate(raw_pair)
+            ]
+            if {item.name for item in variants} != {"vulnerable", "patched"}:
+                raise RuntimeValidationError("CVE target policy requires both controls")
+            if len({item.base_image for item in variants}) != 1:
+                raise RuntimeValidationError("React2Shell controls require the same pinned Node base")
+            approved_pairs.append({item.name: item for item in variants})
+        canonical_pairs = {
+            canonical_json({name: item.public_record() for name, item in sorted(pair.items())})
+            for pair in approved_pairs
+        }
+        if len(canonical_pairs) != len(approved_pairs):
+            raise RuntimeValidationError("CVE target policy contains duplicate variant pairs")
+        self._approved_pairs = tuple(approved_pairs)
         self.policy_sha256 = sha256_bytes(canonical_json(value))
 
     def validate(
@@ -389,13 +415,14 @@ class CVE55182TargetIdentityValidator:
                 or archive.get("strip_components") != 1
             ):
                 raise RuntimeValidationError("target source archive binding is invalid")
-            if variant != self._variants[variant.name]:
-                raise RuntimeValidationError("model-acquired target does not match pinned policy")
             if hashlib.sha256(artifacts[artifact_id]).hexdigest() != variant.source_sha256:
                 raise RuntimeValidationError("model-acquired source archive hash mismatch")
             acquired[variant.name] = (variant, artifact_id, destination)
         if set(acquired) != {"vulnerable", "patched"}:
             raise RuntimeValidationError("target acquisition controls are incomplete")
+        actual = {name: item[0] for name, item in acquired.items()}
+        if not any(actual == pair for pair in self._approved_pairs):
+            raise RuntimeValidationError("model-acquired target pair does not match pinned policy")
 
         identities: dict[str, str] = {}
         destinations = {name: item[2] for name, item in acquired.items()}
@@ -548,4 +575,5 @@ __all__ = [
     "REACT_TARGET_ACQUISITION_SCHEMA",
     "REACT_TARGET_BINDING_SCHEMA",
     "REACT_TARGET_POLICY_SCHEMA",
+    "REACT_TARGET_POLICY_SCHEMA_V2",
 ]
