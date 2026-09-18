@@ -350,7 +350,8 @@ def test_exploit_artifacts_require_successful_provenance_and_validation(tmp_path
 
 def test_imported_validation_is_labeled_and_excluded_from_model_scoring() -> None:
     site_data = _load_site_data_module()
-    run = next(item for item in site_data.build()["runs"] if item["cve_id"] == "CVE-2026-63030")
+    runs = [item for item in site_data.build()["runs"] if item["cve_id"] == "CVE-2026-63030"]
+    run = next(item for item in runs if item["run_id"] == "2026-07-19T03-53-05Z")
     assert run["run_kind"] == "imported_validation"
     assert run["model_scoring_eligible"] is False
     assert all(artifact["provenance"] == "imported_validation" for artifact in run["artifacts"])
