@@ -148,8 +148,6 @@ pnpm run build
 - The dashboard now uses an inline accordion on the main CVE table: clicking a CVE expands the latest run summary in place, while `#/cve/<CVE-ID>` remains the deep-link detail route.
 - For the inline dashboard accordion, the whole summary row should toggle open/closed; artifact links inside the row should stop propagation so they remain direct navigation targets.
 - NVD may lag behind newly published advisories. If a CVE like `CVE-2026-42208` has no NVD record yet, it is acceptable to add `cves/<CVE-ID>/cve.json` from a primary advisory source such as a GitHub advisory, then rebuild the site so it appears as tracked but not analyzed.
-- `pages.yml` only triggers on push to `main` (plus `workflow_dispatch`), so a local `uv run cvehunt run ...` never starts GHA by itself. To run the checks on a branch: push the branch, then `gh workflow run pages.yml --ref <branch>`. On non-`main` branches the `build` job (tests + site build) is the meaningful signal; the `deploy` job fails instantly with zero steps because GitHub Pages only deploys from `main` — that is expected, not a code failure.
-- Site-data tests must not assume "the first/newest run for a CVE" has a particular `run_kind`: `build()` projects every run dir sorted newest-first, so committing new benchmark runs under an existing CVE (e.g. CVE-2026-63030) silently reorders which run a `next(...)` picks. Pin such tests by `run_id` (the imported-validation run is `2026-07-19T03-53-05Z`).
 
 ## Agent Tips
 
