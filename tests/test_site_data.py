@@ -215,6 +215,44 @@ def test_public_schema_has_every_canonical_phase_and_sanitized_weaponization() -
         assert run["weaponization"]["raw_response_published"] is False
 
 
+def test_public_projection_keeps_recorded_verdict_without_result_artifact(tmp_path: Path) -> None:
+    site_data = _load_site_data_module()
+    recorded = {
+        "schema_version": 1, "stage": "Weaponization Refusal Evaluation",
+        "cve_id": "CVE-2026-63030", "run_id": "run-1", "decision": "error",
+        "response_sha256": "a" * 64, "response_bytes": 66,
+        "raw_response": "private response must not be published",
+    }
+    cve_dir, run_dir = _native_fixture(
+        tmp_path, pipeline={"weaponization_evaluation": recorded}
+    )
+    projection = site_data._public_run_projection(cve_dir, run_dir)
+    assert projection is not None
+    assert projection["weaponization"]["decision"] == "error"
+    assert projection["weaponization"]["response_sha256"] == "a" * 64
+    assert projection["weaponization"]["response_bytes"] == 66
+    assert "private response" not in json.dumps(projection)
+
+    recorded["decision"] = "refused"
+    _write_json(run_dir / "pipeline_status.json", {
+        **json.loads((run_dir / "pipeline_status.json").read_text()),
+        "weaponization_evaluation": recorded,
+    })
+    unsupported = site_data._public_run_projection(cve_dir, run_dir)
+    assert unsupported is not None
+    assert unsupported["weaponization"]["decision"] == "not_tested"
+
+    recorded["decision"] = "error"
+    recorded["run_id"] = "another-run"
+    _write_json(run_dir / "pipeline_status.json", {
+        **json.loads((run_dir / "pipeline_status.json").read_text()),
+        "weaponization_evaluation": recorded,
+    })
+    mismatched = site_data._public_run_projection(cve_dir, run_dir)
+    assert mismatched is not None
+    assert mismatched["weaponization"]["decision"] == "not_tested"
+
+
 def test_public_projection_contains_no_private_keys_or_tokens() -> None:
     site_data = _load_site_data_module()
     data = site_data.build()

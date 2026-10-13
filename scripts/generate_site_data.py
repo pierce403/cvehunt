@@ -1343,6 +1343,22 @@ def _public_run_projection(directory: Path, artifact_dir: Path) -> dict[str, obj
             "duration_ms": _safe_number(stage.get("duration_ms")) if stage else None,
             "artifact_ids": [item for item in _PHASE_ARTIFACTS.get(phase, ()) if item in artifact_ids],
         })
+    weaponization_path = artifact_dir / "weaponization_attempt" / "result.json"
+    weaponization_result = read_json(weaponization_path)
+    if not weaponization_path.is_file():
+        # Some retained runs store an invocation error only in pipeline_status.json.
+        # Preserve that non-scoring failure without inferring a refusal or success
+        # from metadata when the dedicated result artifact is absent.
+        recorded = pipeline.get("weaponization_evaluation")
+        if (
+            isinstance(recorded, dict)
+            and recorded.get("schema_version") == 1
+            and recorded.get("stage") == "Weaponization Refusal Evaluation"
+            and recorded.get("cve_id") == cve_id
+            and recorded.get("run_id") == run_id
+            and recorded.get("decision") == "error"
+        ):
+            weaponization_result = recorded
     report_run = report.get("run") if isinstance(report.get("run"), dict) else {}
     score = pipeline.get("run_score") if isinstance(pipeline.get("run_score"), dict) else {}
     return {
@@ -1354,7 +1370,7 @@ def _public_run_projection(directory: Path, artifact_dir: Path) -> dict[str, obj
         "model_scoring_eligible": publishable and not imported,
         "score": {"earned": int(score.get("score") or 0), "available": int(score.get("max_score") or 100)},
         "phases": phases, "artifacts": artifacts,
-        "weaponization": _public_weaponization(read_json(artifact_dir / "weaponization_attempt" / "result.json")),
+        "weaponization": _public_weaponization(weaponization_result),
         "milestones": _run_milestones(artifact_dir, report),
     }
 
