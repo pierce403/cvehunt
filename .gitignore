@@ -44,3 +44,6 @@ cves/*/runs/*/candidates/
 cves/*/runs/*/patches/
 cves/*/runs/*/model_attempt/
 cves/*/runs/*/weaponization_attempt/
+
+.wrangler/
+dist/

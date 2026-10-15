@@ -7,7 +7,10 @@
   "scripts": {
     "generate:data": "uv run python scripts/generate_site_data.py",
     "build": "uv run python scripts/generate_site_data.py && vite build",
-    "dev": "uv run python scripts/generate_site_data.py && vite --host 127.0.0.1"
+    "dev": "uv run python scripts/generate_site_data.py && vite --host 127.0.0.1",
+    "build:cloudflare": "PYTHONPATH=src python3 scripts/generate_site_data.py && vite build --outDir ../dist && node scripts/cloudflare-assets.mjs",
+    "deploy": "wrangler deploy",
+    "check:deploy": "corepack pnpm run build:cloudflare && wrangler deploy --dry-run"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.2",
@@ -15,5 +18,8 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "vite": "^8.0.16"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.0"
   }
 }

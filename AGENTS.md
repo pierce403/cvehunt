@@ -171,3 +171,11 @@ pnpm run build
 - The collaborator wants each completed task committed and pushed promptly so the remote stays current with the working tree — but per the override below, do not act on this yourself; wait to be asked.
 - **Override (2026-09-21, current standing instruction): do not touch git at all unless explicitly asked.** Make local file changes only — do not `git add`/stage, commit, or push on your own initiative, even for routine doc/pipeline edits this file would otherwise call for going straight to `main`. Leave changes unstaged in the working tree and say so; let the collaborator decide when/how to commit.
 - Git branching policy (keep this current, but subject to the override above): pipeline/source/dashboard/agent edits and local `./contribute.sh` model-eval runs go **straight to `main`** — commit and `git push origin main` per task, when asked to commit. Do NOT open a feature branch for ordinary pipeline work or local contribution runs unless the user explicitly asks. `./contribute.sh` refuses to run outside `main` and commits/pushes only persisted CVE artifacts plus `docs/data/cves.json` to `main`; use `--skip-git` only when intentionally inspecting artifacts before a manual main commit.
+
+## Cloudflare frontend hosting
+
+The owner-approved static migration uses native main builds. Only the public Vite dashboard and existing site-data generator is built.
+Keep runtime, private data, wallets and research execution outside hosting.
+Production config validation remains fail-closed; zone request metrics do not
+inject browser analytics. Original Pages/source recovery remains. Deployment
+credentials stay in Cloudflare and previews stay disabled.

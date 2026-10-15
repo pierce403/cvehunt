@@ -353,3 +353,11 @@ A high run score is NOT the same as `defensive_signal_observed`. The verdict str
   - [ ] Candidate fix is applied to a local vulnerable tree.
   - [ ] Fixed target is built and tested.
   - [ ] Fix validation result is recorded in `pipeline_status.json` and `report.md`.
+
+### Native Cloudflare static hosting
+
+- **Stability**: in-progress
+- **Description**: Native main publishing preserves the existing frontend and runtime boundaries.
+- **Test Criteria**:
+  - [ ] Locked frontend install, relevant tests/types, build and dry run pass.
+  - [ ] Native version/routes, public HTTPS/assets/404, browser privacy and request metrics pass.
